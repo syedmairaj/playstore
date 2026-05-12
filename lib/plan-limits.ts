@@ -1,5 +1,14 @@
 export type PlanId = "free" | "pro" | "growth";
 
+/** Negative sentinel: unlimited app slots (Growth). */
+export const UNLIMITED_APP_SLOTS = -1;
+
+export function maxAppSlotsForPlan(plan: PlanId): number {
+  if (plan === "growth") return UNLIMITED_APP_SLOTS;
+  if (plan === "pro") return 5;
+  return 1;
+}
+
 export const PLAN_META: Record<
   PlanId,
   {

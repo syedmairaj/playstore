@@ -24,6 +24,7 @@ export const listingOptimizerRequestSchema = z.object({
   appFeatures: z.string().trim().min(1).max(8000),
   toneStyle: toneStyleSchema,
   targetArabic: z.boolean().optional(),
+  userInstruction: z.string().trim().max(2000).optional(),
 });
 
 export type ListingOptimizerRequest = z.infer<

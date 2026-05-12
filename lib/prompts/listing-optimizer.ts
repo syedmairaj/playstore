@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v2";
+const PROMPT_VERSION = "listing-optimizer-v3";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -31,9 +31,9 @@ Category: ${category}
 Primary Keywords: ${keywords.join(", ")}
 
 Rules:
-- Title: Max 30 characters, include primary keyword naturally.
-- Short Description: Max 80 characters — powerful hook.
-- Long Description: Max 4000 characters. Use clear Feature → Benefit structure with bullet points and sections.
+- Title: at most 30 characters (hard limit; never exceed).
+- Short description: at most 80 characters (hard limit; never exceed) — one sharp conversion hook; prioritize conversion; shorten aggressively if needed.
+- Long description: at most 4000 characters — Feature → Benefit structure with bullet points and sections.
 - Naturally integrate keywords without stuffing.
 - Tone: ${tone}. Professional but approachable. No generic marketing fluff.
 ${
@@ -75,10 +75,10 @@ function listingOptimizerStrategyBlock(
     `Category: ${category}`,
     `Primary Keywords: ${keywords.join(", ")}`,
     "",
-    "Rules:",
-    "- Title: Max 30 characters, include primary keyword naturally.",
-    "- Short Description: Max 80 characters — powerful hook.",
-    "- Long Description: Max 4000 characters. Use clear Feature → Benefit structure with bullet points and sections.",
+    "Rules (Google Play HARD limits — counts every character including spaces and punctuation):",
+    "- Title: at most 30 characters (never 31+). Include primary keyword naturally.",
+    "- Short description: at most 80 characters (never 81+). One powerful conversion hook; shorten wording if needed to stay ≤80.",
+    "- Long description: fewer than 4000 characters in practice — stay at or under 4000. Feature → Benefit structure, bullets/sections where helpful.",
     "- Naturally integrate keywords without stuffing.",
     `- Tone: ${tone}. Professional but approachable. No generic marketing fluff.`,
     targetArabic
@@ -101,10 +101,11 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
 
   const system = [
     "You are an expert Google Play ASO copywriter and strategist for Android apps on Google Play.",
+    "Prioritize install conversion: clear benefits, honest claims, scannable copy — while strictly obeying character limits below (counts every character).",
     "Return a single JSON object only (no markdown, no code fences, no prose before or after) with exactly these keys:",
-    "title: string — optimized Google Play title (max 30 characters; include primary keyword naturally).",
-    "shortDescription: string — max 80 characters (Google Play hard limit); powerful hook.",
-    "fullDescription: string — max 4000 characters; Feature → Benefit structure, sections, bullets where helpful; weave keywords naturally, no stuffing.",
+    "title: string — Google Play title, at most 30 characters (hard cap 30, never 31+); include primary keyword naturally.",
+    "shortDescription: string — at most 80 characters (hard cap 80, never 81+). One sharp hook; if tight on space, shorten aggressively — the short description must never exceed 80 characters.",
+    "fullDescription: string — at most 4000 characters (stay ≤4000). Feature → Benefit structure, sections, bullets where helpful; weave keywords naturally, no stuffing.",
     "keywordSuggestions: array of 8-20 concise keyword phrases for ASO.",
     "ctaSuggestions: array of 3-8 short conversion-focused CTAs or button-style lines.",
     "Align with Google Play policies: honest claims, no misleading text.",
@@ -123,13 +124,25 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
     targetArabic,
   );
 
+  const refinement =
+    typeof input.userInstruction === "string" && input.userInstruction.trim()
+      ? [
+          "",
+          "Additional direction from the product owner (apply on top of the rules above):",
+          input.userInstruction.trim(),
+        ].join("\n")
+      : "";
+
   const user = [
     strategy,
     "",
     "Using the rules above, produce the JSON object described in the system message.",
     "",
+    "REMINDER — hard limits on your JSON strings (count every character): title ≤30, shortDescription ≤80, fullDescription ≤4000. Prioritize conversion; shorten shortDescription if needed so it never exceeds 80.",
+    "",
     "App features / value props:",
     input.appFeatures,
+    refinement,
   ].join("\n");
 
   return { system, user };

@@ -14,15 +14,17 @@ function pathMatches(pathname: string | null, href: string) {
 export function WorkspaceSidebarNav({
   items,
   navAriaLabel,
+  onItemClick,
 }: {
   items: NavItem[];
   navAriaLabel: string;
+  onItemClick?: () => void;
 }) {
   const pathname = usePathname();
 
   return (
     <nav
-      className="flex gap-1 overflow-x-auto px-2 pb-4 md:flex-col md:px-3 md:pb-6"
+      className="flex flex-col gap-0.5 px-3"
       aria-label={navAriaLabel}
     >
       {items.map((item) => {
@@ -31,11 +33,12 @@ export function WorkspaceSidebarNav({
           <Link
             key={item.href}
             href={item.href}
+            onClick={onItemClick}
             className={cn(
-              "whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-colors",
+              "rounded-lg px-3 py-2.5 text-sm transition-[color,background-color,box-shadow] duration-150",
               active
-                ? "bg-[#22C55E]/15 font-medium text-[#22C55E] ring-1 ring-[#22C55E]/25"
-                : "text-white/55 hover:bg-white/[0.06] hover:text-white",
+                ? "bg-[#22C55E]/14 font-medium text-[#86efac] shadow-[inset_0_1px_0_0_rgba(34,197,94,0.12)] ring-1 ring-[#22C55E]/28"
+                : "text-white/55 hover:bg-white/[0.06] hover:text-white/90 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]",
             )}
           >
             {item.label}

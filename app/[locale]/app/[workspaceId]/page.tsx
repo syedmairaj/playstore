@@ -66,6 +66,7 @@ export default async function WorkspaceHomePage({
         category={category}
         keywords={keywords}
         previewResult={previewResult}
+        listingOptimizerEnabled={isModuleEnabled(flags, "listing_optimizer")}
       />
 
       <section className="border-t border-white/[0.08] pt-10">
@@ -73,7 +74,7 @@ export default async function WorkspaceHomePage({
         <ul className="mt-4 flex flex-wrap gap-3">
           {isModuleEnabled(flags, "listing_optimizer") ? (
             <li>
-              <Link href={`${appBase}/optimizer`} className={cn(linkClass)}>
+              <Link href={`${appBase}/listing-optimizer`} className={cn(linkClass)}>
                 {t("linkOptimizer")}
               </Link>
             </li>

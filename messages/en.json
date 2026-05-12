@@ -18,8 +18,7 @@
   "hero": {
     "eyebrow": "Google Play only · EN + العربية",
     "headline": "Rank higher on Google Play — simpler & faster",
-    "sub": "Clarity, not clutter. Keywords that move installs, AI listings that convert, and competitor gaps you can ship against — without enterprise bloat.",
-    "trust": "Explore the product on the free tier — upgrade when you see results.",
+    "sub": "Clarity, not clutter. AI-powered listings that convert, intelligent keywords that drive installs, and competitor gaps you can own — without enterprise bloat.",
     "trustStrong": "Trusted by indie founders in Dubai, Riyadh, Cairo & worldwide.",
     "trustBar": {
       "noCard": "No credit card required",
@@ -114,7 +113,8 @@
         "check3": "Keyword in first 80 chars"
       },
       "ai": {
-        "title": "AI listing optimizer",
+        "comparisonTitle": "Before vs after — listing optimization",
+        "title": "AI Listing Optimizer",
         "badge": "Play-ready",
         "beforeLabel": "Before",
         "afterLabel": "After",
@@ -122,7 +122,9 @@
         "afterTitle": "FocusFlow — habits & deep work",
         "beforeShort": "A simple timer. Free with ads.",
         "afterShort": "Build streaks, block distractions, calm productivity in minutes — tuned for installs.",
-        "uplift": "+18% clearer value prop vs. baseline"
+        "improvementLabel": "Visible lift",
+        "upliftPercent": "+18%",
+        "upliftDetail": "Clearer value prop vs. baseline listing"
       },
       "keywords": {
         "title": "Tracked terms",
@@ -144,8 +146,8 @@
     "title": "Calm tools. Clear next steps.",
     "subtitle": "ASO health, high-intent keywords, and AI-built listings — one calm workspace, zero clutter.",
     "asoScore": {
-      "title": "ASO health score",
-      "body": "Instant 0–100 score plus a prioritized checklist so you always know exactly what to fix next."
+      "title": "ASO Health Score",
+      "body": "Instant 0-100 score plus a prioritized checklist so you always know exactly what to fix next."
     },
     "keywords": {
       "title": "High-volume, low-competition keywords",
@@ -165,7 +167,7 @@
       "body": "Turn real user reviews into actionable metadata improvements and rating recovery plans."
     },
     "localization": {
-      "title": "Localization-ready (EN · العربية)",
+      "title": "Localization-ready (EN • عربية)",
       "body": "Smart AI suggestions for English and Arabic — with RTL-aware formatting built for MENA markets."
     }
   },
@@ -225,11 +227,21 @@
     "home": "Home",
     "myApps": "My apps",
     "keywords": "Keyword tracker",
-    "listingAi": "AI listing optimizer",
+    "listingAi": "AI Listing Optimizer",
     "competitorSpy": "Competitor spy",
     "reviews": "Reviews",
     "alerts": "Alerts",
     "settings": "Settings",
+    "signOut": "Sign out",
+    "signingOut": "Signing out…",
+    "switchWorkspace": "Switch workspace",
+    "shell": {
+      "openMenu": "Open navigation",
+      "closeMenu": "Close navigation",
+      "userMenu": "Account menu",
+      "accountMenuEmailLabel": "Email",
+      "home": "Home"
+    },
     "aso": {
       "title": "ASO health",
       "hint": "A 0–100 score from five calm checkpoints — complete each to lift readiness.",
@@ -243,15 +255,43 @@
       "headerEyebrow": "Growth Hub",
       "navAria": "Workspace navigation",
       "suiteTitle": "Growth suite",
-      "suiteHint": "Preview listing, ad, and push surfaces before you ship.",
+      "suiteHint": "Jump into tools or peek how your listing, ads, and push surfaces will feel.",
       "aso": "ASO",
       "ads": "Ads",
       "push": "Push",
+      "suiteHints": {
+        "aso": "AI Listing Optimizer — titles, short & long descriptions, keywords.",
+        "ads": "Coming soon — UAC-style creatives tied to your store context.",
+        "push": "Coming soon — retention campaigns from the same workspace brain."
+      },
+      "phoneContext": {
+        "aso": "Play Store listing preview — what shoppers see first.",
+        "ad": "Sponsored unit — headline, body, and CTA from your latest draft.",
+        "push": "Lock-screen style push — tap to expand the story."
+      },
       "phoneCaption": "Interactive Play-style preview — updates when you generate a new AI draft.",
       "continueTitle": "Continue in workspace",
-      "linkOptimizer": "AI listing optimizer",
+      "linkOptimizer": "AI Listing Optimizer",
       "linkKeywords": "Keyword tracker",
       "linkAlerts": "Alerts"
+    },
+    "growthTeasers": {
+      "eyebrow": "Growth suite",
+      "back": "Back to Growth Hub",
+      "ads": {
+        "title": "Paid acquisition, calmer",
+        "body": "We’re shaping a flow where Google Ads headlines and UAC angles inherit your AI listing context — no duplicate spreadsheets, no guesswork between store and campaigns.",
+        "bullet1": "Roadmap: sync with your optimized listing and keyword set.",
+        "bullet2": "Experiments and asset variants will live next to this hub.",
+        "ctaOptimizer": "Polish your listing first"
+      },
+      "push": {
+        "title": "Retention push, later",
+        "body": "Push copy and lifecycle experiments will plug into the same workspace memory as ASO. For now, a strong store listing still lifts reinstalls and paid quality.",
+        "bullet1": "Roadmap: campaign-ready copy from your Growth Hub context.",
+        "bullet2": "Quiet defaults — no spammy nudges.",
+        "ctaOptimizer": "Open AI Listing Optimizer"
+      }
     }
   },
   "auth": {
@@ -285,7 +325,7 @@
   },
   "pricing": {
     "title": "Pricing that respects your runway",
-    "subtitle": "Every paid plan includes monthly AI credits for listing generation and insights. Need more? Top up anytime.",
+    "subtitle": "Every paid plan includes monthly AI credits for listing generation and insights.",
     "billingLabel": "Billing",
     "billingMonthly": "Monthly",
     "billingYearly": "Yearly",
@@ -300,7 +340,8 @@
     "creditsHint": "AI credits reset monthly · $10 per 100 extra credits",
     "compare": "Compare plans",
     "faq": "FAQ",
-    "recommended": "Most popular",
+    "mostPopular": "MOST POPULAR",
+    "proPositioning": "Everything an indie developer or small team needs to rank higher on Google Play.",
     "overage": "Extra AI credits: $10 per 100 credits when you need a burst.",
     "plans": {
       "free": {
@@ -311,6 +352,7 @@
       "pro": {
         "name": "Pro",
         "desc": "Serious indie teams shipping every week.",
+        "priceBlurb": "$29/mo or $290/year (save 20%)",
         "cta": "Start trial"
       },
       "growth": {
@@ -318,6 +360,16 @@
         "desc": "Studios and squads with multiple apps.",
         "cta": "Start trial"
       }
+    },
+    "proIncludes": {
+      "optimizer": "Full AI Listing Optimizer (200 credits/month)",
+      "asoHealth": "ASO Health Score + prioritized checklist",
+      "competitor": "Competitor Gap Analysis & Quick Wins",
+      "keywords": "Keyword tracking for up to 5 apps",
+      "reviews": "Review insights & rating alerts",
+      "exports": "Export optimized listings (Play Console ready)",
+      "alerts": "Basic ranking alerts",
+      "support": "Priority email support"
     },
     "features": {
       "apps1": "1 app",
@@ -357,43 +409,151 @@
   },
   "optimizer": {
     "eyebrow": "PlayStore",
-    "title": "AI App Listing Optimizer",
+    "title": "AI Listing Optimizer",
     "subtitle": "Generate Google Play–ready copy from your app details. Clear, human, conversion-focused suggestions.",
     "form": {
       "appName": "App name",
       "appNamePlaceholder": "e.g. FocusFlow",
       "category": "Category",
       "categoryPlaceholder": "e.g. Productivity",
-      "keywords": "Target keywords",
+      "keywords": "Target Keywords",
+      "keywordsFieldTitle": "Comma or line separated — used for ASO and shown in the live preview chips.",
       "keywordsPlaceholder": "Comma or line separated, e.g. habit tracker, ADHD, reminders",
-      "features": "App features & value",
+      "features": "App Features & Value",
+      "featuresFieldTitle": "What the app does and why users should install — feeds the long description preview.",
       "featuresPlaceholder": "Bullet what the app does, who it is for, and proof points.",
       "tone": "Tone / style",
       "toneProfessional": "Professional",
       "toneFriendly": "Friendly",
       "toneBold": "Bold",
       "toneMinimal": "Minimal",
-      "generate": "Generate suggestions",
+      "generate": "Generate Full Listing",
+      "generateLead": "When the form is ready, generate Play-ready title, descriptions, keyword ideas, and CTAs in one run.",
+      "generateCostLabel": "{credits, plural, one {# AI credit} other {# AI credits}} per full listing run",
+      "generateStarting": "Generating full listing ({credits, plural, one {# credit} other {# credits}})…",
       "generating": "Generating…",
       "generatingHint": "This can take a few seconds.",
-      "signInError": "Please sign in, then open the optimizer from your workspace.",
+      "signInError": "Please sign in, then open AI Listing Optimizer from your workspace.",
       "creditsDetail": "You have {rem} credits; this run needs {req}.",
       "creditsSuffix": " Visit Pricing to add more.",
       "networkError": "Network error. Check your connection and try again.",
       "refiningTitle": "Refining results…",
-      "refiningHint": "Adjust tone or keywords and run again — transient model issues usually clear on a second try."
+      "refiningHint": "Adjust tone or keywords and run again — transient model issues usually clear on a second try.",
+      "sectionStore": "Store Metadata",
+      "sectionStoreTitle": "Official app name and Play category used across the listing.",
+      "sectionStoreHelper": "Official Play identity—grounds exports, AI context, and the live preview header.",
+      "sectionDiscovery": "Discovery",
+      "sectionDiscoveryTitle": "Keywords and value props that shape search and conversion.",
+      "sectionDiscoveryHelper": "Search terms and install reasons. Optional ✦ buttons draft one field from name + category (separate credit cost).",
+      "sectionVoice": "Voice & Generate",
+      "sectionVoiceTitle": "Tone for the full listing run, then generate Play-ready copy.",
+      "sectionVoiceHelper": "Pick tone, then run a full listing—{credits} AI credits return title, short, long, keyword ideas, and CTAs.",
+      "generateSuccessToast": "Listing generated successfully!",
+      "invalidModelOutputRegenerating": "Short description was too long. Regenerating with stricter limits…",
+      "autofill": {
+        "button": "✦ Let AI Generate",
+        "tooltip": "Drafts from app name and category • Tuned for Google Play ASO",
+        "usesCredits": "Uses {credits, plural, one {# AI credit} other {# AI credits}}",
+        "generatingToast": "{credits, plural, one {Generating smart suggestions using # AI credit…} other {Generating smart suggestions using # AI credits…}}",
+        "loadingKeywords": "Generating keywords…",
+        "loadingFeatures": "Generating features…",
+        "needAppName": "Add an app name to use AI fill.",
+        "needCategory": "Add a category to use AI fill.",
+        "validationTitle": "Almost there",
+        "validationBody": "App name and category are required before AI can fill these fields.",
+        "insufficientTitle": "Not enough AI credits",
+        "generationError": "AI fill failed. Try again in a moment.",
+        "successTitle": "Field updated",
+        "successDescription": "You can edit the text below before generating your listing.",
+        "successCredits": "{used} credits used • {balance} remaining"
+      }
+    },
+    "guidance": {
+      "selectApp": "Select app",
+      "fillDetails": "Fill details",
+      "aiAssist": "AI assist (optional)",
+      "generate": "Generate",
+      "sepLtr": "→",
+      "sepRtl": "·"
+    },
+    "appContext": {
+      "label": "Workspace app",
+      "hint": "Pick an app to pre-fill the name, or register another app when your plan allows.",
+      "loadingApps": "Loading workspace apps…",
+      "loadingLimits": "Checking plan limits…",
+      "limitsError": "Could not load plan limits.",
+      "appsError": "Could not load apps.",
+      "missingWorkspaceId": "Missing workspace in this URL. Open AI Listing Optimizer from your workspace in the app.",
+      "appsErrorInvalid": "The server returned an unexpected response.",
+      "appsErrorStatus": "Request failed ({status}).",
+      "retry": "Retry",
+      "selectAria": "Workspace app",
+      "none": "No saved apps — enter details manually below.",
+      "emptyTitle": "No apps yet.",
+      "addFirstToOptimize": "Add your first app to start optimizing.",
+      "emptyBody": "Register it with Add App — we will pre-fill what we know so you can generate faster.",
+      "needAppToOptimize": "Add or select an app to start optimizing",
+      "needAppInline": "Add or select a workspace app above before generating, unless you are drafting manually with “—”.",
+      "addAppCta": "Add App",
+      "addApp": "Add another app",
+      "manageSettings": "Manage in Settings",
+      "atLimitToast": "This workspace is at its app limit",
+      "atLimitToastHint": "Upgrade your plan to register another app from Settings.",
+      "usage": "{count} / {limit} apps ({plan})",
+      "usageUnlimited": "{count} apps · {plan} (unlimited)"
     },
     "results": {
-      "title": "Suggested listing",
+      "heading": "Optimized Listing Results",
+      "subheading": "Everything is editable. Tweak as needed before pasting into Play Console.",
+      "regenerating": "Generating an updated listing…",
       "persistWarning": "Saved to history failed — check Supabase configuration.",
       "metaPrompt": "Prompt {version} · {model}",
       "titleBlock": "Title",
       "shortBlock": "Short description",
-      "fullBlock": "Full description",
+      "fullBlock": "Long description",
       "keywordsList": "ASO keyword suggestions",
       "ctaList": "CTA suggestions",
       "copy": "Copy",
       "copyAll": "Copy all",
+      "copyAllPrimary": "Copy All",
+      "copyTitleButton": "Copy Title",
+      "copyShortDescription": "Copy Short Description",
+      "copyLongDescription": "Copy Long Description",
+      "charCount": "{current} / {max}",
+      "titleLimitHint": "Google Play title limit: 30 characters.",
+      "shortLimitHint": "Google Play short description limit: 80 characters.",
+      "longLimitHint": "Google Play long description limit: 4,000 characters.",
+      "longDescriptionHint": "Use clear sections, short paragraphs, and bullets where helpful. Avoid ALL CAPS spam; plain text pastes cleanly into Play Console.",
+      "regenerate": {
+        "label": "Regenerate",
+        "punchier": "Make it punchier",
+        "professional": "Professional",
+        "arabic": "Translate to Arabic",
+        "tone": "Different tone"
+      },
+      "exportPlayConsole": "Export for Play Console",
+      "exportModal": {
+        "title": "Ready to Paste in Google Play Console",
+        "intro": "Blocks below match Play’s character caps. Follow the steps, then paste into Main store listing.",
+        "step1": "Open Google Play Console → your app → Grow → Store presence → Main store listing.",
+        "step2": "Copy each field with Copy, or use the green “Copy All for Play Console” button to copy App Name, Short Description, and Full Description in one step.",
+        "step3": "Paste into the matching fields in Play Console: App name, Short description, and Full description.",
+        "step4": "Check character counts in Play Console, tweak wording if needed, then save.",
+        "tipOpenConsoleTab": "Tip: Open Google Play Console in another tab for easy copy-paste.",
+        "copyToast": "Copied! Now paste in Google Play Console → {field}",
+        "fieldLabels": {
+          "appNameTitle": "App Name (Title)",
+          "shortDescription": "Short Description",
+          "fullDescription": "Full Description",
+          "all": "All fields"
+        },
+        "copyBlock": "Copy",
+        "copyAllPlayConsole": "Copy All for Play Console",
+        "downloadTxt": "Download .txt",
+        "pasteHint": "Preview blocks use Play length caps so pasted text fits store limits."
+      },
+      "exportSuccess": "Download started — paste sections into Play Console fields.",
+      "copyPrompt": "Copy text",
       "copiedTitle": "Copied",
       "copiedDescription": "Optimized for Play Store!"
     },
@@ -422,6 +582,54 @@
       "pushTitle": "Your app",
       "pushBody": "Notification preview text from your short description.",
       "pushHint": "Tap to expand — same gesture users use on a lock screen."
+    }
+  },
+  "addApp": {
+    "title": "Add New App",
+    "subtitle": "Register your Android app to unlock AI optimization and tracking.",
+    "usage": "{count} / {limit} apps ({plan})",
+    "usageUnlimited": "{count} apps · {plan} (unlimited)",
+    "fields": {
+      "appName": "App name",
+      "packageName": "Package",
+      "category": "Category",
+      "shortDescription": "Short description (optional)",
+      "iconUrl": "Icon URL (optional)"
+    },
+    "placeholders": {
+      "appName": "My Awesome App",
+      "package": "com.example.myapp",
+      "category": "Select a category",
+      "shortDescription": "Up to 80 characters for Play short description…",
+      "iconUrl": "https://…"
+    },
+    "hints": {
+      "package": "Reverse-DNS identifier as in your Gradle applicationId.",
+      "packageExample": "Example: com.example.myapp",
+      "shortDescription": "Max 80 characters.",
+      "iconUrl": "HTTPS image URL for preview (e.g. CDN or Play asset)."
+    },
+    "actions": {
+      "cancel": "Cancel",
+      "add": "Add App",
+      "adding": "Adding…"
+    },
+    "toast": {
+      "success": "App added successfully!"
+    },
+    "errors": {
+      "packageInvalid": "Use a valid Android package (e.g. com.example.myapp): each segment starts with a letter; only letters, numbers, and underscores; segments separated by dots.",
+      "packageTooLong": "Package name is too long.",
+      "packageRequired": "Enter a package name.",
+      "categoryRequired": "Select a category.",
+      "nameRequired": "Enter an app name.",
+      "signIn": "Please sign in and try again.",
+      "network": "Network error. Check your connection and try again.",
+      "createFailed": "Could not create the app.",
+      "atLimit": "App limit reached",
+      "noPermission": "You don't have permission to add an app to this workspace.",
+      "noWorkspaceAccess": "You don't have access to this workspace, or it no longer exists.",
+      "iconInvalid": "Icon URL must be a valid HTTPS URL."
     }
   }
 }

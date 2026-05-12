@@ -162,6 +162,6 @@ components/features/visualizer/ — The CSS-based Phone Frame and Mockup compone
 
 - **Table:** `credits_ledger` (append-only; negative `amount` = spend, positive = refund/top-up).
 - **RPCs:** `consume_workspace_ai_credits` (member + balance check, row lock, debit + ledger row) and `refund_workspace_ai_credits` (reverses a spend; idempotent via `already_refunded`).
-- **API:** `POST /api/listings/generate` calls `consumeWorkspaceAiCredits` **after** rate-limit and membership checks and **before** Gemini; on generation failure it calls `refundWorkspaceAiCredits`. Successful runs persist `listing_generations.credits_ledger_id` and `tool_type = aso_listing`.
-- **Costs:** `lib/features/billing/credit-costs.ts` — today `listing_generation` = **1** credit per run (bundle costs like ASO Growth Pack = 5 are reserved for future tools).
+- **API:** `POST /api/listings/generate`, `POST /api/listings/optimizer-autofill`, and `POST /api/apps/suggest` read `ai_credits_remaining` (non-mutating) when credits are required, then call `consumeWorkspaceAiCredits` **before** Gemini (`SELECT … FOR UPDATE` in the RPC); on generation failure they call `refundWorkspaceAiCredits`, so **net balance matches a successful AI outcome**. Successful full listing runs persist `listing_generations.credits_ledger_id` and `tool_type = aso_listing`. Autofill does not create a `listing_generations` row.
+- **Costs:** `lib/features/billing/credit-costs.ts` — `listing_generation` = **5** credits per full listing run (including regenerate with `userInstruction`); `listing_optimizer_autofill` = **3** credits per single-field autofill click (keywords or features); bundle costs like ASO Growth Pack = 5 remain reserved for bundled workflows.
 

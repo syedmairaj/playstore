@@ -40,6 +40,9 @@ export function AuthModalProvider({ children }: { children: React.ReactNode }) {
     } else if (pathname.endsWith("/signup")) {
       setIntent("signup");
       setOpen(true);
+    } else {
+      // Home and other routes: keep modal closed (e.g. after sign-out to `/`, not `/login`).
+      setOpen(false);
     }
   }, [pathname]);
 

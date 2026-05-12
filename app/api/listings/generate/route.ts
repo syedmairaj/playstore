@@ -3,9 +3,17 @@ import { ZodError } from "zod";
 import { getClientIp } from "@/lib/client-ip";
 import { insertListingGeneration } from "@/lib/db/listing-generations";
 import { generateListingWithGemini } from "@/lib/gemini/generate-listing";
+import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import { resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
+import {
+  logGeminiApiKeyDiagnostics,
+  shouldLogGeminiDebug,
+} from "@/lib/gemini/log-gemini-env";
 import {
   AI_CREDIT_COSTS,
+  buildInsufficientAiCreditsPayload,
   consumeWorkspaceAiCredits,
+  readWorkspaceAiCreditsRemaining,
   refundWorkspaceAiCredits,
 } from "@/lib/features";
 import { getListingOptimizerPromptVersion } from "@/lib/prompts/listing-optimizer";
@@ -25,6 +33,7 @@ function rateLimitMax(): number {
 }
 
 export async function POST(request: NextRequest) {
+  logGeminiApiKeyDiagnostics();
   const started = Date.now();
   const clientIp = getClientIp(request);
 
@@ -92,6 +101,14 @@ export async function POST(request: NextRequest) {
 
   const { workspaceId, ...listingInput } = input;
 
+  if (shouldLogGeminiDebug()) {
+    console.log("=== Generate Full Listing Started ===");
+    console.log("App Name:", listingInput.appName);
+    console.log("Category:", listingInput.category);
+    console.log("Keywords:", listingInput.targetKeywords);
+    console.log("Features:", listingInput.appFeatures);
+  }
+
   const role = await getWorkspaceRole(supabase, workspaceId, user.id);
   if (!role) {
     return NextResponse.json(
@@ -129,9 +146,51 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const model = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+  const model = resolveGeminiModel();
   const promptVersion = getListingOptimizerPromptVersion();
   const creditCost = AI_CREDIT_COSTS.listing_generation;
+
+  const balancePre = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
+  if (!balancePre.ok) {
+    await logUsage(admin, {
+      route: ROUTE,
+      clientIp,
+      success: false,
+      durationMs: Date.now() - started,
+      errorMessage: `wallet_balance_read:${balancePre.code}`,
+      meta: { user_id: user.id, workspace_id: workspaceId },
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "wallet_error",
+          message: "Could not read AI credit balance. Try again shortly.",
+        },
+      },
+      { status: 503 },
+    );
+  }
+  if (balancePre.remaining < creditCost) {
+    await logUsage(admin, {
+      route: ROUTE,
+      clientIp,
+      success: false,
+      durationMs: Date.now() - started,
+      errorMessage: "insufficient_credits",
+      meta: {
+        user_id: user.id,
+        workspace_id: workspaceId,
+        remaining: balancePre.remaining,
+        required: creditCost,
+        precheck: true,
+      },
+    });
+    return NextResponse.json(
+      buildInsufficientAiCreditsPayload(creditCost, balancePre.remaining),
+      { status: 402 },
+    );
+  }
 
   let ledgerId: string | null = null;
   const debit = await consumeWorkspaceAiCredits(supabase, {
@@ -159,15 +218,10 @@ export async function POST(request: NextRequest) {
         },
       });
       return NextResponse.json(
-        {
-          ok: false,
-          error: {
-            code: "insufficient_credits",
-            message: "Workspace is out of AI credits. Upgrade or top up to continue.",
-            remaining: debit.remaining ?? 0,
-            required: debit.required ?? creditCost,
-          },
-        },
+        buildInsufficientAiCreditsPayload(
+          debit.required ?? creditCost,
+          debit.remaining ?? 0,
+        ),
         { status: 402 },
       );
     }
@@ -228,6 +282,52 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (e) {
+    if (e instanceof InvalidModelOutputError) {
+      if (shouldLogGeminiDebug() && e.zodError) {
+        console.error(
+          "[listing-generate] Zod error after clamp:",
+          e.zodError.flatten(),
+        );
+      }
+      if (ledgerId) {
+        await refundWorkspaceAiCredits(supabase, {
+          ledgerId,
+          userId: user.id,
+          reason: "Listing AI generation failed before a saved result",
+        });
+      }
+      await logUsage(admin, {
+        route: ROUTE,
+        clientIp,
+        success: false,
+        durationMs: Date.now() - started,
+        errorMessage: "invalid_model_output",
+        meta: { user_id: user.id, workspace_id: workspaceId },
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: "invalid_model_output",
+            message: e.message,
+          },
+        },
+        { status: 422 },
+      );
+    }
+    if (shouldLogGeminiDebug()) {
+      console.error("=== Generate Full Listing Error ===");
+      console.error(e);
+      console.error(
+        "Error message:",
+        (e as { message?: unknown } | null | undefined)?.message,
+      );
+      console.error(
+        "Error stack:",
+        (e as { stack?: unknown } | null | undefined)?.stack,
+      );
+      console.error("String(error):", String(e));
+    }
     if (ledgerId) {
       await refundWorkspaceAiCredits(supabase, {
         ledgerId,
@@ -235,19 +335,25 @@ export async function POST(request: NextRequest) {
         reason: "Listing AI generation failed before a saved result",
       });
     }
-    const message =
+    const internalMessage =
       e instanceof Error ? e.message : "Generation failed unexpectedly";
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
       success: false,
       durationMs: Date.now() - started,
-      errorMessage: message.slice(0, 2000),
+      errorMessage: internalMessage.slice(0, 2000),
       meta: { user_id: user.id, workspace_id: workspaceId },
     });
-    const status = message.includes("GEMINI_API_KEY") ? 503 : 500;
+    const status = internalMessage.includes("GEMINI_API_KEY") ? 503 : 500;
+    const isProd = process.env.NODE_ENV === "production";
+    const clientMessage = isProd
+      ? status === 503
+        ? "The AI service is temporarily unavailable. Please try again shortly."
+        : "Listing generation could not be completed. Please try again shortly."
+      : internalMessage;
     return NextResponse.json(
-      { ok: false, error: { code: "generation_error", message } },
+      { ok: false, error: { code: "generation_error", message: clientMessage } },
       { status },
     );
   }

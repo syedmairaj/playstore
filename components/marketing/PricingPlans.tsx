@@ -11,6 +11,17 @@ import { cn } from "@/lib/utils";
 
 type Cycle = "monthly" | "yearly";
 
+const PRO_INCLUDE_KEYS = [
+  "optimizer",
+  "asoHealth",
+  "competitor",
+  "keywords",
+  "reviews",
+  "exports",
+  "alerts",
+  "support",
+] as const;
+
 function savingsPercent(monthly: number, yearly: number): number {
   const full = monthly * 12;
   if (full <= 0) return 0;
@@ -34,24 +45,14 @@ export function PricingPlans() {
           monthly: PRICING.free.monthly,
           yearly: PRICING.free.yearly,
           highlight: false,
-          features: [
-            t("features.apps1"),
-            t("features.kwLimited"),
-            t("features.credits20"),
-          ],
+          features: [t("features.apps1"), t("features.kwLimited"), t("features.credits20")],
         },
         {
           id: "pro" as const,
           monthly: PRICING.pro.monthly,
           yearly: PRICING.pro.yearly,
           highlight: true,
-          features: [
-            t("features.apps5"),
-            t("features.kwFull"),
-            t("features.credits200"),
-            t("features.alerts"),
-            t("features.exports"),
-          ],
+          features: PRO_INCLUDE_KEYS.map((key) => t(`proIncludes.${key}`)),
         },
         {
           id: "growth" as const,
@@ -121,92 +122,112 @@ export function PricingPlans() {
         {t("yearlyNote")}
       </p>
 
-      <div className="mt-10 grid gap-6 lg:grid-cols-3">
+      <div className="mt-10 grid gap-6 lg:grid-cols-3 lg:items-stretch">
         {plans.map((p) => {
           const isFree = p.id === "free";
+          const isPro = p.id === "pro";
           const pct = !isFree ? savingsPercent(p.monthly, p.yearly) : 0;
           const showYearly = cycle === "yearly" && !isFree;
 
           return (
-            <Card
-              key={p.id}
-              className={cn(
-                "flex flex-col overflow-hidden border-white/10 bg-white/[0.05] backdrop-blur-[12px] transition-all duration-300 hover:-translate-y-0.5",
-                p.highlight
-                  ? "border-[#22C55E]/40 shadow-xl shadow-[#22C55E]/10 ring-1 ring-[#22C55E]/20"
-                  : "hover:border-white/20",
-              )}
-            >
-              <CardHeader className="space-y-2 pb-2">
-                {p.highlight ? (
-                  <Badge className="w-fit border-[#22C55E]/30 bg-[#22C55E]/20 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[#22C55E]">
-                    {t("recommended")}
-                  </Badge>
-                ) : (
-                  <span className="text-[11px] font-medium text-transparent">.</span>
-                )}
-                <h2 className="text-xl font-bold tracking-tight text-white">{t(`plans.${p.id}.name`)}</h2>
-                <p className="text-sm leading-snug text-white/55">{t(`plans.${p.id}.desc`)}</p>
-                <div className="pt-3">
-                  {isFree ? (
-                    <p className="flex flex-wrap items-baseline gap-2">
-                      <span className="text-4xl font-bold tracking-tight text-white">$0</span>
-                      <span className="text-sm text-white/50">{t("forever")}</span>
-                    </p>
-                  ) : showYearly ? (
-                    <div className="space-y-1">
-                      <p className="flex flex-wrap items-baseline gap-2">
-                        <span className="text-4xl font-bold tracking-tight text-white">${p.yearly}</span>
-                        <span className="text-sm font-medium text-white/50">{t("perYrShort")}</span>
-                      </p>
-                      <p className="text-sm text-white/50">
-                        {t("eqPerMonth", { amount: eqMonthly(p.yearly) })}
-                      </p>
-                      {pct > 0 ? (
-                        <Badge variant="outline" className="mt-2 w-fit border-[#22C55E]/40 bg-[#22C55E]/10 text-[#22C55E]">
-                          {t("saveVsMonthly", { percent: pct })}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="flex flex-wrap items-baseline gap-2">
-                      <span className="text-4xl font-bold tracking-tight text-white">${p.monthly}</span>
-                      <span className="text-sm font-medium text-white/50">{t("perMo")}</span>
-                    </p>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="flex-1 pt-2">
-                <ul className="space-y-2.5 text-sm text-white/60">
-                  {p.features.map((f) => (
-                    <li key={f} className="flex gap-2.5">
-                      <span className="mt-0.5 text-[#22C55E]">✓</span>
-                      <span>{f}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-              <CardFooter className="flex flex-col gap-2 pt-2">
-                <Button
-                  type="button"
-                  size="lg"
-                  variant={p.highlight ? "default" : "secondary"}
-                  className={cn(
-                    "h-12 w-full text-base font-semibold transition duration-200 active:scale-[0.99]",
-                    p.highlight &&
-                      "border-0 bg-[#22C55E] text-white shadow-lg shadow-[#22C55E]/25 hover:bg-[#16a34a]",
-                    !p.highlight &&
-                      "border border-white/10 bg-white/[0.08] text-white hover:bg-white/[0.12]",
-                  )}
-                  onClick={() => openAuth("signup")}
+            <div key={p.id} className="flex min-w-0 flex-col">
+              {isPro ? (
+                <p
+                  className="mb-3 text-center text-sm font-medium leading-snug text-[#86efac] sm:text-[0.9375rem] lg:mx-auto lg:flex lg:min-h-[4.25rem] lg:max-w-[20rem] lg:items-end lg:justify-center lg:text-balance"
                 >
-                  {t(`plans.${p.id}.cta`)}
-                </Button>
-                {!isFree ? (
-                  <p className="text-center text-[11px] leading-relaxed text-white/45">{t("creditsHint")}</p>
-                ) : null}
-              </CardFooter>
-            </Card>
+                  {t("proPositioning")}
+                </p>
+              ) : (
+                <div className="mb-3 hidden lg:block lg:min-h-[4.25rem]" aria-hidden />
+              )}
+
+              <Card
+                className={cn(
+                  "flex min-h-0 flex-1 flex-col overflow-hidden border-white/10 bg-white/[0.05] backdrop-blur-[12px] transition-all duration-300 hover:-translate-y-0.5",
+                  p.highlight
+                    ? "border-[#22C55E]/50 shadow-xl shadow-[#22C55E]/15 ring-2 ring-[#22C55E]/30 lg:relative lg:z-10 lg:scale-[1.02]"
+                    : "hover:border-white/20",
+                )}
+              >
+                <CardHeader className="space-y-2 pb-2">
+                  {p.highlight ? (
+                    <Badge className="w-fit border-[#22C55E]/40 bg-[#22C55E]/25 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-[#4ade80]">
+                      {t("mostPopular")}
+                    </Badge>
+                  ) : (
+                    <span className="text-[11px] font-medium text-transparent">.</span>
+                  )}
+                  <h2 className="text-xl font-bold tracking-tight text-white">{t(`plans.${p.id}.name`)}</h2>
+                  <p className="text-sm leading-snug text-white/55">{t(`plans.${p.id}.desc`)}</p>
+                  <div className="pt-3">
+                    {isPro ? (
+                      <p className="text-sm font-semibold tracking-tight text-[#4ade80]">
+                        {t("plans.pro.priceBlurb")}
+                      </p>
+                    ) : null}
+                    {isFree ? (
+                      <p className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-4xl font-bold tracking-tight text-white">$0</span>
+                        <span className="text-sm text-white/50">{t("forever")}</span>
+                      </p>
+                    ) : showYearly ? (
+                      <div className={cn("space-y-1", isPro && "mt-3")}>
+                        <p className="flex flex-wrap items-baseline gap-2">
+                          <span className="text-4xl font-bold tracking-tight text-white">${p.yearly}</span>
+                          <span className="text-sm font-medium text-white/50">{t("perYrShort")}</span>
+                        </p>
+                        <p className="text-sm text-white/50">
+                          {t("eqPerMonth", { amount: eqMonthly(p.yearly) })}
+                        </p>
+                        {pct > 0 ? (
+                          <Badge
+                            variant="outline"
+                            className="mt-2 w-fit border-[#22C55E]/40 bg-[#22C55E]/10 text-[#22C55E]"
+                          >
+                            {t("saveVsMonthly", { percent: pct })}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className={cn("flex flex-wrap items-baseline gap-2", isPro && "mt-3")}>
+                        <span className="text-4xl font-bold tracking-tight text-white">${p.monthly}</span>
+                        <span className="text-sm font-medium text-white/50">{t("perMo")}</span>
+                      </p>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="flex-1 pt-2">
+                  <ul className="space-y-2.5 text-sm text-white/60">
+                    {p.features.map((f) => (
+                      <li key={f} className="flex gap-2.5">
+                        <span className="mt-0.5 shrink-0 text-[#22C55E]">✓</span>
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+                <CardFooter className="flex flex-col gap-2 pt-2">
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant={p.highlight ? "default" : "secondary"}
+                    className={cn(
+                      "h-12 w-full text-base font-semibold transition duration-200 active:scale-[0.99]",
+                      p.highlight &&
+                        "border-0 bg-[#22C55E] text-white shadow-lg shadow-[#22C55E]/30 hover:bg-[#16a34a]",
+                      !p.highlight &&
+                        "border border-white/10 bg-white/[0.08] text-white hover:bg-white/[0.12]",
+                    )}
+                    onClick={() => openAuth("signup")}
+                  >
+                    {t(`plans.${p.id}.cta`)}
+                  </Button>
+                  {!isFree ? (
+                    <p className="text-center text-[11px] leading-relaxed text-white/45">{t("creditsHint")}</p>
+                  ) : null}
+                </CardFooter>
+              </Card>
+            </div>
           );
         })}
       </div>

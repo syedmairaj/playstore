@@ -2,8 +2,12 @@
 
 import { Link, useRouter } from "@/i18n/navigation";
 import { useMemo, useState } from "react";
+import { AddAppModal } from "@/components/app/add-app-modal";
 import { SignOutButton } from "@/components/app/SignOutButton";
-import { normalizePlan, PLAN_META } from "@/lib/plan-limits";
+import { UpgradeModal } from "@/components/ui/upgrade-modal";
+import { useAppLimits } from "@/hooks/use-app-limits";
+import { precheckAddApp } from "@/lib/client/precheck-add-app";
+import { normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS } from "@/lib/plan-limits";
 
 const TABS = [
   "Workspace",
@@ -30,10 +34,13 @@ export function SettingsTabs(props: {
   keywordCount: number;
 }) {
   const router = useRouter();
+  const appLimits = useAppLimits(props.workspaceId);
   const [tab, setTab] = useState<TabId>("Workspace");
   const [wsName, setWsName] = useState(props.workspace.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addAppOpen, setAddAppOpen] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const [displayName, setDisplayName] = useState(props.profile.display_name ?? "");
@@ -50,6 +57,21 @@ export function SettingsTabs(props: {
     [props.workspace.plan],
   );
   const meta = PLAN_META[plan];
+
+  function tryOpenAddAppModal() {
+    setError(null);
+    const pre = precheckAddApp(appLimits);
+    if (pre.outcome === "deny_wait") return;
+    if (pre.outcome === "deny_limits_failed") {
+      setError("Could not verify app limits. Check your connection or refresh the page.");
+      return;
+    }
+    if (pre.outcome === "deny_upgrade") {
+      setUpgradeOpen(true);
+      return;
+    }
+    setAddAppOpen(true);
+  }
 
   async function saveWorkspaceName() {
     setError(null);
@@ -164,6 +186,24 @@ export function SettingsTabs(props: {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
+      <UpgradeModal
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        plan={appLimits.data?.plan ?? plan}
+        currentCount={appLimits.data?.currentCount ?? props.apps.length}
+        appLimit={
+          appLimits.data?.limit ??
+          (plan === "growth" ? UNLIMITED_APP_SLOTS : plan === "pro" ? 5 : 1)
+        }
+      />
+      <AddAppModal
+        open={addAppOpen}
+        onOpenChange={setAddAppOpen}
+        workspaceId={props.workspaceId}
+        limits={appLimits}
+        onRequestUpgrade={() => setUpgradeOpen(true)}
+        onSuccess={() => router.refresh()}
+      />
       <header>
         <h1 className="text-2xl font-semibold text-neutral-900">Settings</h1>
         <p className="mt-1 text-sm text-neutral-600">
@@ -219,7 +259,7 @@ export function SettingsTabs(props: {
                 </button>
               </div>
             </div>
-            <div>
+            <div id="workspace-apps">
               <h2 className="text-sm font-semibold text-neutral-900">Apps</h2>
               <ul className="mt-3 divide-y divide-neutral-100 rounded-xl border border-neutral-100">
                 {props.apps.length === 0 ? (
@@ -235,6 +275,44 @@ export function SettingsTabs(props: {
                   ))
                 )}
               </ul>
+              <div className="mt-4 rounded-xl border border-neutral-100 bg-neutral-50/80 p-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  Add new app
+                </h3>
+                {appLimits.isLoading ? (
+                  <p className="mt-2 text-xs text-neutral-500">Checking plan limits…</p>
+                ) : appLimits.isError ? (
+                  <p className="mt-2 text-xs text-red-600">
+                    Could not verify app limits. You can retry after refreshing the page.
+                  </p>
+                ) : appLimits.data ? (
+                  <p className="mt-2 text-xs text-neutral-600">
+                    Apps in this workspace:{" "}
+                    <span className="font-semibold text-neutral-900">
+                      {appLimits.data.currentCount}
+                      {appLimits.data.limit === UNLIMITED_APP_SLOTS
+                        ? " (unlimited)"
+                        : ` / ${appLimits.data.limit}`}
+                    </span>{" "}
+                    on {PLAN_META[normalizePlan(appLimits.data.plan)].label}.
+                  </p>
+                ) : null}
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    disabled={appLimits.isLoading || appLimits.isError}
+                    onClick={tryOpenAddAppModal}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:bg-neutral-300"
+                  >
+                    Add app
+                  </button>
+                </div>
+                {appLimits.data && !appLimits.data.allowed ? (
+                  <p className="mt-2 text-xs text-amber-800">
+                    {appLimits.data.message ?? "Upgrade your plan to add more apps."}
+                  </p>
+                ) : null}
+              </div>
             </div>
             <div>
               <h2 className="text-sm font-semibold text-neutral-900">Usage & limits</h2>
@@ -246,7 +324,7 @@ export function SettingsTabs(props: {
                 / {meta.keywords} on {meta.label}
               </p>
               <p className="mt-1 text-xs text-neutral-500">
-                Apps limit per plan is enforced at billing time in a future release.
+                App slots are enforced per workspace (Free: 1, Pro: 5, Growth: unlimited).
               </p>
             </div>
             {isOwner ? (

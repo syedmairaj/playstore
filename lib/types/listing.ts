@@ -8,6 +8,8 @@ export type ListingOptimizerInput = {
   toneStyle: ToneStyle;
   /** When true, model should return Arabic copy for all user-visible strings. */
   targetArabic?: boolean;
+  /** Optional refinement appended to the user prompt (e.g. regenerate with a new angle). */
+  userInstruction?: string;
 };
 
 export type ListingOptimizerOutput = {

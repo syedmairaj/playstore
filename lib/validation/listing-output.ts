@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const listingGenerationOutputSchema = z.object({
-  title: z.string().min(1).max(50),
+  title: z.string().min(1).max(30),
   shortDescription: z.string().min(1).max(80),
   fullDescription: z.string().min(1).max(4000),
   keywordSuggestions: z.array(z.string().min(1).max(80)).min(3).max(30),

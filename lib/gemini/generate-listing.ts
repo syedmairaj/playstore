@@ -1,4 +1,12 @@
+import "server-only";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { clampListingGenerationParsed } from "@/lib/gemini/clamp-listing-generation-parsed";
+import {
+  assertGeminiApiKey,
+  mergeGeminiGenerationConfig,
+  resolveGeminiModel,
+} from "@/lib/gemini/gemini-defaults";
+import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import { buildListingOptimizerMessages } from "@/lib/prompts/listing-optimizer";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 import {
@@ -9,21 +17,17 @@ import {
 export async function generateListingWithGemini(
   input: ListingOptimizerInput,
 ): Promise<ListingGenerationOutput> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not set");
-  }
-  const modelName = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+  const apiKey = assertGeminiApiKey();
+  const modelName = resolveGeminiModel();
 
   const { system, user } = buildListingOptimizerMessages(input);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: modelName,
     systemInstruction: system,
-    generationConfig: {
-      temperature: 0.65,
+    generationConfig: mergeGeminiGenerationConfig({
       responseMimeType: "application/json",
-    },
+    }),
   });
 
   const result = await model.generateContent(user);
@@ -35,5 +39,13 @@ export async function generateListingWithGemini(
     throw new Error("Model returned invalid JSON");
   }
 
-  return listingGenerationOutputSchema.parse(parsed);
+  const clamped = clampListingGenerationParsed(parsed);
+  const validated = listingGenerationOutputSchema.safeParse(clamped);
+  if (!validated.success) {
+    throw new InvalidModelOutputError(
+      "The model returned listing data that could not be validated after applying Play Store length limits. Try Regenerate.",
+      validated.error,
+    );
+  }
+  return validated.data;
 }
