@@ -1,0 +1,26 @@
+---
+description: Treat docs/ as product, design, and implementation source of truth
+alwaysApply: true
+---
+
+# Documentation source of truth
+
+**For AI agents and developers:** The `docs/` folder is the **source of truth** for this project—product scope, design, architecture, APIs, database, workflows, and conventions.
+
+## Rules
+
+1. **Read before changing code** — Before substantive edits, read the relevant files under `docs/` (e.g. `architecture.md`, `api.md`, `database.md`, `design-system.md`, `product.md`, `requirements.md`, `dashboard-features.md`, `plan.md`, and any other doc that applies).
+
+2. **Docs win over code** — If implementation conflicts with documentation, follow the documentation unless the docs have been **explicitly** updated first to reflect the new intent.
+
+3. **No silent architecture shifts** — Do not change architecture, database schema, public APIs, or user-visible workflows without checking and aligning with the appropriate `docs/` files.
+
+4. **Match documented behavior** — Keep code aligned with documented conventions, endpoints, data shapes, and flows described in `docs/`.
+
+5. **Review docs and repo patterns first** — Before generating new code, review related `docs/` pages and existing patterns in this repository.
+
+6. **Prefer consistency** — Favor consistency with the current project structure and patterns over introducing new abstractions or conventions unless `docs/` (or an explicit project decision) calls for them.
+
+7. **Major changes** — For major or breaking changes, propose or apply **documentation updates first**, then implementation—do not leave docs stale relative to intentional new behavior.
+
+When in doubt, open `docs/`, then change code to match.

@@ -1,0 +1,427 @@
+{
+  "meta": {
+    "title": "PlayStore — Google Play ASO without the enterprise weight",
+    "description": "Discover keywords, generate high-converting listings, and spot competitor gaps. Built for indie Android founders and MENA teams."
+  },
+  "marketing": {
+    "liveDemo": "Live demo"
+  },
+  "nav": {
+    "features": "Features",
+    "pricing": "Pricing",
+    "blog": "Blog",
+    "signIn": "Sign in",
+    "startTrial": "Start free trial",
+    "language": "Language",
+    "menu": "Menu"
+  },
+  "hero": {
+    "eyebrow": "Google Play only · EN + العربية",
+    "headline": "Rank higher on Google Play — simpler & faster",
+    "sub": "Clarity, not clutter. Keywords that move installs, AI listings that convert, and competitor gaps you can ship against — without enterprise bloat.",
+    "trust": "Explore the product on the free tier — upgrade when you see results.",
+    "trustStrong": "Trusted by indie founders in Dubai, Riyadh, Cairo & worldwide.",
+    "trustBar": {
+      "noCard": "No credit card required",
+      "cancel": "Cancel anytime",
+      "secure": "Data secure"
+    },
+    "ctaPrimary": "Start free trial",
+    "ctaSecondary": "See features",
+    "preview": {
+      "label": "Live Preview",
+      "interactive": "Interactive",
+      "modeTabsAria": "Preview mode",
+      "modes": {
+        "aso": "ASO",
+        "ai": "AI",
+        "keywords": "Keywords"
+      },
+      "install": "Install",
+      "readMore": "Read more",
+      "readLess": "Show less",
+      "placeholderTitle": "Your app name",
+      "placeholderShort": "Short description appears here after you generate a listing.",
+      "placeholderFull": "Full description expands when you tap Read more.",
+      "adSponsored": "Sponsored",
+      "adHeadline": "Your headline",
+      "adBody": "Primary text from your short description shows here.",
+      "adCta": "Learn more",
+      "pushTitle": "Your app",
+      "pushBody": "Notification preview text from your short description.",
+      "pushHint": "Tap to expand — same gesture users use on a lock screen."
+    },
+    "demo": {
+      "appName": "FocusFlow",
+      "category": "Productivity",
+      "keywords": "habit tracker, ADHD, reminders, deep work",
+      "title": "FocusFlow — habits & ADHD-friendly focus",
+      "shortDescription": "Build streaks, block distractions, and ship calm productivity in minutes.",
+      "fullDescription": "FocusFlow helps indie builders and students stay on task with gentle timers, habit loops, and distraction shields. Sync reminders, see streaks at a glance, and export weekly summaries. Built for Google Play with lightweight installs and offline-first flows where it matters.",
+      "kw1": "habit tracker",
+      "kw2": "ADHD",
+      "kw3": "deep work",
+      "cta1": "Start free trial",
+      "cta2": "See plans"
+    },
+    "phone": {
+      "liveLabel": "LIVE PREVIEW",
+      "interactiveBadge": "Interactive",
+      "tabsAria": "Interactive preview modes",
+      "aso": {
+        "scoreLabel": "ASO score",
+        "scoreValue": "84",
+        "rankingsTitle": "Keyword ranks",
+        "aiTitle": "AI suggestions",
+        "ai1": "Add “pomodoro” to short description",
+        "ai2": "Shorten title by 4 chars for A/B test",
+        "kw1": "habit tracker",
+        "kw1Rank": "#12",
+        "kw2": "ADHD app",
+        "kw2Rank": "#28",
+        "kw3": "focus timer",
+        "kw3Rank": "#6"
+      },
+      "ad": {
+        "sponsored": "Sponsored",
+        "headline": "Ship calmer focus in one tap",
+        "body": "Streaks, shields, and reminders tuned for busy brains.",
+        "cta": "Install now",
+        "reach": "Est. reach",
+        "reachVal": "48K",
+        "ctr": "CTR",
+        "ctrVal": "3.2%",
+        "spend": "Spend / wk",
+        "spendVal": "$120"
+      },
+      "push": {
+        "notifTitle": "FocusFlow",
+        "notifBody": "Deep work starts in 5 min — tap to open.",
+        "openRate": "Open rate",
+        "openVal": "22%",
+        "delivered": "Delivered",
+        "delVal": "12.4k"
+      }
+    },
+    "screen": {
+      "aso": {
+        "title": "ASO health",
+        "hint": "Workspace home",
+        "score": "84",
+        "liveBadge": "Live",
+        "check1": "Title length on target",
+        "check2": "Add promo video",
+        "check3": "Keyword in first 80 chars"
+      },
+      "ai": {
+        "title": "AI listing optimizer",
+        "badge": "Play-ready",
+        "beforeLabel": "Before",
+        "afterLabel": "After",
+        "beforeTitle": "Focus timer app",
+        "afterTitle": "FocusFlow — habits & deep work",
+        "beforeShort": "A simple timer. Free with ads.",
+        "afterShort": "Build streaks, block distractions, calm productivity in minutes — tuned for installs.",
+        "uplift": "+18% clearer value prop vs. baseline"
+      },
+      "keywords": {
+        "title": "Tracked terms",
+        "colTerm": "Term",
+        "colRank": "Rank",
+        "colTrend": "7d",
+        "t1": "meditation timer",
+        "r1": "#14",
+        "t2": "pomodoro app",
+        "r2": "#8",
+        "t3": "study focus",
+        "r3": "#31",
+        "footerTrend": "+2 avg. ranks this week"
+      }
+    }
+  },
+  "features": {
+    "kicker": "Three jobs. One calm workspace.",
+    "title": "Calm tools. Clear next steps.",
+    "subtitle": "ASO health, high-intent keywords, and AI-built listings — one calm workspace, zero clutter.",
+    "asoScore": {
+      "title": "ASO health score",
+      "body": "Instant 0–100 score plus a prioritized checklist so you always know exactly what to fix next."
+    },
+    "keywords": {
+      "title": "High-volume, low-competition keywords",
+      "body": "Discover and track keywords that actually drive installs — with rankings, trends, and opportunity scores."
+    },
+    "listing": {
+      "title": "AI Listing Optimizer",
+      "body": "Generate high-converting titles, short & long descriptions in seconds — optimized for Google Play conversion.",
+      "aiBadge": "Powered by advanced AI trained for Google Play"
+    },
+    "competitor": {
+      "title": "Competitor gaps & quick wins",
+      "body": "Instantly see your competitors' weaknesses and claim the keyword whitespace they're leaving open."
+    },
+    "reviews": {
+      "title": "Review insights & rating alerts",
+      "body": "Turn real user reviews into actionable metadata improvements and rating recovery plans."
+    },
+    "localization": {
+      "title": "Localization-ready (EN · العربية)",
+      "body": "Smart AI suggestions for English and Arabic — with RTL-aware formatting built for MENA markets."
+    }
+  },
+  "featuresPage": {
+    "eyebrow": "Product",
+    "title": "Features & roadmap",
+    "intro": "Everything we build follows one rule: fewer panels, clearer actions.",
+    "subIntro": "Ship faster on Google Play with keywords, listings, competitor gaps, reviews, localization — and an ASO score that tells you what’s next.",
+    "capabilitiesTitle": "What you get today",
+    "capabilitiesSubtitle": "Each card is a focused workflow — not a dashboard you have to configure for a week.",
+    "roadmapTitle": "How we ship",
+    "roadmapIntro": "Thin slices, shipped often. Here’s the shape of what’s live, in motion, and on deck.",
+    "nowLabel": "Now",
+    "now1": "Keyword tracking with rank snapshots",
+    "now2": "AI listing drafts (title · short · long · CTAs)",
+    "now3": "ASO Score + checklist on your workspace home",
+    "now4": "Alerts for ranking changes",
+    "nextLabel": "Next",
+    "next1": "Richer competitor gap reports & exports",
+    "next2": "Rating trend alerts alongside review themes",
+    "next3": "Saved localization playbooks per market",
+    "laterLabel": "Later",
+    "later1": "Automated EN ↔ AR listing diff & suggestions",
+    "later2": "Deeper store conversion experiments (A/B hints)"
+  },
+  "social": {
+    "title": "Proof from builders who ship",
+    "subtitle": "Indie founders and MENA teams replacing bloated ASO stacks with PlayStore.",
+    "q1": "We moved from a €400/mo suite to PlayStore and still ranked #3 for “invoice scanner UAE” in six weeks.",
+    "who1": "Founder, fintech utility · Dubai",
+    "q2": "The AI listing rewrite lifted store listing conversion roughly 18% — we finally A/B tested with confidence.",
+    "who2": "Product lead, health & fitness · Riyadh",
+    "q3": "Arabic + English UI means our Cairo team and EU contractors stay aligned without extra tooling.",
+    "who3": "Head of growth, edtech · Cairo"
+  },
+  "ctaBand": {
+    "title": "Ship better Play listings this week",
+    "subtitle": "Join teams who picked clarity over dashboards. Keywords, AI copy, and competitor gaps — one calm workspace.",
+    "primary": "Start free — no card",
+    "secondary": "Compare plans",
+    "contact": "Talk to us",
+    "trustLine": "No credit card required · Cancel anytime · Data secure"
+  },
+  "footer": {
+    "tagline": "Google Play ASO for indie teams — keywords, listings, and alerts without the enterprise weight.",
+    "navAria": "Footer",
+    "product": "Product",
+    "company": "Company",
+    "legal": "Legal",
+    "privacy": "Privacy",
+    "terms": "Terms",
+    "contact": "Contact",
+    "rights": "All rights reserved.",
+    "disclaimer": "PlayStore.xyz is an independent tool with no affiliation with Google or Google Play. All trademarks belong to their respective owners."
+  },
+  "dashboard": {
+    "home": "Home",
+    "myApps": "My apps",
+    "keywords": "Keyword tracker",
+    "listingAi": "AI listing optimizer",
+    "competitorSpy": "Competitor spy",
+    "reviews": "Reviews",
+    "alerts": "Alerts",
+    "settings": "Settings",
+    "aso": {
+      "title": "ASO health",
+      "hint": "A 0–100 score from five calm checkpoints — complete each to lift readiness.",
+      "checkApps": "Add your app in Settings",
+      "checkKeywords": "Track at least one keyword",
+      "checkSnapshots": "Save two rank snapshots for movement",
+      "checkListing": "Generate an AI listing draft",
+      "checkAlerts": "Create a ranking alert"
+    },
+    "growthHub": {
+      "headerEyebrow": "Growth Hub",
+      "navAria": "Workspace navigation",
+      "suiteTitle": "Growth suite",
+      "suiteHint": "Preview listing, ad, and push surfaces before you ship.",
+      "aso": "ASO",
+      "ads": "Ads",
+      "push": "Push",
+      "phoneCaption": "Interactive Play-style preview — updates when you generate a new AI draft.",
+      "continueTitle": "Continue in workspace",
+      "linkOptimizer": "AI listing optimizer",
+      "linkKeywords": "Keyword tracker",
+      "linkAlerts": "Alerts"
+    }
+  },
+  "auth": {
+    "welcomeHeadline": "Welcome to PlayStore",
+    "modalTagline": "Google Play ASO",
+    "subtitleSignin": "Continue with Google or a secure magic link — we never use passwords.",
+    "subtitleSignup": "Start free with Google or a magic link in your inbox — passwords are not part of this product.",
+    "google": "Continue with Google",
+    "magic": "Magic link email",
+    "emailPlaceholder": "you@company.com",
+    "sendLink": "Email me a magic link",
+    "sending": "Sending…",
+    "checkEmail": "Check your inbox for the sign-in link.",
+    "divider": "or",
+    "error": "Something went wrong. Try again."
+  },
+  "authPage": {
+    "hint": "Use the secure window above to continue with Google or your email.",
+    "home": "Back to home"
+  },
+  "credits": {
+    "label": "AI credits",
+    "lowTitle": "You’re low on AI credits",
+    "lowBody": "Upgrade your plan or buy a top-up to keep generating listings and insights without interruption.",
+    "emptyTitle": "No AI credits left",
+    "emptyBody": "Add credits to continue using AI features this month.",
+    "balance": "{count} credits left",
+    "topUp": "Buy 100 credits — $10",
+    "viewPlans": "View plans",
+    "close": "Close"
+  },
+  "pricing": {
+    "title": "Pricing that respects your runway",
+    "subtitle": "Every paid plan includes monthly AI credits for listing generation and insights. Need more? Top up anytime.",
+    "billingLabel": "Billing",
+    "billingMonthly": "Monthly",
+    "billingYearly": "Yearly",
+    "saveBadge": "Save ~{percent}%",
+    "yearlyNote": "Yearly pricing is billed once per year. The ~20% badge compares annual vs. paying monthly × 12; exact savings are shown on each plan.",
+    "saveVsMonthly": "Save ~{percent}% vs. monthly × 12",
+    "eqPerMonth": "≈ ${amount}/mo billed annually",
+    "perMo": "/mo",
+    "perYr": "/yr billed annually",
+    "perYrShort": "/yr",
+    "forever": "forever",
+    "creditsHint": "AI credits reset monthly · $10 per 100 extra credits",
+    "compare": "Compare plans",
+    "faq": "FAQ",
+    "recommended": "Most popular",
+    "overage": "Extra AI credits: $10 per 100 credits when you need a burst.",
+    "plans": {
+      "free": {
+        "name": "Free",
+        "desc": "Try the workflow on one app.",
+        "cta": "Start free"
+      },
+      "pro": {
+        "name": "Pro",
+        "desc": "Serious indie teams shipping every week.",
+        "cta": "Start trial"
+      },
+      "growth": {
+        "name": "Growth",
+        "desc": "Studios and squads with multiple apps.",
+        "cta": "Start trial"
+      }
+    },
+    "features": {
+      "apps1": "1 app",
+      "apps5": "5 apps",
+      "appsUnlimited": "Unlimited apps",
+      "kwLimited": "Limited keyword tracking",
+      "kwFull": "Full keyword tracking",
+      "credits20": "20 AI credits / month",
+      "credits200": "200 AI credits / month",
+      "credits800": "800 AI credits / month",
+      "team": "Team seats",
+      "priority": "Priority support",
+      "alerts": "Ranking alerts (email + in-app)",
+      "exports": "Export optimized listing (Play-ready)"
+    },
+    "faq1q": "What happens when I hit my AI credit cap?",
+    "faq1a": "We’ll show a gentle nudge in-app. You can top up, upgrade, or wait for the next monthly reset.",
+    "faq2q": "Can I cancel anytime?",
+    "faq2a": "Yes. Paid plans are month-to-month unless you choose annual billing for a discount.",
+    "faq3q": "Do you support Arabic / RTL?",
+    "faq3a": "Yes — full Arabic UI with proper mirroring and Noto Sans Arabic typography.",
+    "faq4q": "How is my data secured?",
+    "faq4a": "PostgreSQL with row-level security per workspace. We never sell your data.",
+    "faq5q": "Is PlayStore affiliated with Google or Google Play?",
+    "faq5a": "No. PlayStore.xyz is an independent product. Google, Google Play, and related marks are trademarks of Google LLC. We are not endorsed by or affiliated with Google.",
+    "bottomTitle": "Start on the free tier",
+    "bottomSubtitle": "Upgrade when you’re ready. Stripe checkout for plans and credit top-ups is coming online next.",
+    "trustCtaLine": "No credit card required · Cancel anytime · Data secure",
+    "contactSales": "Email us",
+    "compareRows": {
+      "apps": "Apps",
+      "keywords": "Keyword tracking",
+      "credits": "AI credits / month",
+      "team": "Team seats",
+      "support": "Priority support"
+    }
+  },
+  "optimizer": {
+    "eyebrow": "PlayStore",
+    "title": "AI App Listing Optimizer",
+    "subtitle": "Generate Google Play–ready copy from your app details. Clear, human, conversion-focused suggestions.",
+    "form": {
+      "appName": "App name",
+      "appNamePlaceholder": "e.g. FocusFlow",
+      "category": "Category",
+      "categoryPlaceholder": "e.g. Productivity",
+      "keywords": "Target keywords",
+      "keywordsPlaceholder": "Comma or line separated, e.g. habit tracker, ADHD, reminders",
+      "features": "App features & value",
+      "featuresPlaceholder": "Bullet what the app does, who it is for, and proof points.",
+      "tone": "Tone / style",
+      "toneProfessional": "Professional",
+      "toneFriendly": "Friendly",
+      "toneBold": "Bold",
+      "toneMinimal": "Minimal",
+      "generate": "Generate suggestions",
+      "generating": "Generating…",
+      "generatingHint": "This can take a few seconds.",
+      "signInError": "Please sign in, then open the optimizer from your workspace.",
+      "creditsDetail": "You have {rem} credits; this run needs {req}.",
+      "creditsSuffix": " Visit Pricing to add more.",
+      "networkError": "Network error. Check your connection and try again.",
+      "refiningTitle": "Refining results…",
+      "refiningHint": "Adjust tone or keywords and run again — transient model issues usually clear on a second try."
+    },
+    "results": {
+      "title": "Suggested listing",
+      "persistWarning": "Saved to history failed — check Supabase configuration.",
+      "metaPrompt": "Prompt {version} · {model}",
+      "titleBlock": "Title",
+      "shortBlock": "Short description",
+      "fullBlock": "Full description",
+      "keywordsList": "ASO keyword suggestions",
+      "ctaList": "CTA suggestions",
+      "copy": "Copy",
+      "copyAll": "Copy all",
+      "copiedTitle": "Copied",
+      "copiedDescription": "Optimized for Play Store!"
+    },
+    "empty": {
+      "body": "Results appear here after you generate. Everything stays editable in the Play Console—use this as a strong first draft."
+    },
+    "preview": {
+      "label": "Live Preview",
+      "interactive": "Interactive",
+      "modeTabsAria": "Preview mode",
+      "modes": {
+        "aso": "ASO",
+        "ad": "Ad",
+        "push": "Push"
+      },
+      "install": "Install",
+      "readMore": "Read more",
+      "readLess": "Show less",
+      "placeholderTitle": "Your app name",
+      "placeholderShort": "Short description appears here — generate to see AI copy in the Play-style layout.",
+      "placeholderFull": "Full description expands when you tap Read more after a successful run.",
+      "adSponsored": "Sponsored",
+      "adHeadline": "Your headline",
+      "adBody": "Primary text from your short description will show here after you generate.",
+      "adCta": "Learn more",
+      "pushTitle": "Your app",
+      "pushBody": "Notification preview text from your short description.",
+      "pushHint": "Tap to expand — same gesture users use on a lock screen."
+    }
+  }
+}
