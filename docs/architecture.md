@@ -165,3 +165,11 @@ components/features/visualizer/ — The CSS-based Phone Frame and Mockup compone
 - **API:** `POST /api/listings/generate`, `POST /api/listings/optimizer-autofill`, and `POST /api/apps/suggest` read `ai_credits_remaining` (non-mutating) when credits are required, then call `consumeWorkspaceAiCredits` **before** Gemini (`SELECT … FOR UPDATE` in the RPC); on generation failure they call `refundWorkspaceAiCredits`, so **net balance matches a successful AI outcome**. Successful full listing runs persist `listing_generations.credits_ledger_id` and `tool_type = aso_listing`. Autofill does not create a `listing_generations` row.
 - **Costs:** `lib/features/billing/credit-costs.ts` — `listing_generation` = **5** credits per full listing run (including regenerate with `userInstruction`); `listing_optimizer_autofill` = **3** credits per single-field autofill click (keywords or features); bundle costs like ASO Growth Pack = 5 remain reserved for bundled workflows.
 
+### AI Image Engine (Runware Integration)
+- **Endpoint:** `https://api.runware.ai/v1`
+- **Model:** Flux.1 (Dev or Schnell) or Stable Diffusion XL.
+- **Workflow:** 
+  1. Frontend sends a "Logo Prompt" to a Next.js Server Action.
+  2. Server Action calls Runware via WebSocket or REST.
+  3. Runware returns a CDN URL for the generated icon.
+  4. The URL is passed to the `LivePreview` component.

@@ -36,7 +36,8 @@
         "ai": "AI",
         "keywords": "Keywords"
       },
-      "install": "Install",
+      "viewInStore": "View in Store",
+      "storePreviewToast": "This is a realistic preview of how your app will look in the Google Play Store. In the real store, users would tap this button to install your app.",
       "readMore": "Read more",
       "readLess": "Show less",
       "placeholderTitle": "Your app name",
@@ -254,7 +255,7 @@
     "growthHub": {
       "headerEyebrow": "Growth Hub",
       "navAria": "Workspace navigation",
-      "suiteTitle": "Growth suite",
+      "suiteTitle": "Growth Suite",
       "suiteHint": "Jump into tools or peek how your listing, ads, and push surfaces will feel.",
       "aso": "ASO",
       "ads": "Ads",
@@ -569,7 +570,8 @@
         "ad": "Ad",
         "push": "Push"
       },
-      "install": "Install",
+      "viewInStore": "View in Store",
+      "storePreviewToast": "This is a realistic preview of how your app will look in the Google Play Store. In the real store, users would tap this button to install your app.",
       "readMore": "Read more",
       "readLess": "Show less",
       "placeholderTitle": "Your app name",

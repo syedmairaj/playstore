@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { toast } from "sonner";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import { useTypingPreview } from "@/hooks/use-typing-preview";
 import {
@@ -129,7 +130,6 @@ export function LivePreviewPhone({
 
   const [pulse, setPulse] = useState(false);
   const prevModeRef = useRef<PreviewMode | null>(null);
-  const [installPressed, setInstallPressed] = useState(false);
   const [readMore, setReadMore] = useState(false);
   const [pushExpanded, setPushExpanded] = useState(false);
 
@@ -254,11 +254,11 @@ export function LivePreviewPhone({
   const iconSrc = useMemo(() => safePreviewIconUrl(iconUrl), [iconUrl]);
   return (
     <div className="flex w-full max-w-[320px] flex-col gap-3">
-      <div className="flex items-center justify-between px-1">
-        <p className="text-xs font-medium uppercase tracking-wider text-white/50">
+      <div className="flex w-full items-center justify-between gap-2 px-1">
+        <p className="min-w-0 flex-1 text-start text-xs font-bold uppercase tracking-wider text-[#22C55E]">
           {t("preview.label")}
         </p>
-        <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/60">
+        <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/60">
           {t("preview.interactive")}
         </span>
       </div>
@@ -272,7 +272,8 @@ export function LivePreviewPhone({
         </p>
       ) : null}
 
-      <PixelPhoneFrame statusTime={statusTime}>
+      <div className="rounded-[1.12rem] [filter:drop-shadow(0_32px_64px_rgba(0,0,0,0.62))_drop-shadow(0_14px_36px_rgba(0,0,0,0.45))]">
+        <PixelPhoneFrame statusTime={statusTime}>
         <div
           role="tablist"
           aria-label={t("preview.modeTabsAria")}
@@ -321,13 +322,13 @@ export function LivePreviewPhone({
                     <div className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-gradient-to-br from-[#4285F4]/30 to-[#22C55E]/40 ring-1 ring-white/10" />
                     )}
                     <div className="min-w-0 flex-1">
-                      <h3 className="line-clamp-2 text-[15px] font-semibold leading-snug text-white">
+                      <h3 className="line-clamp-2 text-[15px] font-semibold leading-tight tracking-tight text-white">
                         {title}
                       </h3>
-                      <p className="mt-0.5 text-[11px] text-[#22C55E]">
+                      <p className="mt-1 text-[11px] font-medium leading-snug text-[#86efac]/90">
                         {category || "App"}
                       </p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
+                      <div className="mt-2.5 flex flex-wrap gap-1.5">
                         {keywords
                           .split(/[,;\n]+/)
                           .map((s) => s.trim())
@@ -336,7 +337,7 @@ export function LivePreviewPhone({
                           .map((k) => (
                             <span
                               key={k}
-                              className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[9px] text-white/55"
+                              className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium leading-none text-white/58"
                             >
                               {k}
                             </span>
@@ -347,18 +348,22 @@ export function LivePreviewPhone({
 
                   <button
                     type="button"
-                    onPointerDown={() => setInstallPressed(true)}
-                    onPointerUp={() => setInstallPressed(false)}
-                    onPointerLeave={() => setInstallPressed(false)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      toast.message(t("preview.storePreviewToast"));
+                    }}
                     className={cn(
-                      "w-full rounded-full bg-[#22C55E] py-2.5 text-sm font-bold text-white shadow-md transition-transform active:scale-[0.98]",
-                      installPressed && "scale-[0.97]",
+                      "w-full cursor-pointer rounded-full border border-[#22C55E]/45 bg-[#22C55E]/12 py-2.5 text-[13px] font-semibold text-[#d1fae5] shadow-sm",
+                      "transition-[opacity,box-shadow] duration-200",
+                      "hover:opacity-90 hover:ring-2 hover:ring-[#22C55E]/40 hover:ring-offset-2 hover:ring-offset-[#0B0E14] hover:shadow-[0_6px_20px_-10px_rgba(34,197,94,0.18)]",
+                      "active:scale-[0.99] active:opacity-90",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0E14]",
                     )}
                   >
-                    {t("preview.install")}
+                    {t("preview.viewInStore")}
                   </button>
 
-                  <p className="text-[12px] leading-relaxed text-white/75">
+                  <p className="text-[13px] leading-relaxed text-white/72">
                     {shortDesc}
                   </p>
 
@@ -452,7 +457,8 @@ export function LivePreviewPhone({
             </div>
           </div>
         </div>
-      </PixelPhoneFrame>
+        </PixelPhoneFrame>
+      </div>
     </div>
   );
 }

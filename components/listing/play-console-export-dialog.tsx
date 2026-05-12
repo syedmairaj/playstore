@@ -51,7 +51,7 @@ export function PlayConsoleExportDialog({
       <DialogContent
         dir={dir}
         className={cn(
-          "max-h-[min(92dvh,880px)] max-w-[min(100vw-1.5rem,34rem)] gap-0 overflow-hidden border border-white/[0.12] bg-gradient-to-b from-[#0f1419] via-[#0b0e14] to-[#080a0f] p-0 text-white shadow-[0_24px_80px_-24px_rgba(0,0,0,0.85)] sm:max-w-lg",
+          "max-h-[min(92dvh,880px)] max-w-[min(100vw-1.5rem,34rem)] gap-0 overflow-hidden border border-white/[0.12] bg-gradient-to-b from-[#0f1419] via-[#0b0e14] to-[#080a0f] p-0 text-white shadow-[0_24px_80px_-24px_rgba(0,0,0,0.85)] ring-1 ring-[#22C55E]/10 sm:max-w-lg",
         )}
         overlayClassName="bg-black/70 backdrop-blur-md"
         closeButtonClassName="text-white/70 hover:text-white hover:bg-white/10"

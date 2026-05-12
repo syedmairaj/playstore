@@ -823,7 +823,7 @@ export function ListingOptimizer({
         />
       ) : null}
 
-      <header className="mb-9 space-y-3 sm:mb-12 sm:space-y-3.5">
+      <header className="mb-10 space-y-3 sm:mb-14 sm:space-y-3.5">
         {!embedded ? (
           <p className="text-sm font-semibold tracking-wide text-[#4ade80]">{t("eyebrow")}</p>
         ) : null}
@@ -864,7 +864,7 @@ export function ListingOptimizer({
 
       <section
         dir={isRtl ? "rtl" : "ltr"}
-        className="mb-10 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 shadow-[0_8px_28px_-16px_rgba(0,0,0,0.42)] backdrop-blur-sm sm:mb-12 sm:p-6"
+        className="mb-11 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 shadow-[0_8px_28px_-16px_rgba(0,0,0,0.42)] backdrop-blur-sm sm:mb-14 sm:p-6"
         aria-label={t("appContext.label")}
       >
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1012,8 +1012,8 @@ export function ListingOptimizer({
         ) : null}
       </section>
 
-      <div className="grid min-h-0 min-w-0 items-start gap-10 sm:gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:items-start lg:gap-x-10 lg:gap-y-10">
-        <div className="flex min-h-0 min-w-0 flex-col gap-10 sm:gap-12">
+      <div className="grid min-h-0 min-w-0 items-start gap-12 sm:gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:items-start lg:gap-x-12 lg:gap-y-12">
+        <div className="flex min-h-0 min-w-0 flex-col gap-12 sm:gap-14">
           <section
             dir={isRtl ? "rtl" : "ltr"}
             className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-6 shadow-[0_8px_32px_-18px_rgba(0,0,0,0.45)] backdrop-blur-md sm:p-8"
@@ -1250,7 +1250,7 @@ export function ListingOptimizer({
           {result ? (
             <section
               dir={isRtl ? "rtl" : "ltr"}
-              className="relative flex min-h-0 min-w-0 flex-col gap-10 sm:gap-11"
+              className="relative flex min-h-0 min-w-0 flex-col gap-12 sm:gap-14"
               aria-labelledby="listing-results-heading"
             >
               {resultsBusy ? (
@@ -1267,7 +1267,7 @@ export function ListingOptimizer({
                 </div>
               ) : null}
 
-              <div className="space-y-4 border-b border-white/[0.06] pb-10">
+              <div className="space-y-4 border-b border-white/[0.06] pb-11 sm:pb-12">
                 <h2
                   id="listing-results-heading"
                   className="text-xl font-semibold tracking-tight text-white sm:text-2xl"
@@ -1417,7 +1417,7 @@ export function ListingOptimizer({
                 </div>
               </div>
 
-              <div className="flex flex-col gap-10 sm:gap-11">
+              <div className="flex flex-col gap-12 sm:gap-14">
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.028] p-6 shadow-[0_14px_48px_-26px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-7">
                   <label
                     className="block text-[15px] font-semibold tracking-tight text-white/92"
@@ -1616,8 +1616,8 @@ export function ListingOptimizer({
           )}
         </div>
 
-        <aside className="flex w-full flex-col items-center gap-4 lg:sticky lg:top-8 lg:max-h-[min(calc(100dvh-5rem),920px)] lg:w-auto lg:overflow-y-auto lg:self-start lg:overscroll-contain">
-          <p className="w-full max-w-[360px] text-center text-[11px] font-semibold uppercase tracking-[0.2em] text-[#4ade80]/90">
+        <aside className="flex w-full flex-col items-center gap-5 lg:sticky lg:top-8 lg:max-h-[min(calc(100dvh-5rem),920px)] lg:w-auto lg:overflow-y-auto lg:self-start lg:overscroll-contain">
+          <p className="w-full max-w-[360px] text-center text-[11px] font-bold uppercase tracking-[0.2em] text-[#22C55E]">
             {t("preview.label")}
           </p>
           <div
