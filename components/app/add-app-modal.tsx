@@ -34,6 +34,7 @@ export type CreatedWorkspaceApp = {
   play_store_url?: string | null;
   target_countries?: string[] | null;
   created_at?: string;
+  icon_url?: string | null;
 };
 
 type ApiErr = {

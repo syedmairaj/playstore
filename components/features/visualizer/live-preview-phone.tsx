@@ -51,6 +51,10 @@ type LivePreviewPhoneProps = {
   onModeChange?: (mode: PreviewMode) => void;
   /** Route locale direction for mirrored ASO / push layout (Listing Optimizer). */
   previewDir?: "ltr" | "rtl";
+  /** When true and ASO tab has no icon, show a subtle “add logo” hint on the preview squircle. */
+  showEmptyIconAsoHint?: boolean;
+  /** When set, the ASO squircle (and hint) opens the logo flow — native tooltip + SR label via `preview.clickToChangeLogo`. */
+  onLogoSquircleClick?: () => void;
 };
 
 const MODES: PreviewMode[] = ["aso", "ad", "push"];
@@ -101,6 +105,57 @@ function LaserScan({ active }: { active: boolean }) {
   );
 }
 
+/** Play-style squircle (22% radius) with a short fade/zoom when the asset changes. */
+function PreviewSquircleMark({
+  iconSrc,
+  size,
+}: {
+  iconSrc: string;
+  size: "listing" | "push";
+}) {
+  const frame = size === "listing" ? "h-14 w-14" : "h-9 w-9";
+  const squircleStyle = { borderRadius: "22%" } as const;
+  const shell = cn(
+    "shrink-0 overflow-hidden [border-radius:22%]",
+    "transition-[opacity,transform] duration-200 ease-out",
+    frame,
+  );
+
+  if (iconSrc) {
+    return (
+      <div
+        key={iconSrc}
+        className={cn(
+          shell,
+          "min-h-0 bg-black/25 ring-1 ring-white/10",
+          "animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none motion-reduce:opacity-100 motion-reduce:transform-none",
+        )}
+        style={squircleStyle}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={iconSrc}
+          alt=""
+          className="h-full w-full min-h-0 min-w-0 max-h-full object-cover [image-rendering:auto]"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      key={`placeholder-${size}`}
+      className={cn(
+        shell,
+        size === "listing"
+          ? "bg-gradient-to-br from-[#4285F4]/30 to-[#22C55E]/40 ring-1 ring-white/10"
+          : "bg-gradient-to-br from-[#4285F4]/40 to-[#22C55E]/50",
+      )}
+      style={squircleStyle}
+    />
+  );
+}
+
 export function LivePreviewPhone({
   appName,
   category,
@@ -119,6 +174,8 @@ export function LivePreviewPhone({
   mode: controlledMode,
   onModeChange,
   previewDir = "ltr",
+  showEmptyIconAsoHint = false,
+  onLogoSquircleClick,
 }: LivePreviewPhoneProps) {
   const t = useTranslations(translationNamespace);
   const intlLocale = useLocale();
@@ -254,13 +311,10 @@ export function LivePreviewPhone({
   const iconSrc = useMemo(() => safePreviewIconUrl(iconUrl), [iconUrl]);
   return (
     <div className="flex w-full max-w-[320px] flex-col gap-3">
-      <div className="flex w-full items-center justify-between gap-2 px-1">
-        <p className="min-w-0 flex-1 text-start text-xs font-bold uppercase tracking-wider text-[#22C55E]">
+      <div className="w-full px-1" dir={previewDir}>
+        <p className="min-w-0 text-start text-xs font-bold uppercase tracking-wider text-[#22C55E]">
           {t("preview.label")}
         </p>
-        <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/60">
-          {t("preview.interactive")}
-        </span>
       </div>
 
       {contextEyebrow ? (
@@ -300,6 +354,15 @@ export function LivePreviewPhone({
           ))}
         </div>
 
+        <div
+          className="flex shrink-0 justify-end border-b border-white/[0.06] bg-black/20 px-2 py-1"
+          dir={previewDir}
+        >
+          <span className="inline-flex w-fit shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/60">
+            {t("preview.interactive")}
+          </span>
+        </div>
+
         <div className="relative bg-[#0B0E14]">
           <div className="relative h-[420px]">
             <LaserScan active={laserOn} />
@@ -309,17 +372,36 @@ export function LivePreviewPhone({
               className="absolute inset-0 overflow-y-auto overscroll-contain px-3 pb-4 pt-2"
             >
               {mode === "aso" && (
-                <div className="space-y-3 pt-1">
-                  <div className="flex gap-3">
-                    {iconSrc ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={iconSrc}
-                        alt=""
-                        className="h-14 w-14 shrink-0 rounded-2xl bg-black/25 object-cover ring-1 ring-white/10"
-                      />
+                <div className="space-y-3 pt-2">
+                  <div className="flex flex-row items-start gap-3 pt-1">
+                    {onLogoSquircleClick ? (
+                      <button
+                        type="button"
+                        onClick={onLogoSquircleClick}
+                        title={t("preview.clickToChangeLogo")}
+                        aria-label={t("preview.clickToChangeLogo")}
+                        className={cn(
+                          "flex shrink-0 flex-col items-center self-start rounded-2xl p-0.5 outline-none transition",
+                          "hover:bg-[#22C55E]/[0.07] active:scale-[0.98]",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0E14]",
+                        )}
+                      >
+                        <PreviewSquircleMark iconSrc={iconSrc} size="listing" />
+                        {showEmptyIconAsoHint && !iconSrc ? (
+                          <p className="mt-1.5 max-w-[4.75rem] text-balance text-center text-[9px] font-medium leading-snug text-[#86efac]/70">
+                            {t("preview.addLogoHint")}
+                          </p>
+                        ) : null}
+                      </button>
                     ) : (
-                    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-gradient-to-br from-[#4285F4]/30 to-[#22C55E]/40 ring-1 ring-white/10" />
+                      <div className="flex shrink-0 flex-col items-center self-start">
+                        <PreviewSquircleMark iconSrc={iconSrc} size="listing" />
+                        {showEmptyIconAsoHint && !iconSrc ? (
+                          <p className="mt-1.5 max-w-[4.75rem] text-balance text-center text-[9px] font-medium leading-snug text-[#86efac]/70">
+                            {t("preview.addLogoHint")}
+                          </p>
+                        ) : null}
+                      </div>
                     )}
                     <div className="min-w-0 flex-1">
                       <h3 className="line-clamp-2 text-[15px] font-semibold leading-tight tracking-tight text-white">
@@ -421,17 +503,10 @@ export function LivePreviewPhone({
                       pushExpanded && "ring-2 ring-[#22C55E]/40",
                     )}
                   >
-                    <div className="flex gap-2">
-                      {iconSrc ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={iconSrc}
-                          alt=""
-                          className="h-9 w-9 shrink-0 rounded-xl bg-black/25 object-cover ring-1 ring-white/10"
-                        />
-                      ) : (
-                      <div className="h-9 w-9 shrink-0 rounded-xl bg-gradient-to-br from-[#4285F4]/40 to-[#22C55E]/50" />
-                      )}
+                    <div className="flex flex-row items-start gap-2">
+                      <div className="shrink-0 self-start">
+                        <PreviewSquircleMark iconSrc={iconSrc} size="push" />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-[11px] font-semibold text-white">
                           {pushTitle}

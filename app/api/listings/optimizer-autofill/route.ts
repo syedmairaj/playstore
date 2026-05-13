@@ -5,6 +5,7 @@ import {
 import { NextResponse, type NextRequest } from "next/server";
 import { ZodError } from "zod";
 import { getClientIp } from "@/lib/client-ip";
+import { upsertOptimizerInputsAfterAutofill } from "@/lib/db/listing-generations";
 import { generateOptimizerAutofillWithGemini } from "@/lib/gemini/generate-optimizer-autofill";
 import { resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
 import { logGeminiApiKeyDiagnostics } from "@/lib/gemini/log-gemini-env";
@@ -69,6 +70,14 @@ function rateLimitMax(): number {
   const raw = process.env.RATE_LIMIT_MAX;
   const n = raw ? Number.parseInt(raw, 10) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 10;
+}
+
+function splitKeywordLines(raw: string): string[] {
+  return raw
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 40);
 }
 
 export async function POST(request: NextRequest) {
@@ -138,7 +147,38 @@ export async function POST(request: NextRequest) {
     throw e;
   }
 
-  const { workspaceId, appName, category, field, language } = input;
+  const {
+    workspaceId,
+    appName,
+    category,
+    field,
+    language,
+    appId: bodyAppId,
+    toneStyle = "professional",
+    keywordsDraft = "",
+    featuresDraft = "",
+  } = input;
+
+  if (bodyAppId) {
+    const { data: appOk, error: appLookupErr } = await supabase
+      .from("apps")
+      .select("id")
+      .eq("id", bodyAppId)
+      .eq("workspace_id", workspaceId)
+      .maybeSingle();
+    if (appLookupErr || !appOk) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: "invalid_app",
+            message: "App not found in this workspace.",
+          },
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   const role = await getWorkspaceRole(supabase, workspaceId, user.id);
   if (!role) {
@@ -287,6 +327,37 @@ export async function POST(request: NextRequest) {
       field,
       language,
     });
+
+    let persistedInputs = false;
+    let persistedGenerationId: string | undefined;
+    let persistedSavedAt: string | undefined;
+    if (bodyAppId) {
+      const targetKeywords =
+        field === "keywords"
+          ? splitKeywordLines(text)
+          : splitKeywordLines(keywordsDraft);
+      const appFeatures =
+        field === "features" ? text.trim() : featuresDraft.trim();
+
+      const persist = await upsertOptimizerInputsAfterAutofill(supabase, {
+        workspaceId,
+        userId: user.id,
+        appId: bodyAppId,
+        appName,
+        category,
+        targetKeywords,
+        appFeatures,
+        toneStyle,
+        clientIp,
+        model,
+      });
+      persistedInputs = persist.ok;
+      if (persist.ok) {
+        persistedGenerationId = persist.generationId;
+        persistedSavedAt = persist.createdAt;
+      }
+    }
+
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
@@ -297,6 +368,7 @@ export async function POST(request: NextRequest) {
         workspace_id: workspaceId,
         field,
         model,
+        persisted_inputs: persistedInputs,
       },
     });
     return NextResponse.json({
@@ -306,6 +378,10 @@ export async function POST(request: NextRequest) {
         model,
         creditsCharged: creditCost,
         creditsRemaining: debit.balanceAfter,
+        persistedInputs,
+        ...(persistedGenerationId && persistedSavedAt
+          ? { generationId: persistedGenerationId, savedAt: persistedSavedAt }
+          : {}),
       },
     });
   } catch (e) {

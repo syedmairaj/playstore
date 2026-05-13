@@ -182,15 +182,21 @@ export async function POST(request: Request, context: Ctx) {
      * Request JSON uses flat ASO fields; `createAppSchema` maps them into `metadata` before insert.
      */
     const name = parsed.name.trim();
+    const meta = parsed.metadata as Record<string, string>;
+    const metaIcon = meta.icon_url?.trim();
+    const insertPayload: Record<string, unknown> = {
+      workspace_id: workspaceId,
+      name,
+      package_name: parsed.package_name,
+      metadata: parsed.metadata,
+    };
+    if (metaIcon && /^https:\/\//i.test(metaIcon)) {
+      insertPayload.icon_url = metaIcon;
+    }
     const { data, error } = await supabase
       .from("apps")
-      .insert({
-        workspace_id: workspaceId,
-        name,
-        package_name: parsed.package_name,
-        metadata: parsed.metadata,
-      })
-      .select("id,name,package_name,metadata,created_at")
+      .insert(insertPayload)
+      .select("id,name,package_name,metadata,icon_url,created_at")
       .single();
 
     if (error || !data) {

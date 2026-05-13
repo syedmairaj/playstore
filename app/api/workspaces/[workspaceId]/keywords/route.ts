@@ -7,7 +7,14 @@ import { createKeywordSchema } from "@/lib/validation/api";
 
 type Ctx = { params: Promise<{ workspaceId: string }> };
 
-export async function GET(_request: Request, context: Ctx) {
+function parseOptionalAppId(url: URL): string | undefined {
+  const raw = url.searchParams.get("appId");
+  if (!raw || raw === "all") return undefined;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuid.test(raw) ? raw : undefined;
+}
+
+export async function GET(request: Request, context: Ctx) {
   const { workspaceId } = await context.params;
   const supabase = await createClient();
   const {
@@ -28,7 +35,8 @@ export async function GET(_request: Request, context: Ctx) {
     );
   }
 
-  const loaded = await loadWorkspaceKeywords(supabase, workspaceId);
+  const appId = parseOptionalAppId(new URL(request.url));
+  const loaded = await loadWorkspaceKeywords(supabase, workspaceId, { appId });
   if (!loaded.ok) {
     return NextResponse.json(
       { ok: false, error: { code: "query_error", message: loaded.message } },
@@ -94,6 +102,22 @@ export async function POST(request: Request, context: Ctx) {
         );
       }
       appId = app.id;
+    } else {
+      const { data: appRow, error: appErr } = await supabase
+        .from("apps")
+        .select("id")
+        .eq("id", appId)
+        .eq("workspace_id", workspaceId)
+        .maybeSingle();
+      if (appErr || !appRow) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: { code: "invalid_app", message: "App not found in this workspace." },
+          },
+          { status: 400 },
+        );
+      }
     }
 
     const { data: keyword, error } = await supabase
@@ -109,8 +133,25 @@ export async function POST(request: Request, context: Ctx) {
       .single();
 
     if (error || !keyword) {
+      const msg = error?.message ?? "Failed";
+      const dup =
+        error?.code === "23505" ||
+        /duplicate key|keywords_unique_term_per_app/i.test(error?.message ?? "");
+      if (dup) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: {
+              code: "duplicate_keyword",
+              message:
+                "That keyword is already tracked for this app and market. Try editing the filter or use a different term.",
+            },
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
-        { ok: false, error: { code: "insert_error", message: error?.message ?? "Failed" } },
+        { ok: false, error: { code: "insert_error", message: msg } },
         { status: 400 },
       );
     }

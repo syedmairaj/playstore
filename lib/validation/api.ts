@@ -53,7 +53,7 @@ export const createWorkspaceSchema = z.object({
 });
 
 export const createKeywordSchema = z.object({
-  term: z.string().trim().min(1).max(120),
+  term: z.string().trim().min(2).max(120),
   market: z.string().trim().min(2).max(8).optional(),
   locale: z.string().trim().min(2).max(16).optional(),
   appId: z.string().uuid().optional(),
@@ -106,11 +106,26 @@ export const createAppSchema = z
     };
   });
 
+/** HTTPS icon URL: persisted on `apps.icon_url` and mirrored in `apps.metadata.icon_url` on PATCH. */
+const patchAppIconUrlSchema = z.preprocess(
+  (v) => (v === null || v === "" ? undefined : v),
+  z
+    .string()
+    .trim()
+    .max(2000)
+    .url({ message: "Icon URL must be well-formed" })
+    .refine((u) => /^https:\/\//i.test(u), {
+      message: "Icon URL must be a valid HTTPS URL",
+    })
+    .optional(),
+);
+
 export const patchAppSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   package_name: z.string().trim().max(200).nullable().optional(),
   play_store_url: z.string().trim().max(2000).nullable().optional(),
   target_countries: z.array(z.string().min(2).max(4)).max(40).optional(),
+  icon_url: patchAppIconUrlSchema,
 });
 
 export const inviteMemberSchema = z.object({

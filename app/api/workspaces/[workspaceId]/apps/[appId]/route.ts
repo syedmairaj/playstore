@@ -41,7 +41,7 @@ export async function PATCH(request: Request, context: Ctx) {
     const parsed = patchAppSchema.parse(body);
     const { data: app, error: appErr } = await supabase
       .from("apps")
-      .select("id,workspace_id")
+      .select("id,workspace_id,metadata,icon_url")
       .eq("id", appId)
       .eq("workspace_id", workspaceId)
       .maybeSingle();
@@ -65,6 +65,21 @@ export async function PATCH(request: Request, context: Ctx) {
     if (parsed.target_countries != null) {
       updates.target_countries = parsed.target_countries;
     }
+    if (parsed.icon_url !== undefined) {
+      const prevMeta =
+        app.metadata && typeof app.metadata === "object" && !Array.isArray(app.metadata)
+          ? { ...(app.metadata as Record<string, unknown>) }
+          : {};
+      const icon = parsed.icon_url?.trim();
+      if (icon) {
+        prevMeta.icon_url = icon;
+        updates.icon_url = icon;
+      } else {
+        delete prevMeta.icon_url;
+        updates.icon_url = null;
+      }
+      updates.metadata = prevMeta;
+    }
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json(
@@ -77,7 +92,7 @@ export async function PATCH(request: Request, context: Ctx) {
       .from("apps")
       .update(updates)
       .eq("id", appId)
-      .select("id,name,package_name,play_store_url,target_countries")
+      .select("id,name,package_name,play_store_url,target_countries,metadata,icon_url")
       .single();
 
     if (error || !data) {

@@ -39,7 +39,7 @@ export function AnimatedHero() {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.04 }}
-            className="mt-7 text-4xl font-bold tracking-tight text-white sm:text-5xl lg:text-[3.1rem] lg:leading-[1.1]"
+            className="mt-7 text-[2.125rem] font-bold tracking-tight text-white sm:text-[2.5rem] lg:text-[2.875rem] lg:leading-[1.12]"
           >
             {t("headline")}
           </motion.h1>
@@ -47,7 +47,7 @@ export function AnimatedHero() {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.1 }}
-            className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-white/60 sm:text-xl lg:mx-0"
+            className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-[1.55] text-white/62 sm:text-[1.0625rem] sm:leading-[1.58] lg:mx-0"
           >
             {t("sub")}
           </motion.p>
@@ -55,7 +55,7 @@ export function AnimatedHero() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.14 }}
-            className="mx-auto mt-5 max-w-2xl text-center text-sm font-medium leading-relaxed text-white/72 sm:text-base lg:mx-0 lg:text-start"
+            className="mx-auto mt-5 max-w-2xl text-center text-[0.8125rem] font-medium leading-snug text-white/70 sm:text-sm lg:mx-0 lg:text-start"
           >
             {t("trustStrong")}
           </motion.p>

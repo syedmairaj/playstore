@@ -1,27 +1,52 @@
-import { createClient } from "@/lib/supabase/server";
+import { getTranslations } from "next-intl/server";
+import { redirect } from "next/navigation";
+import { KeywordTrackerClient } from "@/components/keyword-tracker/KeywordTrackerClient";
+import { loadLatestAiListingKeywordsByApp } from "@/lib/keywords/latest-ai-listing-by-app";
 import { loadWorkspaceKeywords } from "@/lib/keywords/load-workspace-keywords";
-import { KeywordsPanel } from "@/components/keywords/KeywordsPanel";
+import { createClient } from "@/lib/supabase/server";
+import { getFeatureFlags, isModuleEnabled } from "@/lib/features";
+import { queryWorkspaceAppsList } from "@/lib/workspace/workspace-apps-list";
 
 export default async function KeywordsPage({
   params,
 }: {
-  params: Promise<{ workspaceId: string }>;
+  params: Promise<{ locale: string; workspaceId: string }>;
 }) {
-  const { workspaceId } = await params;
+  const { locale, workspaceId } = await params;
   const supabase = await createClient();
-  const loaded = await loadWorkspaceKeywords(supabase, workspaceId);
-  const keywords = loaded.ok ? loaded.keywords : [];
+  const flags = await getFeatureFlags(supabase);
+  if (!isModuleEnabled(flags, "keyword_tracker")) {
+    redirect(`/${locale}/app/${workspaceId}`);
+  }
+  const t = await getTranslations("keywordTracker");
+
+  const [kwLoaded, appsResult, latestAiByApp, wsCreditsRow] = await Promise.all([
+    loadWorkspaceKeywords(supabase, workspaceId),
+    queryWorkspaceAppsList(supabase, workspaceId),
+    loadLatestAiListingKeywordsByApp(supabase, workspaceId),
+    supabase.from("workspaces").select("ai_credits_remaining").eq("id", workspaceId).maybeSingle(),
+  ]);
+
+  const aiCreditsRemaining =
+    typeof wsCreditsRow.data?.ai_credits_remaining === "number"
+      ? wsCreditsRow.data.ai_credits_remaining
+      : undefined;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8">
+    <div className="mx-auto max-w-6xl space-y-8">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold text-neutral-900">Keywords</h1>
-        <p className="text-sm text-neutral-600">
-          Track terms for Google Play. Record rank snapshots to build history and
-          light alerts when movement matters.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight text-white">{t("title")}</h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">{t("subheadline")}</p>
       </header>
-      <KeywordsPanel workspaceId={workspaceId} initialKeywords={keywords} />
+      <KeywordTrackerClient
+        workspaceId={workspaceId}
+        initialKeywords={kwLoaded.ok ? kwLoaded.keywords : []}
+        apps={appsResult.rows}
+        keywordsLoadError={kwLoaded.ok ? null : kwLoaded.message}
+        appsLoadError={appsResult.error?.message ?? null}
+        latestAiByApp={latestAiByApp}
+        aiCreditsRemaining={aiCreditsRemaining}
+      />
     </div>
   );
 }

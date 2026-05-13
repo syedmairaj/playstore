@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { ListingOptimizer } from "@/components/ListingOptimizer";
+import { loadLatestListingHydrationMaps } from "@/lib/listing/latest-listing-hydration";
 import { createClient } from "@/lib/supabase/server";
 import { getFeatureFlags, isModuleEnabled } from "@/lib/features";
 import { canAddNewApp } from "@/lib/utils/app-limits";
@@ -25,6 +26,7 @@ export default async function ListingOptimizerPage({
     .select("ai_credits_remaining")
     .eq("id", workspaceId)
     .maybeSingle();
+  const hydrationMaps = await loadLatestListingHydrationMaps(supabase, workspaceId);
   const uiLocale = locale === "ar" ? "ar" : "en";
 
   return (
@@ -40,6 +42,8 @@ export default async function ListingOptimizerPage({
             ? wsRow.ai_credits_remaining
             : undefined
         }
+        initialHydrationByApp={hydrationMaps.byAppId}
+        initialHydrationNoApp={hydrationMaps.noApp}
       />
     </div>
   );

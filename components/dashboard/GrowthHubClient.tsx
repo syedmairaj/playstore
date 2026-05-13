@@ -28,6 +28,8 @@ type Props = {
   keywords: string;
   previewResult: ListingGenerationOutput | null;
   listingOptimizerEnabled: boolean;
+  /** First workspace app icon (https) for Play-style phone preview. */
+  previewIconUrl?: string;
 };
 
 export function GrowthHubClient({
@@ -37,6 +39,7 @@ export function GrowthHubClient({
   keywords,
   previewResult,
   listingOptimizerEnabled,
+  previewIconUrl = "",
 }: Props) {
   const t = useTranslations("dashboard.growthHub");
   const locale = useLocale();
@@ -103,6 +106,11 @@ export function GrowthHubClient({
               <span className="mt-2 block flex-1 text-[12px] leading-snug text-white/42 group-hover:text-white/55">
                 {t(row.hintKey)}
               </span>
+              {row.id === "aso" ? (
+                <span className="mt-2 block text-[11px] leading-snug text-white/32 group-hover:text-white/40">
+                  {t("asoLogoDiscoverHint")}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -122,6 +130,7 @@ export function GrowthHubClient({
           contextEyebrow={contextEyebrow}
           pulseScanOnModeChange
           previewDir={previewDir}
+          iconUrl={previewIconUrl}
         />
       </div>
     </div>

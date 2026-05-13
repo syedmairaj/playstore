@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { getClientIp } from "@/lib/client-ip";
 import { insertListingGeneration } from "@/lib/db/listing-generations";
 import { generateListingWithGemini } from "@/lib/gemini/generate-listing";
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let input;
+  let input: z.infer<typeof listingGenerateBodySchema>;
   try {
     input = listingGenerateBodySchema.parse(body);
   } catch (e) {
@@ -99,7 +99,28 @@ export async function POST(request: NextRequest) {
     throw e;
   }
 
-  const { workspaceId, ...listingInput } = input;
+  const { workspaceId, appId: bodyAppId, ...listingInput } = input;
+
+  if (bodyAppId) {
+    const { data: appOk, error: appLookupErr } = await supabase
+      .from("apps")
+      .select("id")
+      .eq("id", bodyAppId)
+      .eq("workspace_id", workspaceId)
+      .maybeSingle();
+    if (appLookupErr || !appOk) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: "invalid_app",
+            message: "App not found in this workspace.",
+          },
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   if (shouldLogGeminiDebug()) {
     console.log("=== Generate Full Listing Started ===");
@@ -259,6 +280,7 @@ export async function POST(request: NextRequest) {
       workspaceId,
       userId: user.id,
       creditsLedgerId: ledgerId,
+      appId: bodyAppId ?? null,
     });
     await logUsage(admin, {
       route: ROUTE,
@@ -279,6 +301,8 @@ export async function POST(request: NextRequest) {
         model,
         promptVersion,
         persisted: persist.ok,
+        generationId: persist.ok ? persist.id : undefined,
+        savedAt: persist.ok ? persist.createdAt : undefined,
       },
     });
   } catch (e) {

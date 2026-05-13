@@ -55,23 +55,23 @@ export async function POST(request: Request, context: Ctx) {
     }
 
     const { data: prevRows } = await supabase
-      .from("keyword_ranks")
-      .select("rank,captured_at")
+      .from("keyword_rank_snapshots")
+      .select("rank,snapshot_at")
       .eq("keyword_id", keywordId)
-      .order("captured_at", { ascending: false })
+      .order("snapshot_at", { ascending: false })
       .limit(1);
 
     const prevRank =
       prevRows && prevRows.length > 0 ? (prevRows[0].rank as number | null) : null;
 
     const { data: rankRow, error } = await supabase
-      .from("keyword_ranks")
+      .from("keyword_rank_snapshots")
       .insert({
         keyword_id: keywordId,
         rank: parsed.rank,
         source: parsed.source ?? "manual",
       })
-      .select("id,rank,captured_at,source")
+      .select("id,rank,snapshot_at,best_rank,source")
       .single();
 
     if (error || !rankRow) {
@@ -90,7 +90,11 @@ export async function POST(request: Request, context: Ctx) {
       newRank: parsed.rank,
     });
 
-    return NextResponse.json({ ok: true, rank: rankRow });
+    const payload = {
+      ...rankRow,
+      captured_at: rankRow.snapshot_at,
+    };
+    return NextResponse.json({ ok: true, rank: payload });
   } catch (e) {
     if (e instanceof ZodError) {
       return NextResponse.json(
