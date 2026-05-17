@@ -7,16 +7,28 @@ import {
   resolveGeminiModel,
 } from "@/lib/gemini/gemini-defaults";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import {
+  normalizeListingGenerationParsed,
+  rawListingHadAsoScoreKeys,
+} from "@/lib/gemini/normalize-listing-generation-parsed";
 import { buildListingOptimizerMessages } from "@/lib/prompts/listing-optimizer";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 import {
+  listingGenerationCoreSchema,
   listingGenerationOutputSchema,
+  tryParseListingAsoBundle,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
 
+export type GenerateListingWithGeminiResult = {
+  data: ListingGenerationOutput;
+  /** Model attempted ASO scoring but output failed validation; listing copy is still valid. */
+  asoScorePartial: boolean;
+};
+
 export async function generateListingWithGemini(
   input: ListingOptimizerInput,
-): Promise<ListingGenerationOutput> {
+): Promise<GenerateListingWithGeminiResult> {
   const apiKey = assertGeminiApiKey();
   const modelName = resolveGeminiModel();
 
@@ -39,13 +51,43 @@ export async function generateListingWithGemini(
     throw new Error("Model returned invalid JSON");
   }
 
-  const clamped = clampListingGenerationParsed(parsed);
-  const validated = listingGenerationOutputSchema.safeParse(clamped);
-  if (!validated.success) {
+  const normalized = normalizeListingGenerationParsed(parsed);
+  const clamped = clampListingGenerationParsed(normalized);
+  const coreResult = listingGenerationCoreSchema.safeParse(clamped);
+  if (!coreResult.success) {
     throw new InvalidModelOutputError(
       "The model returned listing data that could not be validated after applying Play Store length limits. Try Regenerate.",
-      validated.error,
+      coreResult.error,
     );
   }
-  return validated.data;
+
+  const clampedRecord =
+    typeof clamped === "object" && clamped !== null && !Array.isArray(clamped)
+      ? (clamped as Record<string, unknown>)
+      : {};
+
+  const asoTry = tryParseListingAsoBundle(clampedRecord);
+  let data: ListingGenerationOutput = { ...coreResult.data };
+  let asoScorePartial = false;
+
+  if (asoTry.ok) {
+    data = {
+      ...data,
+      asoScore: asoTry.value.asoScore,
+      scoreBreakdown: asoTry.value.scoreBreakdown,
+      improvementTips: asoTry.value.improvementTips,
+    };
+  } else if (rawListingHadAsoScoreKeys(parsed)) {
+    asoScorePartial = true;
+    data = { ...data, asoScoreDegraded: true };
+  }
+
+  const final = listingGenerationOutputSchema.safeParse(data);
+  if (!final.success) {
+    throw new InvalidModelOutputError(
+      "The model returned listing data that could not be validated after applying Play Store length limits. Try Regenerate.",
+      final.error,
+    );
+  }
+  return { data: final.data, asoScorePartial };
 }

@@ -1,5 +1,8 @@
 import "server-only";
 
+import { SERPER_PLAY_REGION_DEFAULTS } from "@/constants/regions";
+import { LIVE_RANKS_PREVIEW_UNAVAILABLE } from "@/lib/keywords/live-ranks-preview-tokens";
+import { extractPackageIdFromPlayStoreDetailsUrl } from "@/lib/keywords/play-store-details-url";
 import {
   SERPER_MAX_COUNTRIES as _SERPER_MAX_COUNTRIES,
   SUPPORTED_COUNTRY_CODES as _SUPPORTED_COUNTRY_CODES,
@@ -16,7 +19,10 @@ import {
  * preview flows. The Play Store does not expose an official search API, but every
  * app detail page (`play.google.com/store/apps/details?id=…`) is indexed by Google,
  * so a properly-localized `gl` + `hl` query returns the same ordered results a
- * user in that locale would see.
+ * user in that locale would see. Keyword Tracker uses a small cascade of
+ * Play-focused Google queries per country when the first SERP has no usable
+ * Play Store app links; Competitor Spy uses the same mechanism with
+ * `restrictToPlayStore` first.
  *
  * Security:
  * - The Serper API key is read from `process.env.SERPER_API_KEY` and **never**
@@ -37,13 +43,15 @@ export const SERPER_MAX_COUNTRIES = _SERPER_MAX_COUNTRIES;
  * Allowed country codes for the user-facing selector. Adding a new country?
  * Wire it through:
  *   1. `SUPPORTED_COUNTRY_CODES` in `lib/countries.ts`
- *   2. `COUNTRY_LOCALE_MAP` below (gl / hl defaults)
+ *   2. `SERPER_PLAY_REGION_DEFAULTS` in `constants/regions.ts` (imported below)
  *   3. `messages/{en,ar}.json` → `countrySelector.countries.<code>`
  *
  * Defaults reflect typical store listings:
  *   us → English (Latin-script results)
  *   sa → Arabic (Saudi Arabia is RTL-first; Play returns Arabic metadata)
  *   ae → English (UAE Play Store skews EN for global SaaS; Arabic still ranks)
+ *   in → English-primary SERP for India (`gl=in`); Hindi `hl` may be added later.
+ *   cn → English UI for China-region Google results (`gl=cn`); see product disclaimers for worldwide vs mainland Play.
  *
  * If a workspace needs Arabic results for `ae`, callers can override `hl` per
  * country via `searchPlayStore(..., { localeOverrides: { ae: "ar" } })`.
@@ -54,12 +62,8 @@ export type SerperCountryCode = SupportedCountryCode;
 
 type GlHl = { gl: string; hl: string };
 
-/** Default `gl` + `hl` per supported country. See note above. */
-const COUNTRY_LOCALE_MAP: Record<SerperCountryCode, GlHl> = {
-  us: { gl: "us", hl: "en" },
-  sa: { gl: "sa", hl: "ar" },
-  ae: { gl: "ae", hl: "en" },
-};
+/** Default `gl` + `hl` per supported country (see `constants/regions.ts`). */
+const COUNTRY_LOCALE_MAP: Record<SerperCountryCode, GlHl> = SERPER_PLAY_REGION_DEFAULTS;
 
 export class SerperNotConfiguredError extends Error {
   readonly code = "serper_not_configured" as const;
@@ -95,33 +99,69 @@ export type SerperPlayStoreCountryResult = {
   gl: string;
   hl: string;
   items: SerperPlayStoreItem[];
-  /** Per-country errors are surfaced here so partial results can still render. */
+  /**
+   * Per-country failure. When set to `LIVE_RANKS_PREVIEW_UNAVAILABLE`, the UI maps it
+   * to a friendly translated message (no raw HTTP text).
+   */
   error: string | null;
 };
+
+export { LIVE_RANKS_PREVIEW_UNAVAILABLE } from "@/lib/keywords/live-ranks-preview-tokens";
 
 export type SerperSearchOptions = {
   /** Optional `hl` override per country (e.g. force `ar` in UAE). */
   localeOverrides?: Partial<Record<SerperCountryCode, string>>;
   /**
-   * When true, the query is wrapped as `site:play.google.com/store/apps "<q>"`.
-   * Used by the Competitor Spy preview (search for a competitor's package name
-   * or brand restricted to Play Store).
+   * When true, the first query is `site:play.google.com/store/apps …` (competitor-style),
+   * with additional fallbacks when the SERP has no usable Play results.
    */
   restrictToPlayStore?: boolean;
   /** Override timeout (ms) — primarily for tests. */
   timeoutMs?: number;
+  /**
+   * Serper `num` (organic results depth). Default **20** for preview / Competitor Spy to
+   * limit API payload and align with billing (**1 AI credit per country**, unchanged by depth).
+   * Keyword **refresh** passes **100** for a deeper slice; credits stay per-country, not per-result.
+   */
+  num?: number;
 };
 
 type SerperOrganic = {
   title?: string;
   link?: string;
   snippet?: string;
-  position?: number;
+  position?: number | string;
 };
 
 type SerperResponseBody = {
   organic?: SerperOrganic[];
 };
+
+/** Safe phrase for `site:` / quoted queries (strip quotes, collapse spaces). */
+function normalizeKeywordForQuery(keyword: string): string {
+  return String(keyword ?? "")
+    .replace(/"/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Play-focused Google queries, tried in order until we get Play details URLs
+ * in organic results (or exhaust the list).
+ */
+function playStoreSearchQueries(keyword: string, restrictToPlayStore: boolean): string[] {
+  const k = normalizeKeywordForQuery(keyword);
+  if (k.length === 0) return [];
+  if (restrictToPlayStore) {
+    return [
+      `site:play.google.com/store/apps ${k}`,
+      `site:play.google.com "${k}"`,
+      `"${k}" app play store`,
+      `${k} app`,
+    ];
+  }
+  return [`"${k}" app play store`, `site:play.google.com "${k}"`, `${k} app`, k];
+}
 
 function isSupportedCountry(code: string): code is SerperCountryCode {
   return (SUPPORTED_COUNTRY_CODES as readonly string[]).includes(code);
@@ -142,19 +182,6 @@ export function normalizeCountries(input: readonly string[]): SerperCountryCode[
 
 const PLAY_DETAILS_LINK_RE = /^https?:\/\/play\.google\.com\/store\/apps\/details/i;
 
-/** Extracts the `id` query (Android package name) from a Play details URL. */
-function packageIdFromLink(link: string): string | null {
-  try {
-    const url = new URL(link);
-    if (!/(^|\.)play\.google\.com$/i.test(url.hostname)) return null;
-    if (!/\/store\/apps\/details/i.test(url.pathname)) return null;
-    const id = url.searchParams.get("id");
-    return id && id.trim().length > 0 ? id.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
 function isPlayStoreAppLink(link: string | undefined | null): boolean {
   if (!link) return false;
   return PLAY_DETAILS_LINK_RE.test(link);
@@ -167,15 +194,25 @@ function pickPlayStoreItems(organic: SerperOrganic[] | undefined): SerperPlaySto
   for (const row of organic) {
     const link = row?.link?.trim();
     if (!isPlayStoreAppLink(link)) continue;
-    const pkg = packageIdFromLink(link!);
+    const pkg = extractPackageIdFromPlayStoreDetailsUrl(link!);
     const dedupeKey = pkg ?? link!;
     if (seenPkg.has(dedupeKey)) continue;
     seenPkg.add(dedupeKey);
+    const rawPos = row.position;
+    let position: number;
+    if (typeof rawPos === "number" && Number.isFinite(rawPos)) {
+      position = rawPos;
+    } else if (typeof rawPos === "string") {
+      const parsed = Number.parseInt(rawPos.trim(), 10);
+      position = Number.isFinite(parsed) ? parsed : out.length + 1;
+    } else {
+      position = out.length + 1;
+    }
     out.push({
       title: row.title?.trim() || link!,
       link: link!,
       packageId: pkg,
-      position: typeof row.position === "number" ? row.position : out.length + 1,
+      position,
       snippet: row.snippet?.trim() || null,
     });
   }
@@ -190,72 +227,113 @@ async function fetchOneCountry(
 ): Promise<SerperPlayStoreCountryResult> {
   const defaults = COUNTRY_LOCALE_MAP[country];
   const hl = options.localeOverrides?.[country]?.trim() || defaults.hl;
-  const q = options.restrictToPlayStore
-    ? `site:play.google.com/store/apps ${keyword}`
-    : keyword;
-
-  const ctrl = new AbortController();
+  const restrict = Boolean(options.restrictToPlayStore);
+  const queries = playStoreSearchQueries(keyword, restrict);
   const timeoutMs = options.timeoutMs ?? SERPER_TIMEOUT_MS;
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const num =
+    typeof options.num === "number" &&
+    Number.isFinite(options.num) &&
+    options.num >= 1 &&
+    options.num <= 100
+      ? Math.floor(options.num)
+      : 20;
 
-  try {
-    const res = await fetch(SERPER_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-KEY": apiKey,
-      },
-      body: JSON.stringify({ q, gl: defaults.gl, hl, num: 20 }),
-      signal: ctrl.signal,
-      cache: "no-store",
-    });
+  let lastItems: SerperPlayStoreItem[] = [];
 
-    const raw = await res.text();
-    let json: SerperResponseBody;
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i]!;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
     try {
-      json = (raw ? JSON.parse(raw) : {}) as SerperResponseBody;
-    } catch {
-      return {
-        country,
-        gl: defaults.gl,
-        hl,
-        items: [],
-        error: `Serper returned non-JSON (HTTP ${res.status})`,
-      };
+      const res = await fetch(SERPER_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-KEY": apiKey,
+        },
+        body: JSON.stringify({ q, gl: defaults.gl, hl, num }),
+        signal: ctrl.signal,
+        cache: "no-store",
+      });
+
+      const raw = await res.text();
+      let json: SerperResponseBody;
+      try {
+        json = (raw ? JSON.parse(raw) : {}) as SerperResponseBody;
+      } catch {
+        if (i < queries.length - 1) continue;
+        return {
+          country,
+          gl: defaults.gl,
+          hl,
+          items: [],
+          error: LIVE_RANKS_PREVIEW_UNAVAILABLE,
+        };
+      }
+
+      if (!res.ok) {
+        if (i < queries.length - 1) continue;
+        return {
+          country,
+          gl: defaults.gl,
+          hl,
+          items: [],
+          error: LIVE_RANKS_PREVIEW_UNAVAILABLE,
+        };
+      }
+
+      const items = pickPlayStoreItems(json.organic);
+      lastItems = items;
+
+      const organic = json.organic;
+      const organicEmpty = !Array.isArray(organic) || organic.length === 0;
+      const anyPlayUrlInOrganic =
+        Array.isArray(organic) &&
+        organic.some((row) => {
+          const link = row?.link?.trim();
+          return Boolean(link && /play\.google\.com/i.test(link));
+        });
+      /** Poor: nothing usable after filtering, and SERP is empty or has no play.google.com links. */
+      const poor =
+        items.length === 0 && (organicEmpty || !anyPlayUrlInOrganic);
+
+      if (!poor || i === queries.length - 1) {
+        return {
+          country,
+          gl: defaults.gl,
+          hl,
+          items,
+          error: null,
+        };
+      }
+    } catch (e) {
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      if (isAbort && i < queries.length - 1) {
+        /* try next query */
+      } else if (!isAbort && i < queries.length - 1) {
+        /* network glitch — try next query */
+      } else {
+        return {
+          country,
+          gl: defaults.gl,
+          hl,
+          items: [],
+          error: LIVE_RANKS_PREVIEW_UNAVAILABLE,
+        };
+      }
+    } finally {
+      clearTimeout(timer);
     }
-    if (!res.ok) {
-      return {
-        country,
-        gl: defaults.gl,
-        hl,
-        items: [],
-        error: `Serper HTTP ${res.status}`,
-      };
-    }
-    return {
-      country,
-      gl: defaults.gl,
-      hl,
-      items: pickPlayStoreItems(json.organic),
-      error: null,
-    };
-  } catch (e) {
-    const msg =
-      e instanceof Error
-        ? e.name === "AbortError"
-          ? "timeout"
-          : e.message
-        : "fetch_failed";
-    return {
-      country,
-      gl: defaults.gl,
-      hl,
-      items: [],
-      error: msg,
-    };
-  } finally {
-    clearTimeout(timer);
   }
+
+  return {
+    country,
+    gl: defaults.gl,
+    hl,
+    items: lastItems,
+    error: lastItems.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
+  };
 }
 
 /**
@@ -280,7 +358,9 @@ export async function searchPlayStore(
 
   const normalized = normalizeCountries(countries);
   if (normalized.length === 0) {
-    throw new SerperApiError("No supported countries supplied (us|sa|ae).");
+    throw new SerperApiError(
+      `No supported countries supplied (${(SUPPORTED_COUNTRY_CODES as readonly string[]).join("|")}).`,
+    );
   }
 
   const results = await Promise.all(

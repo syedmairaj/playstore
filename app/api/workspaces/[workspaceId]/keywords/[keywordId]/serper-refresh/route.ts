@@ -4,14 +4,16 @@ import {
   buildInsufficientAiCreditsPayload,
   readWorkspaceAiCreditsRemaining,
 } from "@/lib/features/billing/workspace-ai-credits";
-import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import {
   consumeWorkspaceAiCredits,
   refundWorkspaceAiCredits,
 } from "@/lib/features/billing/wallet";
+import { serperAiCreditsForCountryCount } from "@/lib/keywords/keyword-track-ai-pricing";
+import { captureKeywordAsoBaselineIfUnset } from "@/lib/keywords/capture-aso-baseline";
+import { maybeCreateAsoRankImprovementAlert } from "@/lib/keywords/evaluate-aso-improvement-alert";
 import { maybeCreateRankAlerts } from "@/lib/keywords/evaluate-alerts";
 import {
-  resolveRankForSerperSnapshot,
+  resolveRankInCountryForSerperSnapshot,
   serperCountriesForKeywordRefresh,
 } from "@/lib/keywords/serper-snapshot-rank";
 import {
@@ -113,12 +115,27 @@ export async function POST(_request: Request, context: Ctx) {
     );
   }
 
+  const { data: snapCodeRows } = await supabase
+    .from("keyword_rank_snapshots")
+    .select("country_code")
+    .eq("keyword_id", keywordId)
+    .not("country_code", "is", null);
+
+  const snapshotCountryCodes = [
+    ...new Set(
+      (snapCodeRows ?? [])
+        .map((r) => String(r.country_code ?? "").trim().toLowerCase())
+        .filter((c) => c.length > 0),
+    ),
+  ];
+
   const countries = serperCountriesForKeywordRefresh({
     keywordMarket: String(keyword.market ?? "us"),
     targetCountries: appRow.target_countries as string[] | null | undefined,
+    snapshotCountryCodes: snapshotCountryCodes.length > 0 ? snapshotCountryCodes : null,
   });
 
-  const creditCost = countries.length * AI_CREDIT_COSTS.serper_preview_per_country;
+  const creditCost = serperAiCreditsForCountryCount(countries.length);
 
   const balancePre = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
   if (!balancePre.ok) {
@@ -175,32 +192,48 @@ export async function POST(_request: Request, context: Ctx) {
   const ledgerId = debit.ledgerId;
 
   try {
-    const results = await searchPlayStore(String(keyword.term ?? "").trim(), countries);
-    const rank = resolveRankForSerperSnapshot(results, pkg, String(keyword.market ?? "us"));
+    const snapshotAt = new Date().toISOString();
+    // Live Serper only (searchPlayStore uses cache: "no-store"). Deep organic slice for refresh;
+    // billing remains serper_preview_per_country × countries (see keyword-track-ai-pricing).
+    const results = await searchPlayStore(String(keyword.term ?? "").trim(), countries, {
+      num: 100,
+    });
+    const mkt = String(keyword.market ?? "us").trim().toLowerCase() || "us";
 
     const { data: prevRows } = await supabase
       .from("keyword_rank_snapshots")
-      .select("rank,snapshot_at")
+      .select("rank,snapshot_at,country_code")
       .eq("keyword_id", keywordId)
+      .or(`country_code.is.null,country_code.eq.${mkt}`)
       .order("snapshot_at", { ascending: false })
       .limit(1);
 
     const prevRank =
       prevRows && prevRows.length > 0 ? (prevRows[0].rank as number | null) : null;
 
-    const { data: snap, error: snapErr } = await supabase
-      .from("keyword_rank_snapshots")
-      .insert({
-        keyword_id: keywordId,
-        rank,
-        source: "serper",
-      })
-      .select("id,rank,snapshot_at,best_rank,source")
-      .single();
+    // Ranks match apps.package_name (pkg) to Serper item packageId / ?id= from Play URLs — never app display title.
+    const rows = countries.map((cc) => ({
+      keyword_id: keywordId,
+      rank: resolveRankInCountryForSerperSnapshot(results, pkg, cc),
+      source: "serper" as const,
+      country_code: cc,
+      snapshot_at: snapshotAt,
+    }));
 
-    if (snapErr || !snap) {
+    const primaryRank = resolveRankInCountryForSerperSnapshot(results, pkg, mkt);
+
+    const { data: snaps, error: snapErr } = await supabase
+      .from("keyword_rank_snapshots")
+      .insert(rows)
+      .select("id,rank,snapshot_at,best_rank,source,country_code");
+
+    if (snapErr || !snaps?.length) {
       throw new Error(snapErr?.message ?? "snapshot_insert_failed");
     }
+
+    const primarySnap =
+      snaps.find((s) => String(s.country_code ?? "").trim().toLowerCase() === mkt) ??
+      snaps[0];
 
     await maybeCreateRankAlerts({
       supabase,
@@ -208,13 +241,27 @@ export async function POST(_request: Request, context: Ctx) {
       keywordId,
       keywordTerm: String(keyword.term ?? ""),
       prevRank,
-      newRank: rank,
+      newRank: primaryRank,
+    });
+
+    await captureKeywordAsoBaselineIfUnset(supabase, {
+      keywordId,
+      candidateRank: primaryRank,
+      source: "initial_save",
+    });
+
+    await maybeCreateAsoRankImprovementAlert({
+      supabase,
+      workspaceId,
+      keywordId,
+      keywordTerm: String(keyword.term ?? ""),
+      newPrimaryRank: primaryRank,
     });
 
     return NextResponse.json({
       ok: true,
-      rank: snap.rank,
-      snapshotAt: snap.snapshot_at,
+      rank: primarySnap.rank,
+      snapshotAt: primarySnap.snapshot_at,
       creditsCharged: creditCost,
       countries,
     });

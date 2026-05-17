@@ -4,7 +4,17 @@
     "description": "Discover keywords, generate high-converting listings, and spot competitor gaps. Built for indie Android founders and MENA teams."
   },
   "marketing": {
-    "liveDemo": "Live demo"
+    "liveDemo": "Live demo",
+    "asoScore": {
+      "eyebrow": "The ASO Score",
+      "auditLabel": "ASO Audit",
+      "verifyLine": "We don’t just generate listings—we verify them against real ASO signals before you ship.",
+      "headline": "Rank Higher. No Guesswork.",
+      "subtext": "Our AI Listing Optimizer provides an instant ASO Score. We audit your Title, Short Description, and Keyword Density in real-time to ensure your app hits the top of the charts.",
+      "scoreValue": "95",
+      "scoreMax": "100",
+      "scoreAria": "ASO score {value} out of {max}"
+    }
   },
   "nav": {
     "features": "Features",
@@ -14,6 +24,12 @@
     "startTrial": "Start free trial",
     "language": "Language",
     "menu": "Menu"
+  },
+  "workspaceAlerts": {
+    "asoRankImprovement": {
+      "title": "Listing optimization payoff",
+      "body": "Congrats! Your keyword \"{keyword}\" improved from #{from} to #{to} after your recent AI listing optimization."
+    }
   },
   "hero": {
     "eyebrow": "Google Play only · EN + العربية",
@@ -148,7 +164,7 @@
     "subtitle": "ASO health, high-intent keywords, and AI-built listings — one calm workspace, zero clutter.",
     "optimizer": {
       "title": "AI Listing Optimizer",
-      "body": "Generate Google Play-ready copy from your app details. Clear, human, conversion-focused titles, descriptions, and professional logos that make your app stand out.",
+      "body": "Generate Google Play–ready titles, short & long descriptions with professional ASO optimization. Get a <strong>Certified ASO Score</strong> (with breakdown and tips) in one click — clear, high-converting copy that ranks better.",
       "aiPoweredBadge": "AI Powered"
     },
     "logoGenerator": {
@@ -318,7 +334,7 @@
     },
     "add": {
       "title": "Add keyword",
-      "description": "Track a search term for an app in this workspace. Use Preview live ranks, then save to store real positions in your history.",
+      "description": "Creates a lightweight tracked row (no live fetch, no AI credits). Preview live ranks uses 1 AI credit per selected country. Save stores that preview with no extra charge.",
       "placeholder": "e.g. meditation timer",
       "button": "Add keyword",
       "buttonPending": "Adding…",
@@ -333,29 +349,41 @@
       "toastSuccess": "Keyword added"
     },
     "serper": {
-      "costPreview": "This will use {credits, plural, one {# credit} other {# credits}} ({count, plural, one {# country} other {# countries}}).",
+      "previewCreditsWillUse": "This preview uses {credits} AI credits ({per} per selected country).",
+      "creditsRules": "Preview live ranks: 1 AI credit per selected country. Save to tracked keywords: no extra charge. View History and Regional trend: free. Refresh ranks: 1 AI credit per country refreshed.",
+      "previewInsufficient": "Not enough AI credits for this preview (need {required}, have {remaining}).",
       "saveTitle": "Save to My Tracked Keywords",
       "saveHint": "Persists this preview for market {market}. One snapshot per save; multiple preview countries resolve to your app’s rank in that market, or the best rank found across markets if it is missing there.",
-      "saveButton": "Save to My Tracked Keywords",
+      "saveHintMulti": "Choose which preview markets to store. Each selected country becomes a rank snapshot from your preview (primary market = first selected). Saving does not charge extra AI credits or run another live fetch.",
+      "saveButton": "Save ranks from preview",
       "savePending": "Saving…",
       "saveNeedsPackage": "Add this app’s Android package name in workspace settings to save or refresh live ranks.",
       "saveError": "Could not save ranks.",
+      "saveInvalidKeyword": "That keyword row no longer matches—run preview again or add the keyword first.",
       "saveToastNew": "Keyword saved with live rank.",
       "saveToastUpdated": "Live rank saved to your tracked keyword.",
       "rowRefreshError": "Could not refresh ranks.",
       "rowRefreshToast": "Ranks updated ({credits, plural, one {# credit} other {# credits}}).",
-      "rowRefreshToastFree": "Ranks updated.",
       "rowRefreshInsufficient": "Not enough AI credits (need {required}, have {remaining})."
+    },
+    "saveModal": {
+      "title": "Save ranks from preview",
+      "description": "Store rank snapshots for “{term}” from your last preview only. Pick markets (max 4). Save does not charge AI credits.",
+      "marketsLabel": "Markets to save",
+      "saveWithCount": "Save with {count, plural, one {# country} other {# countries}}",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "close": "Close",
+      "noCountries": "No supported countries in this preview."
     },
     "aiSuggestedKeywords": {
       "title": "AI Suggested Keywords",
       "subtitle": "Terms surfaced by your latest AI listing run for this app—track them here without retyping.",
       "sourceLabel": "From your latest AI Listing generation",
-      "pricingNote": "First {free} tracked keywords from each AI listing run are free; then {per} AI credits per keyword.",
-      "track": "Track",
+      "pricingNote": "Adding suggested keywords is free (row only). Preview live ranks: {per} AI credit per selected country. Refresh ranks: {per} AI credit per country. History and Regional trend: free.",
+      "track": "Add to tracker",
       "tracking": "Adding…",
-      "toastTrackedFree": "\"{term}\" is now tracked.",
-      "toastTrackedPaid": "\"{term}\" is now tracked ({credits} credits).",
+      "toastTracked": "\"{term}\" is now on your list. Preview live ranks, then save to store ranks.",
       "trackError": "Could not add keyword.",
       "insufficientCredits": "Not enough AI credits."
     },
@@ -368,16 +396,40 @@
       "rankLegend": "Lower rank number = better position on Google Play.",
       "rankTooltip": "Lower rank number means a better position in Play Store search (#1 is best).",
       "trendTooltip": "Bars use recent snapshots in view; height reflects relative rank in that window.",
-      "liveRankingsNote": "Live rankings updated from Google Play markets.",
+      "liveRankingsNote": "Ranks appear after you preview live ranks (1 AI credit per selected country) and save, or after Refresh ranks (1 AI credit per country refreshed, from your tracked markets).",
       "rankNotInTop": "20+",
+      "rankNotInTopTooltip": "Not in top 20 results in this market at the time of check.",
+      "rankNotInTopDetailTooltip": "Your app \"{appName}\" is not yet ranking in the top results for this term. Use the AI Listing Optimizer to improve visibility.",
+      "linkedApp": "App",
       "keyword": "Keyword",
       "currentRank": "Current rank",
       "bestRank": "Best rank",
       "trend": "Trend (7d)",
       "lastUpdated": "Last updated",
       "lastSync": "Last sync",
+      "rankSyncing": "Syncing…",
+      "pendingInitialFetch": "Pending initial fetch",
+      "rankGainBadgeTooltip": "About {positions, plural, one {# position} other {# positions}} gained vs your last AI listing optimization snapshot (last 7 days).",
+      "justNow": "Just now",
       "rankAuthenticityTooltip": "Authentic search result position captured from local Google Play Store servers in {country}.",
-      "actions": "Actions"
+      "rankAuthenticityTooltipChina": "Rank reflects Google results for the China region (gl=cn). Worldwide Play listings and mainland availability can differ; this is not a mainland-only storefront guarantee.",
+      "actions": "Actions",
+      "searchPlaceholder": "Search keywords...",
+      "filterAll": "All",
+      "marketFilterLabel": "Filter by market",
+      "exportCsv": "Export CSV",
+      "exportCsvSuccess": "Watchlist exported",
+      "rowsPerPage": "Rows per page",
+      "pageOf": "Page {page} of {total}",
+      "prevPage": "Previous",
+      "nextPage": "Next",
+      "showingRange": "{from}–{to} of {total}",
+      "noFilterResults": "No keywords match your search or market filters.",
+      "csvKeyword": "Keyword",
+      "csvApp": "App",
+      "csvCurrentRank": "Current rank",
+      "csvBestRank": "Best rank",
+      "csvLastSync": "Last sync"
     },
     "delta": {
       "improved": "Rank improved",
@@ -385,6 +437,7 @@
       "same": "No change"
     },
     "actions": {
+      "refreshSerperHint": "Charges {per} AI credit per country refreshed.",
       "refreshSerper": "Refresh ranks",
       "refreshSerperPending": "Refreshing…",
       "syncingPlayStore": "Syncing with Play Store…",
@@ -394,17 +447,25 @@
     "empty": {
       "title": "No tracked keywords yet",
       "body": "Add terms manually above, or track suggestions from your latest AI listing. History and trends will build here automatically.",
-      "demoHint": "Live rankings updated from Google Play markets."
+      "hint": "Ranks and charts fill in after you save a preview or refresh from the table—everything is loaded from your workspace data."
     },
     "history": {
       "panelTitle": "Keyword History",
       "description": "Rank snapshots for this keyword from live Play Store checks and saves.",
+      "tabs": {
+        "rankOverTime": "Rank over time",
+        "regionalTrend": "Regional Trend",
+        "listAria": "History views"
+      },
       "header": {
         "current": "Current",
         "best": "Best",
         "avg": "Avg (30d)"
       },
       "rankNote": "Lower rank number = better position on Google Play.",
+      "chartGoalNote": "On these charts, a lower line means a better rank. The practical goal is steady progress toward position #1.",
+      "googleRankDirectionalNote": "Rankings are based on Google search results and are directional. Actual Play Store rankings may vary.",
+      "creditsNote": "Viewing History, charts, and Regional trend is free and does not use AI credits.",
       "chart": {
         "title": "Rank over time",
         "hint": "The line turns emerald when rank improves in the selected window (#1 is best).",
@@ -412,6 +473,13 @@
         "range14": "14d",
         "range30": "30d",
         "rangeAria": "Time range for the chart"
+      },
+      "regionalChart": {
+        "title": "Regional Trend",
+        "hint": "Compare rank over time across every market that has saved snapshots for this keyword.",
+        "axisRank": "Rank",
+        "emptyTitle": "Not enough regional data yet",
+        "emptyBody": "Save or refresh across multiple countries to build lines here. A single country with one or more points will still chart."
       },
       "loading": "Loading history…",
       "emptyChart": {
@@ -430,54 +498,154 @@
       "columns": {
         "date": "Date",
         "rank": "Rank",
-        "change": "Change"
+        "change": "Change",
+        "marketLegacy": "Market not tagged on this snapshot",
+        "sourceWithValue": "Source: {source}"
       },
       "change": {
         "same": "Same"
       },
-      "emptyTable": "No snapshots to list yet."
+      "emptyTable": "No snapshots to list yet.",
+      "optimizationGainSince": "Improved {positions, plural, one {# position} other {# positions}} since last optimization."
     }
   },
   "competitorSpy": {
     "title": "Competitor Spy",
-    "subheadline": "Analyze your competitors' listings. Discover keyword gaps, strengths, and opportunities you can own.",
+    "subheadline": "Analyze competitors' listings with AI. Discover keyword gaps, ranking strengths, and actionable opportunities you can own.",
+    "howItWorksSummary": "How it works",
+    "howItWorksDetail": "1) Pick your app and markets, then search by competitor name or package ID. 2) We run a live Play Store preview (5 AI credits for up to 2 markets). 3) You get keyword gaps, shared terms with your ranks, and quick wins—saved to your workspace so they survive refresh. Send any term to AI Listing Optimizer in one click.",
     "loading": "Loading…",
     "retry": "Try again",
-    "disclaimer": "Real competitor analysis + daily updates coming soon.",
+    "disclaimer": "Credits cover the live multi-market Play Store preview and on-device insight layout shown here. Rankings are directional search results, not a guarantee of Play Store browse rank.",
+    "optimizerNavFailed": "Could not open AI Listing Optimizer. Try again from the sidebar.",
+    "creditsConfirm": {
+      "title": "Use AI credits?",
+      "body": "This will use {credits} AI credits. Our AI will analyze the competitor and generate personalized gap insights and quick wins. Continue?",
+      "cancel": "Cancel",
+      "confirm": "Analyze",
+      "confirmContinue": "Continue",
+      "confirmWithCredits": "Analyze ({credits, plural, one {# AI credit} other {# AI credits}})"
+    },
+    "manage": {
+      "button": "Manage Competitors",
+      "title": "Manage competitors",
+      "description": "Switch focus or remove saved competitor analyses from this workspace.",
+      "deleteAria": "Remove {name}",
+      "deleteSuccess": "Competitor removed.",
+      "deleteError": "Could not remove competitor. Try again."
+    },
+    "snapshot": {
+      "kicker": "Snapshot",
+      "versusHeadline": "You ({you}) vs {them}",
+      "selectLabel": "Focus competitor",
+      "emptyTitle": "Competitor",
+      "categoryFallback": "Google Play",
+      "listingCategory": "Play Store app",
+      "bestRank": "Best live rank",
+      "rankValue": "#{rank}",
+      "metricsLabel": "Keyword surfaces",
+      "metricsValue": "{count, plural, one {# term} other {# terms}}",
+      "sendOptimizer": "Send to AI Listing Optimizer",
+      "emptyBody": "Run an analyze to pin a competitor snapshot here."
+    },
+    "playStore": {
+      "open": "Open in Play Store",
+      "opening": "Opening...",
+      "packageUnavailable": "Package name not available"
+    },
+    "shared": {
+      "title": "You vs {name} (shared keywords)",
+      "subtitle": "Overlap terms where both apps appear — tighten copy where you trail.",
+      "emptyTitle": "No shared keywords yet",
+      "emptyBody": "Run analyze on this competitor to see overlap terms from live Play Store results.",
+      "emptyAfterAnalyzeTitle": "No overlap in the top 20 yet",
+      "emptyAfterAnalyzeBody": "Neither app ranks on page one for the same terms in this preview. Try another market, add custom keywords, or focus on keyword gaps below.",
+      "emptyTerritoryTitle": "No shared ranking keywords in this territory",
+      "emptyTerritoryBody": "No overlapping keyword metrics found for {competitor} in {country}. Insert manual target keywords using the input field below.",
+      "loadingSkeleton": "Loading shared keywords…",
+      "addKeyword": "Add keyword",
+      "addCustomKeyword": "+ Add Custom Keyword",
+      "addKeywordPlaceholder": "Custom keyword…",
+      "addKeywordPrompt": "Add a keyword to your local tracking stack for this session:",
+      "addKeywordError": "Enter at least 2 characters.",
+      "dismissAria": "Dismiss {keyword} from this view",
+      "removeAria": "Remove {keyword}",
+      "columns": {
+        "actions": "Actions"
+      }
+    },
+    "ranks": {
+      "notInTop": "20+",
+      "notPublished": "Not Published",
+      "outsideTopTooltip": "Indexed but ranking outside top visible charts"
+    },
     "sections": {
       "myKicker": "Watchlist",
-      "gapKicker": "Opportunities"
+      "gapKicker": "Opportunities",
+      "sharedKicker": "Overlap",
+      "quickWinsKicker": "Momentum",
+      "aiBadge": "AI-Powered Insights"
+    },
+    "quickWins": {
+      "title": "Quick Wins & Keyword Gap",
+      "subtitle": "Actionable angles from this snapshot — send seed keywords straight to the optimizer.",
+      "empty": "Add a competitor to see tailored quick wins.",
+      "ctaOptimizer": "Send to AI Listing Optimizer",
+      "tplTrail": "For \"{keyword}\", they rank #{theirRank} while you rank #{yourRank} — tighten your title and short description to close the gap.",
+      "tplAbsent": "You do not appear in the top Play Store results for \"{keyword}\" in the selected markets. Align your listing copy with this search intent.",
+      "tplAhead": "You rank #{yourRank} versus their #{theirRank} for \"{keyword}\" — reinforce this intent with screenshots and recent reviews.",
+      "tplTie": "You and the competitor both surface for \"{keyword}\" around #{rank} — sharpen differentiation in your title and creative.",
+      "tplGap": "Other top results emphasize \"{term}\" — consider whether that phrase fits your positioning."
     },
     "add": {
       "title": "Add Competitor",
-      "description": "Enter a competitor app name or package name. This preview uses illustrative data until live store intelligence ships.",
+      "description": "Enter a competitor app name or package ID. Our AI will run a live Play Store preview, analyze overlaps, identify keyword gaps, and suggest quick wins.",
+      "aiHelper": "Our AI analyzes competitor listings, finds keyword gaps, and suggests quick wins to improve your ranking.",
       "placeholder": "Enter competitor app name or package name",
       "button": "Analyze Competitor",
+      "buttonFiveCredits": "Analyze Competitor (5 AI credits)",
+      "buttonWithCredits": "Analyze Competitor ({credits} AI credits)",
       "buttonPending": "Analyzing…",
       "helper": "Example:",
-      "example": "com.example.fitnessapp",
+      "example": "com.myfitnesspal.android",
       "errorEmpty": "Enter at least 2 characters.",
-      "toastAnalyzed": "Competitor added to your preview list."
+      "errorNoCountries": "Select at least one market.",
+      "errorNoMatch": "No matching app appeared in live results. Try a package ID or a different search name.",
+      "creditsHint": "This run uses {credits} AI credits for live preview across {markets, plural, one {# market} other {# markets}} (bundled: 5 credits for up to 2 markets, then 2 per extra market).",
+      "toastAnalyzed": "Competitor analyzed and saved to your workspace."
     },
     "myCompetitors": {
       "title": "My Competitors",
-      "subtitle": "Snapshot of where they win on shared terms — refine your listing and track gaps below.",
+      "subtitle": "Pick a competitor to drive the sticky snapshot — refine your listing and track gaps below.",
       "emptyTitle": "No competitors yet",
-      "emptyBody": "Run an analysis above to see mock rankings, shared keywords, and quick wins side by side.",
+      "emptyBody": "Run an analysis above to see live ranks where available, shared keywords, and quick wins side by side.",
       "mainKeywords": "Keywords they rank for",
       "sharedTitle": "Your rank vs theirs (shared keywords)",
       "yourRank": "Your rank",
       "theirRank": "Their rank",
       "quickWins": "Quick win opportunities"
     },
+    "countryTabs": {
+      "ariaLabel": "Active market for competitor insights"
+    },
     "gap": {
+      "targetAppFallback": "Your app",
       "title": "Keyword Gap Analysis",
       "subtitle": "Terms competitors may be capturing that you are not — prioritize high-impact gaps and add them to Keyword Tracker.",
+      "sendOptimizerHint": "Send these gap keywords to AI Listing Optimizer to refresh titles, short descriptions, and long descriptions around the same intent.",
+      "analyzingPlaceholder": "Analyzing competitor gaps for selected country...",
       "empty": "Analyze a competitor to populate keyword gaps.",
+      "emptyNoCompetitorTitle": "Run your first competitor analyze",
+      "emptyNoCompetitorBody": "Enter a competitor app above. We will pull live Play Store results and surface keyword gaps you can track or send to AI Listing Optimizer.",
+      "emptyNoGapsTitle": "No keyword gaps for this competitor",
+      "emptyNoGapsBody": "Try another search name or package ID, or add more markets — gaps come from other top apps in the same live results.",
+      "emptyCta": "Analyze a competitor",
       "targetAppLabel": "Track new keywords on",
       "columns": {
         "keyword": "Keyword",
         "opportunity": "Opportunity",
+        "yourRank": "Your rank",
+        "theirRank": "Competitor rank",
         "action": "Action"
       },
       "opportunityHigh": "High",
@@ -488,7 +656,7 @@
       "trackToastSuccess": "Keyword is now tracked in Keyword Tracker.",
       "trackToastError": "Could not add keyword.",
       "trackQueuedLocally": "Saved to this device as queued — try again from Keyword Tracker.",
-      "trackMockQueued": "Added to your local watchlist (enable Keyword Tracker to sync to the workspace).",
+      "trackLocalQueued": "Saved to this device — enable Keyword Tracker to sync keywords to the workspace.",
       "alreadyTracked": "Already on your watchlist or tracked.",
       "trackDisabledNoApps": "Add an app to this workspace before tracking keywords."
     }
@@ -588,6 +756,19 @@
       "generic": "We couldn’t complete sign-in. Please try again."
     }
   },
+  "upgradeModal": {
+    "title": "You've reached your plan limit",
+    "titleAtGrowthCap": "All Growth app slots are in use",
+    "bodyFreeLimit": "You've reached the Free plan limit (1 app).",
+    "bodyUpgradePitchPro": "Upgrade to Pro to unlock 5 apps + 200 AI credits per month.",
+    "bodyProLimit": "You've reached the Pro plan limit (5 apps).",
+    "bodyUpgradePitchGrowth": "Upgrade to Growth to unlock 12 apps + 500 AI credits per month.",
+    "bodyGrowthCap": "Growth includes up to {limit} apps. You currently have {count}. Archive an app to add another, or compare plans if you need more capacity.",
+    "ctaPro": "Upgrade to Pro",
+    "ctaGrowth": "Upgrade to Growth",
+    "ctaViewPlans": "View plans",
+    "maybeLater": "Maybe later"
+  },
   "credits": {
     "label": "AI credits",
     "lowTitle": "You’re low on AI credits",
@@ -595,9 +776,97 @@
     "emptyTitle": "No AI credits left",
     "emptyBody": "Add credits to continue using AI features this month.",
     "balance": "{count} credits left",
-    "topUp": "Buy 100 credits — $10",
+    "topUp": "Buy 100 credits — $12",
     "viewPlans": "View plans",
     "close": "Close"
+  },
+  "creditsModal": {
+    "close": "Close",
+    "outOfTitle": "Out of AI Credits",
+    "outOfTitleFree": "Out of free AI credits",
+    "outOfFreeOneTimeCredits": "You've used your one-time 20 free credits.",
+    "outOfSubtitleFreeUpsell": "Upgrade to Pro for 200 AI credits every month, more apps, and full tools — or open all plans to compare.",
+    "outOfSubtitle": "Upgrade your plan to continue optimizing your apps",
+    "lowTitle": "Running low on AI credits",
+    "lowSubtitle": "Top up or upgrade so listing generation, previews, and insights keep working without interruption.",
+    "balanceLabel": "Current balance",
+    "balanceValue": "{count, plural, =0 {0 credits left} one {# credit left} other {# credits left}}",
+    "planBadgeFree": "Free Plan",
+    "planBadgePro": "Pro User",
+    "planBadgeGrowth": "Growth",
+    "topUpsPlanGate": "Credit top-ups are available on Pro and higher plans.",
+    "upgradeToProCta": "Upgrade to Pro — $29/mo · 200 AI credits/mo (resets monthly) + full tools",
+    "viewAllPlans": "View all plans",
+    "packsEyebrow": "Credit packs",
+    "creditsWord": "credits",
+    "perCreditSuffix": "/credit",
+    "badgePopular": "Popular",
+    "badgeBestValue": "Best value",
+    "purchase": "Purchase",
+    "purchaseSoonTitle": "Credit pack",
+    "purchaseSoonDescription": "{credits} credits for {price}. Open Pricing to compare plans and top-up options.",
+    "fullPricingFooter": "Yearly billing & FAQ on the pricing page"
+  },
+  "pricingModal": {
+    "close": "Close",
+    "title": "Choose Your Plan",
+    "subtitle": "Upgrade or switch plans to unlock more AI credits and workspace limits.",
+    "mostPopular": "Most popular",
+    "currentBadge": "Current plan",
+    "perMo": "/mo",
+    "perYrShort": "/year",
+    "billing": {
+      "label": "Billing",
+      "monthly": "Monthly",
+      "annual": "Annual",
+      "save20": "Save 20%",
+      "eqPerMonth": "≈ ${amount}/mo billed annually",
+      "yearlyNote": "Yearly plans are charged once per year."
+    },
+    "ctaUpgrade": "Upgrade",
+    "ctaUpgradePro": "Upgrade to Pro",
+    "ctaUpgradeGrowth": "Upgrade to Growth",
+    "ctaDowngrade": "Downgrade",
+    "ctaUpgradeMonthly": "Upgrade to {plan} — Billed monthly",
+    "ctaUpgradeYearly": "Upgrade to {plan} — Billed yearly",
+    "ctaDowngradeMonthly": "Downgrade to {plan} — Billed monthly",
+    "ctaDowngradeYearly": "Downgrade to {plan} — Billed yearly",
+    "ctaCurrent": "Current",
+    "checkoutSoonTitle": "Review plans",
+    "checkoutSoonDescription": "Open the full pricing page to compare billing cycles and explore credit packs.",
+    "fullPricingLink": "Open full pricing page",
+    "plans": {
+      "free": {
+        "name": "Free / Solo",
+        "creditsLine": "20 AI credits one-time",
+        "bullets": {
+          "b1": "1 app workspace",
+          "b2": "Limited keyword tracking",
+          "b3": "Core ASO checklist & previews",
+          "b4": "Upgrade anytime as you scale"
+        }
+      },
+      "pro": {
+        "name": "Pro",
+        "creditsLine": "200 AI credits / month",
+        "bullets": {
+          "b1": "Full AI listing optimizer",
+          "b2": "Up to 5 apps & full keyword tracking",
+          "b3": "Competitor gap analysis & exports",
+          "b4": "Priority email support"
+        }
+      },
+      "growth": {
+        "name": "Growth",
+        "creditsLine": "500 AI credits / month (resets monthly)",
+        "bullets": {
+          "b1": "Up to 12 apps & team-ready scale",
+          "b2": "Advanced keyword & ranking alerts",
+          "b3": "500 AI credits monthly + optional top-ups",
+          "b4": "Priority support & roadmap input"
+        }
+      }
+    }
   },
   "pricing": {
     "title": "Pricing that respects your runway",
@@ -613,28 +882,32 @@
     "perYr": "/yr billed annually",
     "perYrShort": "/yr",
     "forever": "forever",
-    "creditsHint": "AI credits reset monthly · $10 per 100 extra credits",
+    "creditsHint": "Paid plans reset AI credits monthly. Top-ups: $12 for 100 credits on Pro and Growth.",
+    "freeCreditsOneTime": "20 AI credits one-time",
+    "freeCreditsFooterNote": "AI credits on Free do not reset each month.",
+    "creditsResetMonthly": "Paid plans: AI credits reset every billing month.",
     "compare": "Compare plans",
     "faq": "FAQ",
     "mostPopular": "MOST POPULAR",
     "proPositioning": "Everything an indie developer or small team needs to rank higher on Google Play.",
-    "overage": "Extra AI credits: $10 per 100 credits when you need a burst.",
+    "topUpFooter": "Need extra credits? {price} for {credits} credits (available on Pro and Growth plans).",
     "plans": {
       "free": {
         "name": "Free",
         "desc": "Try the workflow on one app.",
-        "cta": "Start free"
+        "cta": "Start Free"
       },
       "pro": {
         "name": "Pro",
         "desc": "Serious indie teams shipping every week.",
         "priceBlurb": "$29/mo or $290/year (save 20%)",
-        "cta": "Start trial"
+        "cta": "Upgrade to Pro"
       },
       "growth": {
         "name": "Growth",
         "desc": "Studios and squads with multiple apps.",
-        "cta": "Start trial"
+        "priceBlurb": "$49/mo or $470/year (save 20%)",
+        "cta": "Upgrade to Growth"
       }
     },
     "proIncludes": {
@@ -651,34 +924,42 @@
       "apps1": "1 app",
       "apps5": "5 apps",
       "appsUnlimited": "Unlimited apps",
+      "appsUpTo12": "Up to 12 apps",
       "kwLimited": "Limited keyword tracking",
       "kwFull": "Full keyword tracking",
       "credits20": "20 AI credits / month",
+      "credits20OneTime": "20 AI credits one-time",
       "credits200": "200 AI credits / month",
-      "credits800": "800 AI credits / month",
+      "credits500Monthly": "500 AI credits / month (resets monthly)",
       "team": "Team seats",
       "priority": "Priority support",
       "alerts": "Ranking alerts (email + in-app)",
       "exports": "Export optimized listing (Play-ready)"
     },
-    "faq1q": "What happens when I hit my AI credit cap?",
-    "faq1a": "We’ll show a gentle nudge in-app. You can top up, upgrade, or wait for the next monthly reset.",
-    "faq2q": "Can I cancel anytime?",
-    "faq2a": "Yes. Paid plans are month-to-month unless you choose annual billing for a discount.",
-    "faq3q": "Do you support Arabic / RTL?",
-    "faq3a": "Yes — full Arabic UI with proper mirroring and Noto Sans Arabic typography.",
-    "faq4q": "How is my data secured?",
-    "faq4a": "PostgreSQL with row-level security per workspace. We never sell your data.",
-    "faq5q": "Is PlayStore affiliated with Google or Google Play?",
-    "faq5a": "No. PlayStore.xyz is an independent product. Google, Google Play, and related marks are trademarks of Google LLC. We are not endorsed by or affiliated with Google.",
-    "bottomTitle": "Start on the free tier",
-    "bottomSubtitle": "Upgrade when you’re ready. Stripe checkout for plans and credit top-ups is coming online next.",
-    "trustCtaLine": "No credit card required · Cancel anytime · Data secure",
+    "faq1q": "What happens when I run out of AI credits?",
+    "faq1a": "On the Free plan, you get 20 credits as a one-time trial. On Pro and Growth plans, credits reset monthly. You can top up anytime or upgrade your plan.",
+    "faq2q": "Can I cancel my subscription anytime?",
+    "faq2a": "Yes. You can cancel or downgrade anytime with no penalties. Your subscription continues until the end of the current billing period.",
+    "faq3q": "Do you support Arabic and RTL?",
+    "faq3a": "Yes. The entire platform is fully bilingual (English + Arabic) with proper right-to-left support and beautiful Arabic typography.",
+    "faq4q": "How accurate is the ranking data?",
+    "faq4a": "We fetch live, authentic search results from local Google Play servers in the USA, Saudi Arabia, UAE, and India — giving you highly relevant data for your target markets.",
+    "faq5q": "Do you support regional tracking for India and SEA?",
+    "faq5a": "Yes. We provide localized SERP data for India, ensuring your ASO strategy matches the largest Android user base on earth. Support for more SEA countries is coming soon.",
+    "faq6q": "Can I track my competitors?",
+    "faq6a": "Yes. With Competitor Spy, you can analyze competitors' keywords, find ranking gaps, and discover quick wins using your monthly credits.",
+    "bottomTitle": "Start building for free",
+    "bottomSubtitle": "Upgrade anytime to unlock more credits and apps.",
+    "trustCtaLine": "No credit card required • Cancel anytime • Data secure",
     "contactSales": "Email us",
     "compareRows": {
       "apps": "Apps",
+      "appsGrowth": "Up to 12",
       "keywords": "Keyword tracking",
-      "credits": "AI credits / month",
+      "credits": "AI credits",
+      "creditsFree": "20 one-time",
+      "creditsPro": "200 / mo (resets)",
+      "creditsGrowth": "500 / mo (resets)",
       "team": "Team seats",
       "support": "Priority support"
     }
@@ -703,9 +984,9 @@
       "toneFriendly": "Friendly",
       "toneBold": "Bold",
       "toneMinimal": "Minimal",
-      "generate": "Generate Full Listing",
-      "generateLead": "When the form is ready, generate Play-ready title, descriptions, keyword ideas, and CTAs in one run.",
-      "generateCostLabel": "{credits, plural, one {# AI credit} other {# AI credits}} per full listing run",
+      "generate": "Generate Full Listing ({credits, plural, one {# AI credit} other {# AI credits}})",
+      "generateValueMicrocopy": "High-converting + ASO optimized",
+      "generateButtonHelper": "Generate Play-ready title, short & long description, keywords, CTAs, and Certified ASO Score — {credits, plural, one {# AI credit} other {# AI credits}} per full run.",
       "generateStarting": "Generating full listing ({credits, plural, one {# credit} other {# credits}})…",
       "generating": "Generating…",
       "generatingHint": "This can take a few seconds.",
@@ -720,13 +1001,17 @@
       "sectionStoreHelper": "Official Play identity—grounds exports, AI context, and the live preview header.",
       "sectionDiscovery": "Discovery",
       "sectionDiscoveryTitle": "Keywords and value props that shape search and conversion.",
-      "sectionDiscoveryHelper": "Search terms and install reasons. Optional ✦ buttons draft one field from name + category (separate credit cost).",
+      "sectionDiscoveryHelper": "Search terms and install reasons. Use the ✦ control inside each field to draft from app name + category (separate credit cost).",
       "sectionVoice": "Voice & Generate",
       "sectionVoiceTitle": "Tone for the full listing run, then generate Play-ready copy.",
       "sectionVoiceHelper": "Pick tone, then run a full listing—{credits} AI credits return title, short, long, keyword ideas, and CTAs.",
       "generateSuccessToast": "Listing generated successfully!",
       "generateSuccessToastSaved": "Listing generated and saved",
       "invalidModelOutputRegenerating": "Short description was too long. Regenerating with stricter limits…",
+      "confirmCreditsTitle": "Use AI credits?",
+      "confirmCreditsBody": "This will use {credits, plural, one {# AI credit} other {# AI credits}}. Continue?",
+      "confirmCreditsYes": "Yes, Generate",
+      "confirmCreditsCancel": "Cancel",
       "autofill": {
         "button": "✦ Let AI Generate",
         "tooltip": "Drafts from app name and category • Tuned for Google Play ASO",
@@ -743,7 +1028,10 @@
         "successTitle": "Field updated",
         "successDescription": "You can edit the text below before generating your listing.",
         "successCredits": "{used} credits used • {balance} remaining",
-        "persistFailed": "Could not save to workspace history. Copy anything important and try again."
+        "persistFailed": "Could not save to workspace history. Copy anything important and try again.",
+        "sparkleAriaKeywords": "Draft target keywords with AI",
+        "sparkleAriaFeatures": "Draft app features and value with AI",
+        "aiAssistTooltip": "AI Assist (uses credits)"
       }
     },
     "guidance": {
@@ -753,6 +1041,20 @@
       "generate": "Generate",
       "sepLtr": "→",
       "sepRtl": "·"
+    },
+    "workflow": {
+      "stepperAria": "AI Listing Optimizer steps",
+      "step1": "App Identity",
+      "step2": "Market Discovery",
+      "step3": "Final Optimization",
+      "stepCompleted": "Completed",
+      "stepCurrent": "Current step",
+      "stepUpcoming": "Upcoming",
+      "continue": "Continue",
+      "back": "Back",
+      "discoveryCardTitle": "Discovery Context",
+      "discoverySummaryEmpty": "Add target keywords and value props",
+      "finalSummaryLine": "Tone: {tone}"
     },
     "appContext": {
       "label": "Workspace app",
@@ -777,12 +1079,44 @@
       "manageSettings": "Manage in Settings",
       "atLimitToast": "This workspace is at its app limit",
       "atLimitToastHint": "Upgrade your plan to register another app from Settings.",
+      "noPermission": "You don't have permission to write to this workspace context.",
       "usage": "{count} / {limit} apps ({plan})",
       "usageUnlimited": "{count} apps · {plan} (unlimited)"
     },
     "results": {
       "heading": "Optimized Listing Results",
+      "generatingPreview": "Crafting your Play-ready listing and Certified ASO score…",
+      "loading": {
+        "auditorAria": "AI listing generation progress",
+        "status1": "Gemini is drafting your SEO-optimized title...",
+        "status2": "Analyzing keyword density for maximum reach...",
+        "status3": "Finalizing your ASO Score audit..."
+      },
+      "fieldsTabTitle": "Title",
+      "fieldsTabShort": "Short",
+      "fieldsTabLong": "Long",
+      "floatingExport": "Export",
+      "floatingBarAria": "Listing result actions",
       "subheading": "Everything is editable. Tweak as needed before pasting into Play Console.",
+      "certifiedBadgeLabel": "Certified ASO Score",
+      "certifiedAuditBadgeLabel": "Certified ASO Audit",
+      "asoQualityScoreLabel": "ASO Quality Score",
+      "certifiedScoreBlockTitle": "Your Certified ASO Score",
+      "certifiedScoreSlash": "/100",
+      "asoScoreTooltip": "Score calculated by our ASO engine based on Google Play ranking factors and keyword optimization.",
+      "asoScoreInfoAria": "About the Certified ASO Score",
+      "breakdownPercent": "{percent}%",
+      "generateSuccessBanner": "Listing ready — review, edit, and copy to Play Console.",
+      "floatingSaveTracker": "Save to Tracker",
+      "asoBreakdownHeading": "Score breakdown",
+      "asoBreakdownTitle": "Title & keywords",
+      "asoBreakdownShort": "Short description",
+      "asoBreakdownLong": "Long description",
+      "asoBreakdownPersuasion": "Persuasiveness",
+      "improvementTipsHeading": "Improvement tips",
+      "asoScorePartialTitle": "Certified score unavailable",
+      "asoScorePartialBody": "Your listing was generated successfully, but the ASO score block could not be validated. Try Regenerate if you need the score.",
+      "asoScoreUnavailable": "This run has no validated certified ASO score. Regenerate to try again.",
       "lastGeneratedLine": "Last generated on {date}",
       "regenerating": "Generating an updated listing…",
       "persistWarning": "Saved to history failed — check Supabase configuration.",
@@ -877,7 +1211,15 @@
       "pushBody": "Notification preview text from your short description.",
       "pushHint": "Tap to expand — same gesture users use on a lock screen.",
       "addLogoHint": "Add logo",
-      "clickToChangeLogo": "Click to change logo"
+      "clickToChangeLogo": "Click to change logo",
+      "minimizePreview": "Minimize preview",
+      "minimizeAria": "Minimize live preview",
+      "showPreview": "Show preview",
+      "showPreviewAria": "Show live preview",
+      "showMobile": "Show live preview",
+      "showMobileAria": "Open live preview",
+      "hideMobile": "Hide preview",
+      "hideMobileAria": "Close live preview"
     },
     "logo": {
       "title": "AI app logo generator",
@@ -971,7 +1313,7 @@
       "network": "Network error. Check your connection and try again.",
       "createFailed": "Could not create the app.",
       "atLimit": "App limit reached",
-      "noPermission": "You don't have permission to add an app to this workspace.",
+      "noPermission": "You don't have permission to write to this workspace context.",
       "noWorkspaceAccess": "You don't have access to this workspace, or it no longer exists.",
       "iconInvalid": "Icon URL must be a valid HTTPS URL."
     }
@@ -1017,9 +1359,9 @@
   },
   "countrySelector": {
     "label": "Countries",
-    "helper": "Pick 1–3 Play Store markets to compare.",
-    "maxNote": "Up to 3 countries per search.",
-    "limitReachedAria": "Maximum 3 countries selected",
+    "helper": "Pick 1–4 Play Store markets to compare.",
+    "maxNote": "Up to 4 countries per search.",
+    "limitReachedAria": "Maximum 4 countries selected",
     "removeAria": "Remove {country}",
     "addCountryAria": "Add country",
     "selectedSrLabel": "Selected countries",
@@ -1035,14 +1377,27 @@
       "ae": {
         "label": "United Arab Emirates",
         "flag": "🇦🇪"
+      },
+      "in": {
+        "label": "India",
+        "flag": "🇮🇳"
+      },
+      "cn": {
+        "label": "China (Global Play Store)",
+        "flag": "🇨🇳"
       }
     }
   },
   "serperPreview": {
-    "disclaimer": "Live rankings updated from Google Play markets.",
-    "insufficientCredits": "Insufficient credits. You need {credits, plural, one {# credit} other {# credits}} for the selected {count, plural, one {country} other {countries}}.",
+    "disclaimer": "Live preview fetches real Google Play data and charges AI credits per selected country. Saving does not charge extra. Refresh charges 1 credit per country.",
+    "chinaDisclaimer": "China uses Google’s region settings (gl=cn). Results reflect indexed Play Store pages; they may not match every on-device Play experience worldwide or in mainland China.",
+    "insufficientCredits": "Insufficient AI credits for this action.",
+    "insufficientPreviewCredits": "Not enough AI credits for this preview (need {required}, have {remaining}).",
     "configMissingTitle": "Live Play Store preview not configured",
-    "configMissingBody": "Add SERPER_API_KEY to your server environment to enable live Play Store search and rank refresh.",
+    "configMissingBody": "Live preview is not enabled on this server yet. Ask your workspace administrator to complete search integration setup.",
+    "liveRanksUnavailable": "Unable to fetch live ranks right now. Please try again in a few seconds.",
+    "previewAllMarketsUnavailable": "We could not load live ranks for any of the selected markets. Please try again in a few seconds.",
+    "previewSomeMarketsUnavailable": "Some markets could not load live ranks. Other markets below may still be useful. Try again shortly if you need full coverage.",
     "loading": "Searching Play Store…",
     "errorGeneric": "Could not load live Play Store results.",
     "errorPerCountry": "{country}: {message}",
@@ -1051,10 +1406,14 @@
     "previewPending": "Previewing…",
     "resultsHeading": "Live Play Store preview",
     "resultsSubtitle": "Top organic Play Store results returned by Google for each selected market.",
+    "googleRankDirectionalNote": "Rankings are based on Google search results and are directional. Actual Play Store rankings may vary.",
     "rankLabel": "Rank",
     "appLabel": "App",
     "marketLabel": "Market",
     "marketsLabel": "Preview markets",
-    "openInPlay": "Open in Play Store"
+    "openInPlay": "Open in Play Store",
+    "yourAppPositionBadge": "Your app position",
+    "appOutsideTopPreviewFooter": "Your app is not in the top 20 results for this keyword in this market. Add the keyword to your tracker to monitor progress over time.",
+    "appOutsideTopPreviewFooterWithApp": "\"{appName}\" is not in the top 20 results for this keyword in this market. Add the keyword to your tracker to monitor progress over time."
   }
 }

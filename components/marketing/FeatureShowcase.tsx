@@ -69,7 +69,14 @@ export function FeatureShowcase() {
         variants={item}
         className="md:col-span-2 lg:col-span-2 lg:row-start-1"
       >
-        <div className={cn(cardShell, "min-h-[17rem] lg:min-h-[18.5rem]")}>
+        <div
+          className={cn(
+            cardShell,
+            "min-h-[17rem] lg:min-h-[18.5rem]",
+            "relative overflow-hidden ring-1 ring-[#34A853]/35 shadow-[inset_0_1px_0_0_rgba(52,168,83,0.1),0_0_48px_-14px_rgba(52,168,83,0.22)]",
+            "bg-gradient-to-br from-[#34A853]/[0.07] via-[#0B0E14] to-[#0B0E14]",
+          )}
+        >
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className={iconWrap}>
               <Sparkles className="h-6 w-6" strokeWidth={1.65} aria-hidden />
@@ -83,7 +90,13 @@ export function FeatureShowcase() {
             </p>
           </div>
           <h3 className={cn(cardTitle, "mt-6")}>{t("optimizer.title")}</h3>
-          <p className={cardBody}>{t("optimizer.body")}</p>
+          <p className={cardBody}>
+            {t.rich("optimizer.body", {
+              strong: (chunks) => (
+                <strong className="font-semibold text-white/88">{chunks}</strong>
+              ),
+            })}
+          </p>
         </div>
       </motion.article>
 

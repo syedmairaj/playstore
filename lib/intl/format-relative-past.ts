@@ -1,7 +1,12 @@
 /**
  * Human-readable relative time for a timestamp in the past (e.g. "2 minutes ago").
+ * Pass `labels.justNow` for copy when the event was within the last minute (avoids awkward "0 seconds ago").
  */
-export function formatRelativePastSince(iso: string, localeTag: string): string {
+export function formatRelativePastSince(
+  iso: string,
+  localeTag: string,
+  labels?: { justNow?: string },
+): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "—";
   let diffSec = Math.floor((Date.now() - then) / 1000);
@@ -10,7 +15,9 @@ export function formatRelativePastSince(iso: string, localeTag: string): string 
   const loc = localeTag === "ar" ? "ar" : "en";
   const rtf = new Intl.RelativeTimeFormat(loc, { numeric: "auto" });
 
-  if (diffSec < 60) return rtf.format(-diffSec, "second");
+  if (diffSec < 60) {
+    return labels?.justNow ?? rtf.format(-diffSec, "second");
+  }
   const mins = Math.floor(diffSec / 60);
   if (mins < 60) return rtf.format(-mins, "minute");
   const hrs = Math.floor(mins / 60);

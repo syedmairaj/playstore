@@ -77,7 +77,7 @@ const INSERT_SCHEMA_SAFE_MESSAGE =
   "Unable to create the app right now. Please try again later.";
 
 const PERMISSION_DENIED_SAFE_MESSAGE =
-  "You don't have permission to add an app to this workspace.";
+  "You don't have permission to write to this workspace context.";
 
 export async function GET(_request: Request, context: Ctx) {
   const { workspaceId } = await context.params;
@@ -193,14 +193,48 @@ export async function POST(request: Request, context: Ctx) {
     if (metaIcon && /^https:\/\//i.test(metaIcon)) {
       insertPayload.icon_url = metaIcon;
     }
-    const { data, error } = await supabase
-      .from("apps")
-      .insert(insertPayload)
-      .select("id,name,package_name,metadata,icon_url,created_at")
-      .single();
+    let data: Record<string, unknown> | null = null;
+    let insertError: PostgrestErrorShape | null = null;
+    try {
+      const insertResult = await supabase
+        .from("apps")
+        .insert(insertPayload)
+        .select("id,name,package_name,metadata,icon_url,created_at")
+        .single();
+      data = insertResult.data;
+      insertError = insertResult.error;
+    } catch (insertThrown: unknown) {
+      const thrownShape: PostgrestErrorShape =
+        insertThrown && typeof insertThrown === "object"
+          ? (insertThrown as PostgrestErrorShape)
+          : { message: String(insertThrown) };
+      console.error(
+        "[POST /api/workspaces/[workspaceId]/apps] supabase_insert_throw",
+        thrownShape,
+      );
+      if (isPermissionOrRlsDenied(thrownShape)) {
+        return NextResponse.json(
+          {
+            error: "permission_denied",
+            message: PERMISSION_DENIED_SAFE_MESSAGE,
+          },
+          { status: 403 },
+        );
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: "insert_error",
+            message: INSERT_SCHEMA_SAFE_MESSAGE,
+          },
+        },
+        { status: 500 },
+      );
+    }
 
-    if (error || !data) {
-      const pgErr = error ?? {};
+    if (insertError || !data) {
+      const pgErr = insertError ?? {};
       const raw = pgErr.message ?? "";
       logPostgrestInsertError(pgErr);
       if (isPostgresUndefinedColumnError(raw)) {
@@ -216,22 +250,19 @@ export async function POST(request: Request, context: Ctx) {
         );
       }
       if (isPermissionOrRlsDenied(pgErr)) {
-        logRouteDebug("insert_rls_or_permission_denied", {
-          code: "permission_denied",
-          message: raw || PERMISSION_DENIED_SAFE_MESSAGE,
-          details: {
+        console.error(
+          "[POST /api/workspaces/[workspaceId]/apps] insert_permission_denied",
+          {
             workspaceId,
             userId: user.id,
             pgCode: pgErr.code ?? null,
+            message: raw || PERMISSION_DENIED_SAFE_MESSAGE,
           },
-        });
+        );
         return NextResponse.json(
           {
-            ok: false,
-            error: {
-              code: "permission_denied",
-              message: PERMISSION_DENIED_SAFE_MESSAGE,
-            },
+            error: "permission_denied",
+            message: PERMISSION_DENIED_SAFE_MESSAGE,
           },
           { status: 403 },
         );

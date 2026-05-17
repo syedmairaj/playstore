@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import {
   buildInsufficientAiCreditsPayload,
   readWorkspaceAiCreditsRemaining,
@@ -10,6 +9,10 @@ import {
   consumeWorkspaceAiCredits,
   refundWorkspaceAiCredits,
 } from "@/lib/features/billing/wallet";
+import {
+  competitorSpyAiCreditsForCountryCount,
+  serperAiCreditsForCountryCount,
+} from "@/lib/keywords/keyword-track-ai-pricing";
 import {
   SerperNotConfiguredError,
   isSerperConfigured,
@@ -84,7 +87,7 @@ export async function POST(request: Request) {
         error: {
           code: "serper_not_configured",
           message:
-            "Live Play Store search is not configured on this server. Set SERPER_API_KEY to enable it.",
+            "Live Play Store preview is not enabled on this server. Ask your workspace administrator to configure the required search integration.",
         },
       },
       { status: 503 },
@@ -92,7 +95,9 @@ export async function POST(request: Request) {
   }
 
   const creditCost =
-    parsed.countries.length * AI_CREDIT_COSTS.serper_preview_per_country;
+    parsed.pricingProfile === "competitor_spy"
+      ? competitorSpyAiCreditsForCountryCount(parsed.countries.length)
+      : serperAiCreditsForCountryCount(parsed.countries.length);
 
   const balancePre = await readWorkspaceAiCreditsRemaining(supabase, parsed.workspaceId);
   if (!balancePre.ok) {
@@ -118,13 +123,14 @@ export async function POST(request: Request) {
     workspaceId: parsed.workspaceId,
     userId: user.id,
     amount: creditCost,
-    description: "serper_preview",
+    description: "serper_play_store_preview",
     sourceType: "generation",
     meta: {
       route: ROUTE,
       keyword: parsed.keyword,
       countries: parsed.countries,
-      restrictToPlayStore: parsed.restrictToPlayStore ?? false,
+      restrict_to_play_store: parsed.restrictToPlayStore ?? false,
+      pricing_profile: parsed.pricingProfile ?? null,
     },
   });
 
@@ -141,10 +147,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error: {
-          code: "wallet_error",
-          message: "Could not reserve credits. Try again shortly.",
-        },
+        error: { code: "wallet_error", message: "Could not reserve credits. Try again shortly." },
       },
       { status: 503 },
     );
@@ -156,12 +159,17 @@ export async function POST(request: Request) {
     const results = await searchPlayStore(parsed.keyword, parsed.countries, {
       restrictToPlayStore: parsed.restrictToPlayStore ?? false,
     });
-    return NextResponse.json({ ok: true, results, creditsCharged: creditCost });
+    return NextResponse.json({
+      ok: true,
+      results,
+      creditsCharged: creditCost,
+      creditsRemaining: debit.balanceAfter,
+    });
   } catch (e) {
     const refund = await refundWorkspaceAiCredits(supabase, {
       ledgerId,
       userId: user.id,
-      reason: "serper_preview_failed",
+      reason: "serper_play_store_search_failed",
     });
     if (!refund.ok) {
       console.error(`[${ROUTE}] refund_failed`, refund.code, { ledgerId });
@@ -173,7 +181,7 @@ export async function POST(request: Request) {
           ok: false,
           error: {
             code: "serper_not_configured",
-            message: "Live Play Store search is not configured on this server.",
+            message: "Live Play Store preview is not enabled on this server. Ask your workspace administrator to configure the required search integration.",
           },
         },
         { status: 503 },
@@ -182,7 +190,14 @@ export async function POST(request: Request) {
     const msg = e instanceof Error ? e.message : "Search failed";
     console.error(`[${ROUTE}]`, msg);
     return NextResponse.json(
-      { ok: false, error: { code: "search_error", message: msg } },
+      {
+        ok: false,
+        error: {
+          code: "search_error",
+          message:
+            "Unable to fetch live ranks right now. Please try again in a few seconds.",
+        },
+      },
       { status: 502 },
     );
   }

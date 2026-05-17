@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +17,7 @@ import {
   type ListingLogoStyle,
 } from "@/lib/validation/listing-logo-generate-body";
 import { cn } from "@/lib/utils";
+import type { AppLogoGeneratorMetadata } from "@/lib/apps/logo-generator-metadata";
 
 type LogoGenOk = {
   ok: true;
@@ -57,6 +58,10 @@ export function LogoGeneratorDialog(props: {
   onCreditsRemaining: (n: number) => void;
   /** Called first on successful PATCH so the parent can update live preview without waiting for refetch. */
   onLogoSelected: (httpsUrl: string) => void;
+  /** Called after logo generator metadata is saved to `apps` (regenerate / selection). */
+  onLogoGeneratorPersisted?: () => void;
+  /** Restored from `apps.metadata.logoGenerator` when reopening “Change logo”. */
+  initialLogoGenerator?: AppLogoGeneratorMetadata | null;
 }) {
   const locale = useLocale();
   const isAr = locale === "ar";
@@ -66,11 +71,61 @@ export function LogoGeneratorDialog(props: {
   const [images, setImages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const persistSelectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
-    if (!props.open) return;
-    setSelected(null);
-  }, [props.open]);
+    const opened = props.open && !wasOpenRef.current;
+    wasOpenRef.current = props.open;
+    if (!opened) return;
+    const lg = props.initialLogoGenerator;
+    if (lg?.generatedUrls?.length) {
+      setImages(lg.generatedUrls);
+      setSelected(
+        lg.selectedUrl && lg.generatedUrls.includes(lg.selectedUrl) ? lg.selectedUrl : null,
+      );
+    } else {
+      setImages([]);
+      setSelected(null);
+    }
+  }, [props.open, props.initialLogoGenerator]);
+
+  useEffect(() => {
+    return () => {
+      if (persistSelectionTimerRef.current) {
+        clearTimeout(persistSelectionTimerRef.current);
+      }
+    };
+  }, []);
+
+  async function persistLogoGeneratorState(meta: AppLogoGeneratorMetadata) {
+    const res = await fetch(`/api/workspaces/${props.workspaceId}/apps/${props.appId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ logoGenerator: meta }),
+    });
+    const json = (await res.json()) as { ok?: boolean; error?: { message?: string } };
+    if (!res.ok || json.ok !== true) {
+      toast.error(json.error?.message ?? t("applyError"));
+      return false;
+    }
+    props.onLogoGeneratorPersisted?.();
+    return true;
+  }
+
+  function schedulePersistLogoSelection(url: string | null, urls: string[]) {
+    if (persistSelectionTimerRef.current) {
+      clearTimeout(persistSelectionTimerRef.current);
+    }
+    persistSelectionTimerRef.current = setTimeout(() => {
+      persistSelectionTimerRef.current = null;
+      void persistLogoGeneratorState({
+        generatedUrls: urls.slice(0, 4),
+        selectedUrl: url,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 400);
+  }
 
   async function runGenerate() {
     if (
@@ -136,7 +191,18 @@ export function LogoGeneratorDialog(props: {
         }
         return;
       }
-      setImages(json.images);
+      const urls = json.images
+        .filter((u) => typeof u === "string" && /^https:\/\//i.test(String(u).trim()))
+        .map((u) => String(u).trim())
+        .slice(0, 4);
+      setImages(urls);
+      if (urls.length > 0) {
+        await persistLogoGeneratorState({
+          generatedUrls: urls,
+          selectedUrl: null,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       if (typeof json.meta?.creditsRemaining === "number") {
         props.onCreditsRemaining(json.meta.creditsRemaining);
       }
@@ -268,12 +334,20 @@ export function LogoGeneratorDialog(props: {
     }
     setBusy(true);
     try {
+      const body: Record<string, unknown> = { icon_url: url };
+      if (images.length > 0) {
+        body.logoGenerator = {
+          generatedUrls: images.slice(0, 4),
+          selectedUrl: url,
+          updatedAt: new Date().toISOString(),
+        };
+      }
       const res = await fetch(
         `/api/workspaces/${props.workspaceId}/apps/${props.appId}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ icon_url: url }),
+          body: JSON.stringify(body),
         },
       );
       const json = (await res.json()) as {
@@ -384,7 +458,11 @@ export function LogoGeneratorDialog(props: {
                     key={`${i}-${src.slice(0, 48)}`}
                     type="button"
                     disabled={busy}
-                    onClick={() => setSelected(src)}
+                    onClick={() => {
+                      setSelected(src);
+                      props.onLogoSelected(src);
+                      schedulePersistLogoSelection(src, images);
+                    }}
                     className={cn(
                       "group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-black/35 p-1.5 shadow-[0_4px_12px_-4px_rgba(0,0,0,0.45),0_14px_28px_-12px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.06]",
                       "transition-[transform,box-shadow,border-color,opacity,ring-color] duration-200 ease-out will-change-transform",

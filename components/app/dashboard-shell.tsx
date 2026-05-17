@@ -11,6 +11,7 @@ export function DashboardShell({
   children,
   workspaceId,
   workspaceName,
+  workspacePlan,
   workspaces,
   creditsRemaining,
   creditsAllocation,
@@ -22,6 +23,8 @@ export function DashboardShell({
   children: React.ReactNode;
   workspaceId: string;
   workspaceName: string;
+  /** Normalized billing plan (`free` | `pro` | `growth`). */
+  workspacePlan: string;
   workspaces: { id: string; name: string }[];
   creditsRemaining: number;
   creditsAllocation: number;
@@ -72,6 +75,7 @@ export function DashboardShell({
         <DashboardNavbar
           workspaceId={workspaceId}
           workspaceName={workspaceName}
+          workspacePlan={workspacePlan}
           workspaces={workspaces}
           creditsRemaining={creditsRemaining}
           creditsAllocation={creditsAllocation}
@@ -80,7 +84,7 @@ export function DashboardShell({
           onOpenMobileNav={() => setMobileNavOpen(true)}
         />
         <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-          <div className="mx-auto min-h-0 w-full max-w-[1280px] px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">{children}</div>
+          <div className="mx-auto min-h-0 w-full max-w-[1600px] px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">{children}</div>
         </main>
       </div>
     </div>

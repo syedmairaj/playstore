@@ -1,37 +1,63 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { ChevronDown, ImagePlus } from "lucide-react";
-import { Link, useRouter } from "@/i18n/navigation";
+import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import type { ListingOptimizerHydrationPayload } from "@/lib/listing/latest-listing-hydration";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import { AddAppModal, type CreatedWorkspaceApp } from "@/components/app/add-app-modal";
-import { LivePreviewPhone } from "@/components/features/visualizer/live-preview-phone";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Separator } from "@/components/ui/separator";
+import { OptimizerLivePreviewPane } from "@/components/listing/optimizer/optimizer-live-preview-pane";
 import {
   PlayConsoleExportDialog,
   type PlayConsoleExportCopyField,
 } from "@/components/listing/play-console-export-dialog";
+import { clampListingTexts } from "@/components/listing/optimizer/listing-field-limits";
+import {
+  OptimizerResultsGeneratingView,
+  OptimizerResultsPanel,
+} from "@/components/listing/optimizer/optimizer-results-panel";
+import {
+  OptimizerSparkleTextarea,
+} from "@/components/listing/optimizer/optimizer-sparkle-textarea";
+import {
+  OptimizerStepper,
+  type OptimizerWizardStep,
+} from "@/components/listing/optimizer/optimizer-stepper";
+import { OptimizerCreditsConfirmDialog } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
+import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
 import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog";
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
 import { useAppLimits, workspaceAppsQueryKey } from "@/hooks/use-app-limits";
 import { precheckAddApp } from "@/lib/client/precheck-add-app";
 import {
+  clearCachedListingGeneration,
+  readCachedListingGeneration,
+  writeCachedListingGeneration,
+} from "@/lib/client/listing-optimizer-generated-cache";
+import {
+  consumeInjectedOptimizerKeywords,
+  consumePlaystoreKeywordContext,
+  hasPlaystoreInjectedKeywordContext,
+  LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE,
+  mergeOptimizerKeywordText,
+  OPTIMIZER_KEYWORDS_INJECTED_EVENT,
+  readListingOptimizerSession,
+  writeListingOptimizerSession,
+} from "@/lib/client/listing-optimizer-keywords-prefill";
+import {
   AI_CREDIT_COSTS,
   KEYWORD_TRACK_AI_FREE_PER_GENERATION,
 } from "@/lib/features/billing/credit-costs";
 import { normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS } from "@/lib/plan-limits";
+import {
+  parseLogoGeneratorMetadata,
+  resolveListingPreviewIconUrl,
+} from "@/lib/apps/logo-generator-metadata";
 import { cn } from "@/lib/utils";
 
 type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
@@ -45,6 +71,8 @@ type ApiSuccess = {
     persisted?: boolean;
     generationId?: string;
     savedAt?: string;
+    /** Server could not validate ASO scoring; listing fields are still valid. */
+    asoScorePartial?: boolean;
   };
 };
 
@@ -61,6 +89,10 @@ type ApiError = {
 
 type AutofillField = "keywords" | "features";
 
+type CreditConfirmPending =
+  | { kind: "listing_generation" }
+  | { kind: "autofill"; field: AutofillField };
+
 type AutofillApiSuccess = {
   ok: true;
   data: { text: string; field: AutofillField };
@@ -74,19 +106,9 @@ type AutofillApiSuccess = {
   };
 };
 
-const LISTING_TITLE_MAX = 30;
-const LISTING_SHORT_MAX = 80;
-const LISTING_LONG_MAX = 4000;
-/** Orange “close to limit” thresholds (green below, inclusive orange at/above until over max). */
-const LISTING_TITLE_WARN_FROM = 26;
-const LISTING_SHORT_WARN_FROM = 72;
-const LISTING_LONG_WARN_FROM = Math.floor(
-  (LISTING_LONG_MAX * LISTING_SHORT_WARN_FROM) / LISTING_SHORT_MAX,
-);
-
 /** Appended on one automatic retry when the API returns invalid model output (422). */
 const LISTING_GENERATE_STRICT_RETRY_INSTRUCTION =
-  "CRITICAL — Google Play HARD limits (count every character, including spaces): title ≤30, shortDescription ≤80 (never 81+), fullDescription ≤4000. Shorten shortDescription aggressively if required. Return only valid JSON with all required keys.";
+  "CRITICAL — Google Play HARD limits (count every character, including spaces): title ≤30, shortDescription ≤80 (never 81+), longDescription or fullDescription for the long body ≤4000. You MUST return valid ASO scoring: integer aso_score (0–100), score_breakdown with integers title (0–30), shortDescription (0–20), longDescription (0–40), persuasiveness (0–10) that sum to aso_score, and improvement_tips (array of at least 2 strings). Return only valid JSON with all required keys.";
 
 function mergeListingGenerateRetryInstruction(existing?: string): string {
   const trimmed = existing?.trim();
@@ -99,41 +121,33 @@ function mergeListingGenerateRetryInstruction(existing?: string): string {
 /** English instructions for Gemini (stable regardless of UI locale). */
 const REGENERATE_MODEL_INSTRUCTIONS = {
   punchier:
-    "Regenerate the full Play listing JSON. Make the copy punchier, more energetic, and more memorable. Keep honest claims, respect Google Play character limits, and preserve the same app facts and keyword intent.",
+    "Regenerate the full Play listing JSON. Make the copy punchier, more energetic, and more memorable. Keep honest claims, respect Google Play character limits, preserve the same app facts and keyword intent, and return a fresh aso_score + score_breakdown + improvement_tips that reflect the new copy.",
   professional:
-    "Regenerate the full Play listing JSON. Use a more polished, enterprise-appropriate professional voice while staying approachable. Keep honest claims and character limits.",
+    "Regenerate the full Play listing JSON. Use a more polished, enterprise-appropriate professional voice while staying approachable. Keep honest claims and character limits, and return a fresh aso_score + score_breakdown + improvement_tips that reflect the new copy.",
   arabic:
-    "Regenerate the full Play listing JSON. Translate every user-visible store string into natural modern Arabic suitable for MENA users on Google Play. Keep honest claims and character limits.",
+    "Regenerate the full Play listing JSON. Translate every user-visible store string into natural modern Arabic suitable for MENA users on Google Play. Keep honest claims and character limits, and return a fresh aso_score + score_breakdown + improvement_tips that reflect the new copy.",
   tone:
-    "Regenerate the full Play listing JSON. Vary tone and phrasing with a fresh creative angle while keeping the same substance and keyword intent. Keep honest claims and character limits.",
+    "Regenerate the full Play listing JSON. Vary tone and phrasing with a fresh creative angle while keeping the same substance and keyword intent. Keep honest claims and character limits, and return a fresh aso_score + score_breakdown + improvement_tips that reflect the new copy.",
 } as const;
-
-function clampListingTexts(title: string, short: string, long: string) {
-  return {
-    title: title.slice(0, LISTING_TITLE_MAX),
-    shortDescription: short.slice(0, LISTING_SHORT_MAX),
-    fullDescription: long.slice(0, LISTING_LONG_MAX),
-  };
-}
-
-function listingCountTone(
-  len: number,
-  max: number,
-  warnFrom: number,
-): "ok" | "warn" | "over" {
-  if (len > max) return "over";
-  if (len >= warnFrom) return "warn";
-  return "ok";
-}
-
-function charCountToneClass(tone: "ok" | "warn" | "over"): string {
-  if (tone === "over") return "text-red-300/95";
-  if (tone === "warn") return "text-amber-200/95";
-  return "text-[#86efac]/90";
-}
 
 function metaString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+/** Avoids `RangeError: Invalid time value` when `Intl` formats a bad timestamp. */
+function formatListingGeneratedAtLabel(
+  iso: string | null | undefined,
+  formatter: Intl.DateTimeFormat,
+): string {
+  const raw = typeof iso === "string" ? iso.trim() : "";
+  if (!raw) return "";
+  const ms = new Date(raw).getTime();
+  if (Number.isNaN(ms)) return "";
+  try {
+    return formatter.format(new Date(ms));
+  } catch {
+    return "";
+  }
 }
 
 /** Reads listing-related keys from `apps` row (column `icon_url` preferred, then `metadata`). */
@@ -230,6 +244,8 @@ export function ListingOptimizer({
   const t = useTranslations("optimizer");
   const tAddApp = useTranslations("addApp");
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [appName, setAppName] = useState("");
   const [category, setCategory] = useState("");
   const [keywords, setKeywords] = useState("");
@@ -254,6 +270,8 @@ export function ListingOptimizer({
   const [previewShortDesc, setPreviewShortDesc] = useState("");
   const [previewIconUrl, setPreviewIconUrl] = useState("");
   const [autofillBusy, setAutofillBusy] = useState<AutofillField | null>(null);
+  const [creditConfirmPending, setCreditConfirmPending] =
+    useState<CreditConfirmPending | null>(null);
   const [autofillGate, setAutofillGate] = useState<{
     appName?: boolean;
     category?: boolean;
@@ -269,7 +287,23 @@ export function ListingOptimizer({
   /** One-time auto-select first workspace app so the picker is not left blank on first load. */
   const autoPickedInitialAppRef = useRef(false);
   const generateNoAppToastShownRef = useRef(false);
+  const keywordsPrefillAppliedRef = useRef(false);
+  /** Blocks latest-listing hydration from restoring stale ASO/listing after Competitor Spy injection. */
+  const suppressListingHydrationRef = useRef(false);
+  /** Consumes localStorage/session injection queues once per route navigation. */
+  const injectionNavKeyRef = useRef("");
+  const injectionConsumedForNavRef = useRef(false);
+  const optimizerSessionRestoredRef = useRef(false);
   const [pickAppGate, setPickAppGate] = useState(false);
+  const [wizardStep, setWizardStep] = useState<OptimizerWizardStep>(0);
+  const [wizardPanelPeek, setWizardPanelPeek] = useState<
+    Partial<Record<OptimizerWizardStep, boolean>>
+  >({});
+  const [generateJustSucceeded, setGenerateJustSucceeded] = useState(false);
+  /** After fresh keyword injection: show results skeleton until the user runs Generate. */
+  const [purgedAwaitingGenerate, setPurgedAwaitingGenerate] = useState(false);
+  const purgedAwaitingGenerateRef = useRef(false);
+  purgedAwaitingGenerateRef.current = purgedAwaitingGenerate;
 
   const [hydrationByApp, setHydrationByApp] = useState<
     Record<string, ListingOptimizerHydrationPayload>
@@ -376,19 +410,302 @@ export function ListingOptimizer({
   }, [appsQuery.data, selectedAppId]);
   const selectedPersistedIconUrl = useMemo(() => {
     if (!selectedAppRow) return "";
-    return readAppListingMeta(
-      selectedAppRow.metadata,
-      selectedAppRow.icon_url,
-    ).iconUrl;
+    return resolveListingPreviewIconUrl({
+      iconUrlColumn: selectedAppRow.icon_url,
+      metadata: selectedAppRow.metadata,
+    });
   }, [selectedAppRow]);
+  const livePreviewIconUrl = useMemo(() => {
+    const fromState = previewIconUrl.trim();
+    if (hasValidHttpsPreviewIcon(fromState)) return fromState;
+    const persisted = selectedPersistedIconUrl.trim();
+    if (hasValidHttpsPreviewIcon(persisted)) return persisted;
+    return "";
+  }, [previewIconUrl, selectedPersistedIconUrl]);
+
+  /** Phone header when no generation: workspace app row, not stale listing hydration title. */
+  const previewAppName = useMemo(() => {
+    if (result) return appName.trim();
+    const fromRow = selectedAppRow?.name?.trim();
+    if (fromRow) return fromRow;
+    return appName.trim();
+  }, [appName, result, selectedAppRow]);
+
+  useEffect(() => {
+    if (!generateJustSucceeded) return;
+    const timer = window.setTimeout(() => setGenerateJustSucceeded(false), 2800);
+    return () => window.clearTimeout(timer);
+  }, [generateJustSucceeded]);
   const showChangeLogoBtn = Boolean(
     selectedAppId &&
-      (previewIconUrl.trim().length > 0 ||
+      (livePreviewIconUrl.trim().length > 0 ||
         selectedPersistedIconUrl.trim().length > 0),
   );
   const appsBusy =
     (appsQuery.isLoading && initialApps === undefined) ||
     (appsQuery.isFetching && appsList.length === 0);
+
+  const clearOptimizerGeneratedOutputs = useCallback(
+    (opts?: { clearLocalCache?: boolean; appId?: string }) => {
+      setResult(null);
+      setEditedTitle("");
+      setEditedShort("");
+      setEditedLong("");
+      setMeta(undefined);
+      setListingGenerationId(undefined);
+      setLastGeneratedAtIso(null);
+      setGenerateJustSucceeded(false);
+      setWizardStep(0);
+      setWizardPanelPeek({});
+      setPurgedAwaitingGenerate(false);
+      if (opts?.clearLocalCache && opts.appId?.trim()) {
+        clearCachedListingGeneration(opts.appId.trim());
+      }
+    },
+    [],
+  );
+
+  const applyCachedOrHydratedListingOutput = useCallback(
+    (
+      aid: string,
+      output: ListingGenerationOutput,
+      savedAt: string,
+      generationId?: string,
+    ) => {
+      setResult(output);
+      setWizardStep(2);
+      setWizardPanelPeek({});
+      setEditedTitle(output.title);
+      setEditedShort(output.shortDescription);
+      setEditedLong(output.fullDescription);
+      setLastGeneratedAtIso(savedAt);
+      if (generationId) setListingGenerationId(generationId);
+    },
+    [],
+  );
+
+  const syncPreviewFromWorkspaceApp = useCallback(
+    (appId: string) => {
+      const row = appsList.find((a) => a.id === appId);
+      if (!row) return;
+      const appRowMeta = readAppListingMeta(row.metadata, row.icon_url);
+      const previewIcon = resolveListingPreviewIconUrl({
+        iconUrlColumn: row.icon_url,
+        metadata: row.metadata,
+      });
+      const displayName = row.name.trim();
+      setAppName(displayName);
+      setCategory(appRowMeta.category);
+      setPreviewShortDesc(appRowMeta.shortDescription);
+      setPreviewIconUrl(previewIcon);
+    },
+    [appsList],
+  );
+
+  const applyOptimizerKeywordInjection = useCallback(() => {
+    const freshReplaceQueued = hasPlaystoreInjectedKeywordContext();
+    if (keywordsPrefillAppliedRef.current && !freshReplaceQueued) return;
+    if (appsBusy || appsQuery.isError) return;
+    if (appsList.length > 0 && !selectedAppId.trim()) return;
+
+    const navKey = `${pathname}?${searchParams.toString()}`;
+    if (injectionNavKeyRef.current !== navKey) {
+      injectionNavKeyRef.current = navKey;
+      injectionConsumedForNavRef.current = false;
+    }
+
+    const rawParam = searchParams.get("keywords");
+    const fromUrl =
+      rawParam && rawParam.trim()
+        ? (() => {
+            try {
+              return decodeURIComponent(rawParam.trim());
+            } catch {
+              return rawParam.trim();
+            }
+          })()
+        : "";
+    let legacy = fromUrl;
+    if (!legacy && !injectionConsumedForNavRef.current && typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage
+          .getItem(LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE)
+          ?.trim();
+        if (stored) {
+          legacy = stored;
+          sessionStorage.removeItem(LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE);
+        }
+      } catch {
+        /* sessionStorage unavailable */
+      }
+    }
+
+    let injectedReplace: string[] = [];
+    let injectedSession: string[] = [];
+    if (!injectionConsumedForNavRef.current) {
+      injectionConsumedForNavRef.current = true;
+      injectedReplace = consumePlaystoreKeywordContext();
+      injectedSession = consumeInjectedOptimizerKeywords();
+    }
+
+    if (!legacy && injectedReplace.length === 0 && injectedSession.length === 0) return;
+    keywordsPrefillAppliedRef.current = true;
+
+    const appIdParam = searchParams.get("appId")?.trim() ?? "";
+    const resolvedAppId =
+      appIdParam && appsList.some((a) => a.id === appIdParam)
+        ? appIdParam
+        : selectedAppId.trim();
+
+    if (injectedReplace.length > 0) {
+      suppressListingHydrationRef.current = true;
+      clearOptimizerGeneratedOutputs();
+      setPurgedAwaitingGenerate(true);
+      setError(null);
+      setKeywords((prev) => mergeOptimizerKeywordText(prev, injectedReplace));
+      if (resolvedAppId) {
+        if (resolvedAppId !== selectedAppId) {
+          workspacePickerPrevIdRef.current = resolvedAppId;
+          setSelectedAppId(resolvedAppId);
+        }
+        syncPreviewFromWorkspaceApp(resolvedAppId);
+        const session = readListingOptimizerSession();
+        const hyd = hydrationByApp[resolvedAppId];
+        const restoredFeatures =
+          session?.appId === resolvedAppId && session.features.trim()
+            ? session.features
+            : hyd?.appFeatures?.trim() ?? "";
+        const restoredCategory =
+          session?.appId === resolvedAppId && session.category.trim()
+            ? session.category
+            : hyd?.category?.trim() ?? "";
+        const restoredTone =
+          session?.appId === resolvedAppId
+            ? (session.toneStyle as ToneStyle)
+            : hyd?.toneStyle;
+        if (restoredFeatures) {
+          setFeatures((prev) => (prev.trim() ? prev : restoredFeatures));
+        }
+        if (restoredCategory) {
+          setCategory((prev) => (prev.trim() ? prev : restoredCategory));
+        }
+        if (restoredTone) {
+          setToneStyle(restoredTone);
+        }
+      }
+    } else {
+      setKeywords((prev) => {
+        const merged = mergeOptimizerKeywordText(prev, [
+          ...(legacy ? legacy.split(/[,;\n]+/u).map((s) => s.trim()).filter(Boolean) : []),
+          ...injectedSession,
+        ]);
+        return merged;
+      });
+    }
+
+    const sp = new URLSearchParams(searchParams.toString());
+    let qsChanged = false;
+    if (rawParam?.trim() && sp.has("keywords")) {
+      sp.delete("keywords");
+      qsChanged = true;
+    }
+    if (appIdParam && sp.has("appId")) {
+      sp.delete("appId");
+      qsChanged = true;
+    }
+    if (qsChanged) {
+      try {
+        const qs = sp.toString();
+        router.replace(qs ? `${pathname}?${qs}` : pathname);
+      } catch {
+        /* */
+      }
+    }
+  }, [
+    appsBusy,
+    appsQuery.isError,
+    appsList,
+    clearOptimizerGeneratedOutputs,
+    pathname,
+    router,
+    searchParams,
+    selectedAppId,
+    syncPreviewFromWorkspaceApp,
+    hydrationByApp,
+  ]);
+
+  useEffect(() => {
+    applyOptimizerKeywordInjection();
+  }, [applyOptimizerKeywordInjection]);
+
+  useEffect(() => {
+    function onInjected() {
+      keywordsPrefillAppliedRef.current = false;
+      injectionConsumedForNavRef.current = false;
+      optimizerSessionRestoredRef.current = false;
+      applyOptimizerKeywordInjection();
+    }
+    window.addEventListener(OPTIMIZER_KEYWORDS_INJECTED_EVENT, onInjected);
+    return () => window.removeEventListener(OPTIMIZER_KEYWORDS_INJECTED_EVENT, onInjected);
+  }, [applyOptimizerKeywordInjection]);
+
+  useEffect(() => {
+    if (optimizerSessionRestoredRef.current) return;
+    if (keywordsPrefillAppliedRef.current) return;
+    if (hasPlaystoreInjectedKeywordContext()) return;
+    if (appsBusy || appsQuery.isError) return;
+    if (appsList.length > 0 && !selectedAppId.trim()) return;
+
+    const session = readListingOptimizerSession();
+    if (!session) return;
+    optimizerSessionRestoredRef.current = true;
+    suppressListingHydrationRef.current = true;
+
+    if (appsList.length > 0 && appsList.some((a) => a.id === session.appId)) {
+      if (selectedAppId !== session.appId) {
+        workspacePickerPrevIdRef.current = session.appId;
+        setSelectedAppId(session.appId);
+      }
+    }
+    setKeywords(session.keywords);
+    setAppName(session.appName);
+    setCategory(session.category);
+    setFeatures(session.features);
+    setToneStyle(session.toneStyle as ToneStyle);
+    setPreviewShortDesc(session.previewShortDesc);
+    setPreviewIconUrl(session.previewIconUrl);
+    clearOptimizerGeneratedOutputs();
+  }, [
+    appsBusy,
+    appsQuery.isError,
+    appsList,
+    clearOptimizerGeneratedOutputs,
+    selectedAppId,
+  ]);
+
+  useEffect(() => {
+    const aid = selectedAppId.trim();
+    if (!aid) return;
+    writeListingOptimizerSession({
+      appId: aid,
+      keywords,
+      appName,
+      category,
+      features,
+      toneStyle,
+      previewShortDesc,
+      previewIconUrl,
+    });
+  }, [
+    selectedAppId,
+    keywords,
+    appName,
+    category,
+    features,
+    toneStyle,
+    previewShortDesc,
+    previewIconUrl,
+  ]);
 
   const canSubmit = useMemo(() => {
     const appGateOk =
@@ -438,35 +755,63 @@ export function ListingOptimizer({
     workspacePickerPrevIdRef.current = id;
 
     const appRowMeta = readAppListingMeta(row.metadata, row.icon_url);
+    const previewIcon = resolveListingPreviewIconUrl({
+      iconUrlColumn: row.icon_url,
+      metadata: row.metadata,
+    });
     const displayName = row.name.trim();
 
     const hyd = hydrationByApp[id];
+    const suppressHydration = suppressListingHydrationRef.current;
 
     if (hyd) {
-      setAppName(hyd.appName.trim() || displayName);
-      setCategory(hyd.category.trim() || appRowMeta.category);
-      setKeywords(hyd.keywordsText);
-      setFeatures(hyd.appFeatures);
-      setToneStyle(hyd.toneStyle);
-      setListingGenerationId(hyd.generationId);
-      setLastGeneratedAtIso(hyd.createdAt);
+      setAppName(displayName);
+      if (!suppressHydration) {
+        setCategory(hyd.category.trim() || appRowMeta.category);
+        setKeywords(hyd.keywordsText);
+        setFeatures(hyd.appFeatures);
+        setToneStyle(hyd.toneStyle);
+        setListingGenerationId(hyd.generationId);
+        setLastGeneratedAtIso(hyd.createdAt);
+      } else if (switchingApps) {
+        setCategory(appRowMeta.category);
+      }
       setMeta(undefined);
-      if (hyd.output) {
-        setResult(hyd.output);
-        setEditedTitle(hyd.output.title);
-        setEditedShort(hyd.output.shortDescription);
-        setEditedLong(hyd.output.fullDescription);
-      } else {
-        setResult(null);
-        setEditedTitle("");
-        setEditedShort("");
-        setEditedLong("");
+      if (hyd.output && !suppressHydration) {
+        applyCachedOrHydratedListingOutput(
+          id,
+          hyd.output,
+          hyd.createdAt,
+          hyd.generationId,
+        );
+        writeCachedListingGeneration(id, {
+          output: hyd.output,
+          savedAt: hyd.createdAt,
+          generationId: hyd.generationId,
+        });
+      } else if (!suppressHydration) {
+        const cached = readCachedListingGeneration(id);
+        if (cached?.output && !purgedAwaitingGenerateRef.current) {
+          applyCachedOrHydratedListingOutput(
+            id,
+            cached.output,
+            cached.savedAt,
+            cached.generationId,
+          );
+        } else {
+          setWizardStep(0);
+          setWizardPanelPeek({});
+          setResult(null);
+          setEditedTitle("");
+          setEditedShort("");
+          setEditedLong("");
+        }
       }
       if (switchingApps || !previewShortDesc.trim()) {
         setPreviewShortDesc(appRowMeta.shortDescription);
       }
       if (switchingApps || !previewIconUrl.trim()) {
-        setPreviewIconUrl(appRowMeta.iconUrl);
+        setPreviewIconUrl(previewIcon);
       }
       setPickAppGate(false);
       return;
@@ -488,9 +833,11 @@ export function ListingOptimizer({
       setPreviewShortDesc(appRowMeta.shortDescription);
     }
     if (switchingApps || !previewIconUrl.trim()) {
-      setPreviewIconUrl(appRowMeta.iconUrl);
+      setPreviewIconUrl(previewIcon);
     }
     if (switchingApps) {
+      setWizardStep(0);
+      setWizardPanelPeek({});
       setResult(null);
       setEditedTitle("");
       setEditedShort("");
@@ -519,15 +866,20 @@ export function ListingOptimizer({
     if (!initialHydrationNoApp || appliedNoAppHydrationRef.current) return;
     appliedNoAppHydrationRef.current = true;
     const hyd = initialHydrationNoApp;
-    setAppName(hyd.appName);
-    setCategory(hyd.category);
-    setKeywords(hyd.keywordsText);
-    setFeatures(hyd.appFeatures);
-    setToneStyle(hyd.toneStyle);
-    setListingGenerationId(hyd.generationId);
-    setLastGeneratedAtIso(hyd.createdAt);
-    if (hyd.output) {
+    const suppressHydration = suppressListingHydrationRef.current;
+    setAppName(suppressHydration ? "" : hyd.appName);
+    if (!suppressHydration) {
+      setCategory(hyd.category);
+      setKeywords(hyd.keywordsText);
+      setFeatures(hyd.appFeatures);
+      setToneStyle(hyd.toneStyle);
+      setListingGenerationId(hyd.generationId);
+      setLastGeneratedAtIso(hyd.createdAt);
+    }
+    if (hyd.output && !suppressHydration) {
       setResult(hyd.output);
+      setWizardStep(2);
+      setWizardPanelPeek({});
       setEditedTitle(hyd.output.title);
       setEditedShort(hyd.output.shortDescription);
       setEditedLong(hyd.output.fullDescription);
@@ -567,6 +919,14 @@ export function ListingOptimizer({
         };
         if (ac.signal.aborted || body.ok !== true) return;
 
+        if (suppressListingHydrationRef.current) {
+          if (body.data) {
+            setHydrationByApp((prev) => ({ ...prev, [aid]: body.data! }));
+          }
+          setPickAppGate(false);
+          return;
+        }
+
         const hyd = body.data;
         const row = appsList.find((a) => a.id === aid);
         const displayName = row?.name.trim() ?? "";
@@ -580,21 +940,33 @@ export function ListingOptimizer({
             delete next[aid];
             return next;
           });
+          const cached =
+            !purgedAwaitingGenerateRef.current
+              ? readCachedListingGeneration(aid)
+              : null;
           if (row) {
             setAppName(displayName);
-            setCategory(appRowMeta.category);
-            setKeywords("");
-            setFeatures("");
-            setToneStyle("professional");
-            setListingGenerationId(undefined);
-            setLastGeneratedAtIso(null);
-            setMeta(undefined);
-            setResult(null);
-            setEditedTitle("");
-            setEditedShort("");
-            setEditedLong("");
+            setCategory((prev) => prev.trim() || appRowMeta.category);
             setPreviewShortDesc(appRowMeta.shortDescription);
             setPreviewIconUrl(appRowMeta.iconUrl);
+            if (cached?.output) {
+              applyCachedOrHydratedListingOutput(
+                aid,
+                cached.output,
+                cached.savedAt,
+                cached.generationId,
+              );
+            } else if (!purgedAwaitingGenerateRef.current) {
+              setListingGenerationId(undefined);
+              setLastGeneratedAtIso(null);
+              setMeta(undefined);
+              setWizardStep(0);
+              setWizardPanelPeek({});
+              setResult(null);
+              setEditedTitle("");
+              setEditedShort("");
+              setEditedLong("");
+            }
           }
           setPickAppGate(false);
           return;
@@ -602,24 +974,45 @@ export function ListingOptimizer({
 
         setHydrationByApp((prev) => ({ ...prev, [aid]: hyd }));
 
-        setAppName(hyd.appName.trim() || displayName);
+        setAppName(displayName);
         setCategory(hyd.category.trim() || appRowMeta.category);
-        setKeywords(hyd.keywordsText);
-        setFeatures(hyd.appFeatures);
+        if (!suppressListingHydrationRef.current) {
+          setKeywords(hyd.keywordsText);
+          setFeatures(hyd.appFeatures);
+        }
         setToneStyle(hyd.toneStyle);
         setListingGenerationId(hyd.generationId);
         setLastGeneratedAtIso(hyd.createdAt);
         setMeta(undefined);
         if (hyd.output) {
-          setResult(hyd.output);
-          setEditedTitle(hyd.output.title);
-          setEditedShort(hyd.output.shortDescription);
-          setEditedLong(hyd.output.fullDescription);
+          applyCachedOrHydratedListingOutput(
+            aid,
+            hyd.output,
+            hyd.createdAt,
+            hyd.generationId,
+          );
+          writeCachedListingGeneration(aid, {
+            output: hyd.output,
+            savedAt: hyd.createdAt,
+            generationId: hyd.generationId,
+          });
         } else {
-          setResult(null);
-          setEditedTitle("");
-          setEditedShort("");
-          setEditedLong("");
+          const cached = readCachedListingGeneration(aid);
+          if (cached?.output && !purgedAwaitingGenerateRef.current) {
+            applyCachedOrHydratedListingOutput(
+              aid,
+              cached.output,
+              cached.savedAt,
+              cached.generationId,
+            );
+          } else {
+            setWizardStep(0);
+            setWizardPanelPeek({});
+            setResult(null);
+            setEditedTitle("");
+            setEditedShort("");
+            setEditedLong("");
+          }
         }
         setPreviewShortDesc(appRowMeta.shortDescription);
         setPreviewIconUrl(appRowMeta.iconUrl);
@@ -632,7 +1025,7 @@ export function ListingOptimizer({
     return () => ac.abort();
     // Intentionally omit appsList from deps — refetch only when workspace or selected app changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, selectedAppId, appsBusy, appsQuery.isError]);
+  }, [workspaceId, selectedAppId, appsBusy, appsQuery.isError, applyCachedOrHydratedListingOutput]);
 
   function tryOpenAddApp() {
     if (!workspaceId) return;
@@ -671,6 +1064,10 @@ export function ListingOptimizer({
       delete next[field];
       return next;
     });
+  }
+
+  function requestAutofill(field: AutofillField) {
+    setCreditConfirmPending({ kind: "autofill", field });
   }
 
   async function runAutofill(field: AutofillField) {
@@ -876,6 +1273,16 @@ export function ListingOptimizer({
       fullDescription: data.fullDescription,
       keywordSuggestions: result.keywordSuggestions,
       ctaSuggestions: result.ctaSuggestions,
+      ...(typeof result.asoScore === "number" &&
+      result.scoreBreakdown &&
+      result.improvementTips &&
+      result.improvementTips.length > 0
+        ? {
+            asoScore: result.asoScore,
+            scoreBreakdown: result.scoreBreakdown,
+            improvementTips: result.improvementTips,
+          }
+        : {}),
     };
     const json = JSON.stringify(payload, null, 2);
     const txt = [
@@ -1026,7 +1433,12 @@ export function ListingOptimizer({
         return;
       }
       const d = json.data;
+      suppressListingHydrationRef.current = false;
+      setPurgedAwaitingGenerate(false);
       setResult(d);
+      setGenerateJustSucceeded(true);
+      setWizardStep(2);
+      setWizardPanelPeek({});
       setEditedTitle(d.title);
       setEditedShort(d.shortDescription);
       setEditedLong(d.fullDescription);
@@ -1037,6 +1449,13 @@ export function ListingOptimizer({
         json.meta?.savedAt ?? new Date().toISOString();
       setLastGeneratedAtIso(savedIso);
       const sid = selectedAppId.trim();
+      if (sid) {
+        writeCachedListingGeneration(sid, {
+          output: d,
+          savedAt: savedIso,
+          generationId: generationIdFromApi,
+        });
+      }
       if (generationIdFromApi && sid) {
         const gid = generationIdFromApi;
         setHydrationByApp((prev) => ({
@@ -1057,6 +1476,11 @@ export function ListingOptimizer({
         toast.warning(t("results.persistWarning"));
       } else {
         toast.success(t("form.generateSuccessToastSaved"));
+      }
+      if (json.meta?.asoScorePartial) {
+        toast.message(t("results.asoScorePartialTitle"), {
+          description: t("results.asoScorePartialBody"),
+        });
       }
     } catch {
       toast.dismiss(runToastId);
@@ -1129,10 +1553,38 @@ export function ListingOptimizer({
     }
   }
 
+  function requestListingGeneration() {
+    setCreditConfirmPending({ kind: "listing_generation" });
+  }
+
+  function handleCreditConfirm() {
+    setCreditConfirmPending((pending) => {
+      if (!pending) return null;
+      if (pending.kind === "listing_generation") {
+        void runListingGeneration({ mode: "fresh" });
+      } else {
+        void runAutofill(pending.field);
+      }
+      return null;
+    });
+  }
+
+  const creditConfirmCredits =
+    creditConfirmPending?.kind === "listing_generation"
+      ? AI_CREDIT_COSTS.listing_generation
+      : creditConfirmPending?.kind === "autofill"
+        ? AI_CREDIT_COSTS.listing_optimizer_autofill
+        : 0;
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await runListingGeneration({ mode: "fresh" });
+    requestListingGeneration();
   }
+
+  const fieldFocus = cn(
+    "rounded-xl border border-zinc-800 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/35",
+    "focus-visible:border-emerald-500/35 focus-visible:shadow-[0_0_0_3px_rgba(52,211,153,0.1)] focus-visible:ring-[0.5px] focus-visible:ring-emerald-400/55",
+  );
 
   const shellClass = embedded
     ? "w-full min-h-0 max-w-full flex-1 rounded-2xl border border-white/[0.09] bg-gradient-to-b from-[#0a100d]/95 via-[#080c11]/98 to-[#06080c] px-0 py-7 shadow-[0_18px_48px_-28px_rgba(0,0,0,0.65),inset_0_1px_0_0_rgba(34,197,94,0.08)] ring-1 ring-[#22C55E]/10 sm:py-9"
@@ -1140,9 +1592,16 @@ export function ListingOptimizer({
 
   const showAppsEmpty =
     !appsQuery.isError && !appsBusy && appsList.length === 0;
-  const previewConnected = Boolean(selectedAppId);
+  const previewConnected = Boolean(selectedAppId || result);
   const canRegenerate = Boolean(canSubmit && result);
   const resultsBusy = Boolean(loading && result);
+  const canSaveKeywordsToTracker = Boolean(
+    workspaceId &&
+      selectedAppId.trim() &&
+      listingGenerationId &&
+      result?.keywordSuggestions?.length &&
+      !resultsBusy,
+  );
   const logoGenTriggerDisabled =
     Boolean(resultsBusy) || !workspaceId || !selectedAppId.trim();
   const logoGenTriggerTitle = resultsBusy
@@ -1158,6 +1617,44 @@ export function ListingOptimizer({
     [editedTitle, editedShort, editedLong],
   );
 
+  function goWizardStep(next: OptimizerWizardStep) {
+    setWizardStep(next);
+    setWizardPanelPeek({});
+  }
+
+  function advanceWizard() {
+    setWizardStep((s) => {
+      const n = (s >= 2 ? 2 : s + 1) as OptimizerWizardStep;
+      return n;
+    });
+    setWizardPanelPeek({});
+  }
+
+  function expandedWizardPanel(step: OptimizerWizardStep) {
+    return wizardStep === step || Boolean(wizardPanelPeek[step]);
+  }
+
+  function toggleWizardPanelPeek(step: OptimizerWizardStep) {
+    if (wizardStep === step) return;
+    setWizardPanelPeek((p) => ({ ...p, [step]: !p[step] }));
+  }
+
+  const discoverySummary =
+    keywords.trim().length > 0
+      ? keywords.trim().slice(0, 72) + (keywords.trim().length > 72 ? "…" : "")
+      : t("workflow.discoverySummaryEmpty");
+  const identitySummary =
+    (appName.trim() || "—") + " · " + (category.trim() || "—");
+  const toneLabel =
+    toneStyle === "professional"
+      ? t("form.toneProfessional")
+      : toneStyle === "friendly"
+        ? t("form.toneFriendly")
+        : toneStyle === "bold"
+          ? t("form.toneBold")
+          : t("form.toneMinimal");
+  const finalSummary = t("workflow.finalSummaryLine", { tone: toneLabel });
+
   return (
     <div
       dir={isRtl ? "rtl" : "ltr"}
@@ -1165,21 +1662,31 @@ export function ListingOptimizer({
       className={cn(
         isRtl && "font-arabic",
         embedded && "flex min-h-0 w-full min-w-0 flex-1 flex-col",
-        !embedded && "mx-auto max-w-5xl",
         shellClass,
       )}
     >
       <div
         className={cn(
-          embedded && "flex min-h-0 min-w-0 flex-1 flex-col px-4 sm:px-6 lg:px-8",
+          embedded && "flex min-h-0 min-w-0 flex-1 flex-col",
         )}
       >
+      <OptimizerCreditsConfirmDialog
+        open={creditConfirmPending !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreditConfirmPending(null);
+        }}
+        credits={creditConfirmCredits}
+        isRtl={isRtl}
+        onConfirm={handleCreditConfirm}
+      />
       <UpgradeModal
         open={upgradeOpen}
         onOpenChange={setUpgradeOpen}
         plan={limits.data?.plan ?? "free"}
         currentCount={limits.data?.currentCount ?? 0}
         appLimit={limits.data?.limit ?? 1}
+        workspaceId={workspaceId}
+        onSubscriptionSuccess={() => router.refresh()}
       />
       {result ? (
         <PlayConsoleExportDialog
@@ -1223,6 +1730,11 @@ export function ListingOptimizer({
           shortDescription={previewShortDesc}
           creditsRemaining={aiCreditsRemaining}
           onCreditsRemaining={setAiCreditsRemaining}
+          initialLogoGenerator={parseLogoGeneratorMetadata(selectedAppRow?.metadata ?? null)}
+          onLogoGeneratorPersisted={() => {
+            void appsQuery.refetch();
+            void router.refresh();
+          }}
           onLogoSelected={(url) => {
             setPreviewIconUrl(url);
             if (workspaceId && selectedAppId) {
@@ -1442,811 +1954,405 @@ export function ListingOptimizer({
         ) : null}
       </section>
 
-      <div className="grid min-h-0 min-w-0 items-start gap-12 sm:gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:items-start lg:gap-x-12 lg:gap-y-12">
-        <div className="flex min-h-0 min-w-0 flex-col gap-12 sm:gap-14">
-          <section
-            dir={isRtl ? "rtl" : "ltr"}
-            className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-6 shadow-[0_8px_32px_-18px_rgba(0,0,0,0.45)] backdrop-blur-md sm:p-8"
-          >
-            <form className="space-y-10 sm:space-y-11" onSubmit={onSubmit}>
-              <div className="space-y-5">
-                <h2
-                  className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50"
-                  title={t("form.sectionStoreTitle")}
-                >
-                  {t("form.sectionStore")}
-                </h2>
-                <p className="text-xs leading-relaxed text-white/45">
-                  {t("form.sectionStoreHelper")}
-                </p>
-                <div className="grid gap-5 sm:grid-cols-2 sm:gap-6">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-white/80" htmlFor="lo-app-name">
-                      {t("form.appName")}
-                    </label>
-                    <input
-                      id="lo-app-name"
-                      aria-invalid={autofillGate.appName ? true : undefined}
-                      className={cn(
-                        "w-full rounded-xl border bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none ring-0 transition placeholder:text-white/35 focus:ring-2 focus:ring-[#22C55E]/22",
-                        autofillGate.appName
-                          ? "border-red-400/45 focus:border-red-400/55"
-                          : "border-white/[0.09] focus:border-[#22C55E]/45",
-                      )}
-                      value={appName}
-                      onChange={(e) => {
-                        setAppName(e.target.value);
-                        clearAutofillGate("appName");
-                      }}
-                      placeholder={t("form.appNamePlaceholder")}
-                      autoComplete="off"
-                    />
-                    {autofillGate.appName ? (
-                      <p className="text-xs text-red-300/90">{t("form.autofill.needAppName")}</p>
-                    ) : null}
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-white/80" htmlFor="lo-category">
-                      {t("form.category")}
-                    </label>
-                    <input
-                      id="lo-category"
-                      aria-invalid={autofillGate.category ? true : undefined}
-                      className={cn(
-                        "w-full rounded-xl border bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/35 focus:ring-2 focus:ring-[#22C55E]/22",
-                        autofillGate.category
-                          ? "border-red-400/45 focus:border-red-400/55"
-                          : "border-white/[0.09] focus:border-[#22C55E]/45",
-                      )}
-                      value={category}
-                      onChange={(e) => {
-                        setCategory(e.target.value);
-                        clearAutofillGate("category");
-                      }}
-                      placeholder={t("form.categoryPlaceholder")}
-                      autoComplete="off"
-                    />
-                    {autofillGate.category ? (
-                      <p className="text-xs text-red-300/90">{t("form.autofill.needCategory")}</p>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
+      <OptimizerStepper
+        currentStep={wizardStep}
+        onStepChange={goWizardStep}
+        labels={[
+          t("workflow.step1"),
+          t("workflow.step2"),
+          t("workflow.step3"),
+        ]}
+        ariaLabel={t("workflow.stepperAria")}
+        stepStatusLabels={{
+          completed: t("workflow.stepCompleted"),
+          current: t("workflow.stepCurrent"),
+          upcoming: t("workflow.stepUpcoming"),
+        }}
+        isRtl={isRtl}
+      />
 
-              <Separator className="bg-white/[0.07]" />
-
-              <div className="space-y-6">
-                <h2
-                  className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50"
-                  title={t("form.sectionDiscoveryTitle")}
+      <div
+        dir={isRtl ? "rtl" : "ltr"}
+        className="grid grid-cols-1 overflow-hidden rounded-2xl border border-zinc-800/90 bg-zinc-950/25 shadow-[0_12px_40px_-24px_rgba(0,0,0,0.55)] md:grid-cols-[minmax(0,1fr)_320px] md:items-stretch md:overflow-visible lg:grid-cols-[minmax(0,1fr)_380px]"
+      >
+        <div className="flex min-h-0 min-w-0 flex-col gap-8 overflow-hidden p-6 pb-24 sm:p-8 md:overflow-visible md:border-e md:border-zinc-800/80 md:pb-8">
+          <section dir={isRtl ? "rtl" : "ltr"}>
+            <form className="space-y-8" onSubmit={onSubmit}>
+              <div className="divide-y divide-zinc-800/80">
+                <OptimizerWizardStepShell
+                  title={t("workflow.step1")}
+                  summary={identitySummary}
+                  expanded={expandedWizardPanel(0)}
+                  onToggle={() => toggleWizardPanelPeek(0)}
+                  disabledToggle={wizardStep === 0}
                 >
-                  {t("form.sectionDiscovery")}
-                </h2>
-                <p className="text-xs leading-relaxed text-white/45">
-                  {t("form.sectionDiscoveryHelper")}
-                </p>
-                <div className="space-y-8">
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                      <label
-                        className="min-w-0 max-w-[min(100%,28rem)] text-sm font-medium text-white/80"
-                        htmlFor="lo-keywords"
-                        title={t("form.keywordsFieldTitle")}
-                      >
-                        {t("form.keywords")}
+                  <p className="mb-4 text-xs leading-relaxed text-white/45">
+                    {t("form.sectionStoreHelper")}
+                  </p>
+                  <div className="grid gap-8 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-white/80" htmlFor="lo-app-name">
+                        {t("form.appName")}
                       </label>
-                      <div className="ms-auto flex min-w-0 flex-col items-end gap-1.5">
-                        <button
-                          type="button"
-                          title={t("form.autofill.tooltip")}
-                          disabled={Boolean(autofillBusy) || !workspaceId}
-                          onClick={() => void runAutofill("keywords")}
-                          className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-xl border border-[#22C55E]/45 bg-[#22C55E]/[0.07] px-4 py-2.5 text-sm font-semibold tracking-tight text-[#d1fae5] shadow-none transition hover:bg-[#22C55E]/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-                        >
-                          {autofillBusy === "keywords"
-                            ? t("form.autofill.loadingKeywords")
-                            : t("form.autofill.button")}
-                        </button>
-                        <p className="max-w-[16rem] text-end text-xs leading-snug text-white/45">
-                          {t("form.autofill.usesCredits", {
-                            credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
-                          })}
-                        </p>
-                      </div>
+                      <input
+                        id="lo-app-name"
+                        aria-invalid={autofillGate.appName ? true : undefined}
+                        className={cn(
+                          fieldFocus,
+                          "w-full",
+                          autofillGate.appName
+                            ? "border-red-400/45 focus-visible:border-red-400/55"
+                            : "",
+                        )}
+                        value={appName}
+                        onChange={(e) => {
+                          setAppName(e.target.value);
+                          clearAutofillGate("appName");
+                        }}
+                        placeholder={t("form.appNamePlaceholder")}
+                        autoComplete="off"
+                      />
+                      {autofillGate.appName ? (
+                        <p className="text-xs text-red-300/90">{t("form.autofill.needAppName")}</p>
+                      ) : null}
                     </div>
-                    <textarea
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-white/80" htmlFor="lo-category">
+                        {t("form.category")}
+                      </label>
+                      <input
+                        id="lo-category"
+                        aria-invalid={autofillGate.category ? true : undefined}
+                        className={cn(
+                          fieldFocus,
+                          "w-full",
+                          autofillGate.category
+                            ? "border-red-400/45 focus-visible:border-red-400/55"
+                            : "",
+                        )}
+                        value={category}
+                        onChange={(e) => {
+                          setCategory(e.target.value);
+                          clearAutofillGate("category");
+                        }}
+                        placeholder={t("form.categoryPlaceholder")}
+                        autoComplete="off"
+                      />
+                      {autofillGate.category ? (
+                        <p className="text-xs text-red-300/90">{t("form.autofill.needCategory")}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  {wizardStep === 0 ? (
+                    <div className="mt-6 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => advanceWizard()}
+                        className="rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg hover:bg-emerald-600"
+                      >
+                        {t("workflow.continue")}
+                      </button>
+                    </div>
+                  ) : null}
+                </OptimizerWizardStepShell>
+
+                <OptimizerWizardStepShell
+                  title={t("workflow.step2")}
+                  summary={discoverySummary}
+                  expanded={expandedWizardPanel(1)}
+                  onToggle={() => toggleWizardPanelPeek(1)}
+                  disabledToggle={wizardStep === 1}
+                >
+                  <p className="mb-4 text-xs leading-relaxed text-white/45">
+                    {t("form.sectionDiscoveryHelper")}
+                  </p>
+                  <div className="space-y-6 pt-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
+                      {t("workflow.discoveryCardTitle")}
+                    </p>
+                    <OptimizerSparkleTextarea
                       id="lo-keywords"
-                      aria-busy={autofillBusy === "keywords" ? true : undefined}
-                      className="min-h-[92px] w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-[#22C55E]/40 focus:ring-2 focus:ring-[#22C55E]/18 disabled:opacity-60"
+                      label={t("form.keywords")}
+                      labelTitle={t("form.keywordsFieldTitle")}
                       value={keywords}
-                      disabled={autofillBusy === "keywords"}
-                      onChange={(e) => setKeywords(e.target.value)}
+                      onChange={setKeywords}
                       placeholder={t("form.keywordsPlaceholder")}
+                      rows={4}
+                      minHeightClass="min-h-[92px]"
+                      disabled={Boolean(autofillBusy) || !workspaceId}
+                      busy={autofillBusy === "keywords"}
+                      onAutofill={() => void runAutofill("keywords")}
+                      onBeforeAutofill={() => requestAutofill("keywords")}
+                      sparkleAriaLabel={t("form.autofill.sparkleAriaKeywords")}
+                      sparkleTooltip={t("form.autofill.aiAssistTooltip")}
+                      creditsNote={t("form.autofill.usesCredits", {
+                        credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
+                      })}
                     />
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                      <label
-                        className="min-w-0 max-w-[min(100%,28rem)] text-sm font-medium text-white/80"
-                        htmlFor="lo-features"
-                        title={t("form.featuresFieldTitle")}
-                      >
-                        {t("form.features")}
-                      </label>
-                      <div className="ms-auto flex min-w-0 flex-col items-end gap-1.5">
-                        <button
-                          type="button"
-                          title={t("form.autofill.tooltip")}
-                          disabled={Boolean(autofillBusy) || !workspaceId}
-                          onClick={() => void runAutofill("features")}
-                          className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-xl border border-[#22C55E]/45 bg-[#22C55E]/[0.07] px-4 py-2.5 text-sm font-semibold tracking-tight text-[#d1fae5] shadow-none transition hover:bg-[#22C55E]/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-                        >
-                          {autofillBusy === "features"
-                            ? t("form.autofill.loadingFeatures")
-                            : t("form.autofill.button")}
-                        </button>
-                        <p className="max-w-[16rem] text-end text-xs leading-snug text-white/45">
-                          {t("form.autofill.usesCredits", {
-                            credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
-                          })}
-                        </p>
-                      </div>
-                    </div>
-                    <textarea
+                    <OptimizerSparkleTextarea
                       id="lo-features"
-                      aria-busy={autofillBusy === "features" ? true : undefined}
-                      className="min-h-[144px] w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-[#22C55E]/40 focus:ring-2 focus:ring-[#22C55E]/18 disabled:opacity-60"
+                      label={t("form.features")}
+                      labelTitle={t("form.featuresFieldTitle")}
                       value={features}
-                      disabled={autofillBusy === "features"}
-                      onChange={(e) => setFeatures(e.target.value)}
+                      onChange={setFeatures}
                       placeholder={t("form.featuresPlaceholder")}
+                      rows={5}
+                      minHeightClass="min-h-[144px]"
+                      disabled={Boolean(autofillBusy) || !workspaceId}
+                      busy={autofillBusy === "features"}
+                      onAutofill={() => void runAutofill("features")}
+                      onBeforeAutofill={() => requestAutofill("features")}
+                      sparkleAriaLabel={t("form.autofill.sparkleAriaFeatures")}
+                      sparkleTooltip={t("form.autofill.aiAssistTooltip")}
+                      creditsNote={t("form.autofill.usesCredits", {
+                        credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
+                      })}
                     />
                   </div>
-                </div>
-              </div>
+                  {wizardStep === 1 ? (
+                    <div className="mt-6 flex flex-wrap justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => goWizardStep(0)}
+                        className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white/85 hover:bg-zinc-800"
+                      >
+                        {t("workflow.back")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => advanceWizard()}
+                        className="rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600"
+                      >
+                        {t("workflow.continue")}
+                      </button>
+                    </div>
+                  ) : null}
+                </OptimizerWizardStepShell>
 
-              <Separator className="bg-white/[0.07]" />
-
-              <div className="space-y-5 rounded-2xl border border-[#22C55E]/14 bg-gradient-to-br from-[#22C55E]/[0.05] to-transparent p-5 ring-1 ring-[#22C55E]/8 sm:space-y-6 sm:p-6">
-                <h2
-                  className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50"
-                  title={t("form.sectionVoiceTitle")}
+                <OptimizerWizardStepShell
+                  title={t("workflow.step3")}
+                  summary={finalSummary}
+                  expanded={expandedWizardPanel(2)}
+                  onToggle={() => toggleWizardPanelPeek(2)}
+                  disabledToggle={wizardStep === 2}
                 >
-                  {t("form.sectionVoice")}
-                </h2>
-                <p className="text-xs leading-relaxed text-white/45">
-                  {t("form.sectionVoiceHelper", {
-                    credits: AI_CREDIT_COSTS.listing_generation,
-                  })}
-                </p>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-white/80" htmlFor="lo-tone">
-                    {t("form.tone")}
-                  </label>
-                  <select
-                    id="lo-tone"
-                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none transition focus:border-[#22C55E]/40 focus:ring-2 focus:ring-[#22C55E]/18 sm:max-w-md"
-                    value={toneStyle}
-                    onChange={(e) => setToneStyle(e.target.value as ToneStyle)}
-                  >
-                    <option value="professional">{t("form.toneProfessional")}</option>
-                    <option value="friendly">{t("form.toneFriendly")}</option>
-                    <option value="bold">{t("form.toneBold")}</option>
-                    <option value="minimal">{t("form.toneMinimal")}</option>
-                  </select>
-                </div>
-
-                {error ? (
-                  <div
-                    className="rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white/80"
-                    role="alert"
-                  >
-                    <p className="font-medium text-[#22C55E]">{t("form.refiningTitle")}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-white/50">{t("form.refiningHint")}</p>
-                    <p className="mt-2 text-sm text-white/70">{error}</p>
-                  </div>
-                ) : null}
-
-                <p className="text-sm font-medium leading-relaxed text-white/82">
-                  {t("form.generateLead")}
-                </p>
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-4 sm:gap-y-2">
-                  <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
-                    <button
-                      type="submit"
-                      disabled={!canSubmit}
-                      aria-busy={loading ? true : undefined}
-                      className="inline-flex w-full items-center justify-center rounded-xl bg-[#22C55E] px-8 py-3.5 text-base font-semibold text-white shadow-[0_8px_28px_-6px_rgba(34,197,94,0.45)] ring-2 ring-[#22C55E]/25 transition hover:bg-[#16a34a] hover:shadow-[0_12px_32px_-8px_rgba(34,197,94,0.5)] disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[260px]"
-                    >
-                      {loading ? t("form.generating") : t("form.generate")}
-                    </button>
-                    <p className="text-center text-xs font-medium text-white/55 sm:text-start">
-                      {t("form.generateCostLabel", {
+                  <div className="space-y-5 border-t border-zinc-800/60 pt-5 sm:pt-6">
+                    <p className="text-xs leading-relaxed text-white/45">
+                      {t("form.sectionVoiceHelper", {
                         credits: AI_CREDIT_COSTS.listing_generation,
                       })}
                     </p>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-white/80" htmlFor="lo-tone">
+                        {t("form.tone")}
+                      </label>
+                      <select
+                        id="lo-tone"
+                        className={cn(fieldFocus, "w-full sm:max-w-md")}
+                        value={toneStyle}
+                        onChange={(e) => setToneStyle(e.target.value as ToneStyle)}
+                      >
+                        <option value="professional">{t("form.toneProfessional")}</option>
+                        <option value="friendly">{t("form.toneFriendly")}</option>
+                        <option value="bold">{t("form.toneBold")}</option>
+                        <option value="minimal">{t("form.toneMinimal")}</option>
+                      </select>
+                    </div>
+
+                    {error ? (
+                      <div
+                        className="rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white/80"
+                        role="alert"
+                      >
+                        <p className="font-medium text-emerald-400">{t("form.refiningTitle")}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-white/50">{t("form.refiningHint")}</p>
+                        <p className="mt-2 text-sm text-white/70">{error}</p>
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-4 sm:gap-y-2">
+                      <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
+                        <button
+                          type="submit"
+                          disabled={!canSubmit}
+                          aria-busy={loading ? true : undefined}
+                          className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
+                        >
+                          {loading
+                            ? t("form.generating")
+                            : t("form.generate", {
+                                credits: AI_CREDIT_COSTS.listing_generation,
+                              })}
+                        </button>
+                        <p className="text-center text-sm font-medium text-emerald-300/90 sm:text-start">
+                          {t("form.generateValueMicrocopy")}
+                        </p>
+                        <p className="max-w-xl text-center text-xs leading-relaxed text-white/50 sm:text-start">
+                          {t("form.generateButtonHelper", {
+                            credits: AI_CREDIT_COSTS.listing_generation,
+                          })}
+                        </p>
+                      </div>
+                      {loading ? (
+                        <span className="self-center text-sm text-white/45 sm:self-center">
+                          {t("form.generatingHint")}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                  {loading ? (
-                    <span className="self-center text-sm text-white/45 sm:self-center">
-                      {t("form.generatingHint")}
-                    </span>
+                  {wizardStep === 2 ? (
+                    <div className="mt-6 flex justify-start">
+                      <button
+                        type="button"
+                        onClick={() => goWizardStep(1)}
+                        className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white/85 hover:bg-zinc-800"
+                      >
+                        {t("workflow.back")}
+                      </button>
+                    </div>
                   ) : null}
-                </div>
+                </OptimizerWizardStepShell>
               </div>
             </form>
           </section>
 
+          <AnimatePresence mode="wait">
           {result ? (
-            <section
-              dir={isRtl ? "rtl" : "ltr"}
-              className="relative flex min-h-0 min-w-0 flex-col gap-12 sm:gap-14"
-              aria-labelledby="listing-results-heading"
+            <motion.div
+              key="optimizer-results"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
             >
-              {resultsBusy ? (
-                <div
-                  className="flex items-center gap-3 rounded-2xl border border-[#22C55E]/35 bg-[#22C55E]/10 px-4 py-3 text-sm text-[#bbf7d0] shadow-[inset_0_1px_0_0_rgba(34,197,94,0.12)]"
-                  role="status"
-                  aria-live="polite"
-                >
-                  <span
-                    className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-[#22C55E] shadow-[0_0_10px_rgba(34,197,94,0.6)]"
-                    aria-hidden
-                  />
-                  {t("results.regenerating")}
-                </div>
-              ) : null}
-
-              <div className="space-y-4 border-b border-white/[0.06] pb-11 sm:pb-12">
-                <h2
-                  id="listing-results-heading"
-                  className="text-xl font-semibold tracking-tight text-white sm:text-2xl"
-                >
-                  {t("results.heading")}
-                </h2>
-                <p className="max-w-2xl text-sm leading-relaxed text-white/58 sm:text-[15px] sm:leading-[1.65]">
-                  {t("results.subheading")}
-                </p>
-                {lastGeneratedAtIso && result ? (
-                  <p className="text-xs font-medium text-emerald-300/88">
-                    {t("results.lastGeneratedLine", {
-                      date: lastGeneratedLabelFormatter.format(
-                        new Date(lastGeneratedAtIso),
-                      ),
-                    })}
-                  </p>
-                ) : null}
-                {meta?.persisted === false ? (
-                  <p className="text-xs text-amber-300/90">
-                    {t("results.persistWarning")}
-                  </p>
-                ) : meta?.promptVersion ? (
-                  <p className="text-xs text-white/45">
-                    {t("results.metaPrompt", {
-                      version: meta.promptVersion,
-                      model: meta.model ?? "",
-                    })}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="flex flex-col gap-12 sm:gap-14">
-                <div className="rounded-2xl border border-white/[0.07] bg-white/[0.028] p-6 shadow-[0_14px_48px_-26px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-7">
-                  <label
-                    className="block text-[15px] font-semibold tracking-tight text-white/92"
-                    htmlFor="lo-res-title"
-                  >
-                    {t("results.titleBlock")}
-                  </label>
-                  <input
-                    id="lo-res-title"
-                    disabled={resultsBusy}
-                    aria-invalid={
-                      editedTitle.length > LISTING_TITLE_MAX ? true : undefined
-                    }
-                    aria-describedby="lo-res-title-count lo-res-title-hint"
-                    className={cn(
-                      "mt-4 w-full rounded-xl border bg-black/30 px-3.5 py-3.5 text-[15px] leading-snug text-white outline-none transition placeholder:text-white/35 focus:ring-2 focus:ring-[#22C55E]/22 disabled:opacity-50",
-                      editedTitle.length > LISTING_TITLE_MAX
-                        ? "border-red-400/45 focus:border-red-400/55"
-                        : "border-white/[0.09] focus:border-[#22C55E]/45",
-                    )}
-                    value={editedTitle}
-                    onChange={(e) => setEditedTitle(e.target.value)}
-                    autoComplete="off"
-                  />
-                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-                    <span
-                      id="lo-res-title-count"
-                      role="status"
-                      aria-live="polite"
-                      aria-atomic="true"
-                      className={cn(
-                        "text-[13px] font-medium tabular-nums tracking-tight",
-                        charCountToneClass(
-                          listingCountTone(
-                            editedTitle.length,
-                            LISTING_TITLE_MAX,
-                            LISTING_TITLE_WARN_FROM,
-                          ),
-                        ),
-                      )}
-                    >
-                      {t("results.charCount", {
-                        current: editedTitle.length,
-                        max: LISTING_TITLE_MAX,
-                      })}
-                    </span>
-                  </div>
-                  <p
-                    id="lo-res-title-hint"
-                    className="mt-2.5 text-[12px] leading-relaxed text-white/44"
-                  >
-                    {t("results.titleLimitHint")}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-white/[0.07] bg-white/[0.028] p-6 shadow-[0_14px_48px_-26px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-7">
-                  <label
-                    className="block text-[15px] font-semibold tracking-tight text-white/92"
-                    htmlFor="lo-res-short"
-                  >
-                    {t("results.shortBlock")}
-                  </label>
-                  <textarea
-                    id="lo-res-short"
-                    rows={4}
-                    disabled={resultsBusy}
-                    aria-invalid={
-                      editedShort.length > LISTING_SHORT_MAX ? true : undefined
-                    }
-                    aria-describedby="lo-res-short-count lo-res-short-hint"
-                    className={cn(
-                      "mt-4 min-h-[6.75rem] w-full resize-y rounded-xl border bg-black/30 px-3.5 py-3.5 text-[15px] leading-relaxed text-white outline-none transition placeholder:text-white/35 focus:ring-2 focus:ring-[#22C55E]/22 disabled:opacity-50",
-                      editedShort.length > LISTING_SHORT_MAX
-                        ? "border-red-400/45 focus:border-red-400/55"
-                        : "border-white/[0.09] focus:border-[#22C55E]/45",
-                    )}
-                    value={editedShort}
-                    onChange={(e) => setEditedShort(e.target.value)}
-                  />
-                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-                    <span
-                      id="lo-res-short-count"
-                      role="status"
-                      aria-live="polite"
-                      aria-atomic="true"
-                      className={cn(
-                        "text-[13px] font-medium tabular-nums tracking-tight",
-                        charCountToneClass(
-                          listingCountTone(
-                            editedShort.length,
-                            LISTING_SHORT_MAX,
-                            LISTING_SHORT_WARN_FROM,
-                          ),
-                        ),
-                      )}
-                    >
-                      {t("results.charCount", {
-                        current: editedShort.length,
-                        max: LISTING_SHORT_MAX,
-                      })}
-                    </span>
-                  </div>
-                  <p
-                    id="lo-res-short-hint"
-                    className="mt-2.5 text-[12px] leading-relaxed text-white/44"
-                  >
-                    {t("results.shortLimitHint")}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-white/[0.07] bg-white/[0.028] p-6 shadow-[0_14px_48px_-26px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-7">
-                  <label
-                    className="block text-[15px] font-semibold tracking-tight text-white/92"
-                    htmlFor="lo-res-long"
-                  >
-                    {t("results.fullBlock")}
-                  </label>
-                  <textarea
-                    id="lo-res-long"
-                    rows={14}
-                    disabled={resultsBusy}
-                    aria-invalid={
-                      editedLong.length > LISTING_LONG_MAX ? true : undefined
-                    }
-                    aria-describedby="lo-res-long-count lo-res-long-helper lo-res-long-hint"
-                    className={cn(
-                      "mt-4 min-h-[min(28rem,52vh)] w-full resize-y rounded-xl border bg-black/30 px-3.5 py-3.5 text-[15px] leading-relaxed text-white outline-none transition placeholder:text-white/35 focus:ring-2 focus:ring-[#22C55E]/22 disabled:opacity-50",
-                      editedLong.length > LISTING_LONG_MAX
-                        ? "border-red-400/45 focus:border-red-400/55"
-                        : "border-white/[0.09] focus:border-[#22C55E]/45",
-                    )}
-                    value={editedLong}
-                    onChange={(e) => setEditedLong(e.target.value)}
-                  />
-                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-                    <span
-                      id="lo-res-long-count"
-                      role="status"
-                      aria-live="polite"
-                      aria-atomic="true"
-                      className={cn(
-                        "text-[13px] font-medium tabular-nums tracking-tight",
-                        charCountToneClass(
-                          listingCountTone(
-                            editedLong.length,
-                            LISTING_LONG_MAX,
-                            LISTING_LONG_WARN_FROM,
-                          ),
-                        ),
-                      )}
-                    >
-                      {t("results.charCount", {
-                        current: editedLong.length,
-                        max: LISTING_LONG_MAX,
-                      })}
-                    </span>
-                  </div>
-                  <p
-                    id="lo-res-long-helper"
-                    className="mt-3.5 text-[12px] leading-relaxed text-white/44"
-                  >
-                    {t("results.longDescriptionHint")}
-                  </p>
-                  <p
-                    id="lo-res-long-hint"
-                    className="mt-2 text-[12px] leading-relaxed text-white/40"
-                  >
-                    {t("results.longLimitHint")}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-x-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch sm:gap-x-2 sm:gap-y-2">
-                  <button
-                    type="button"
-                    disabled={resultsBusy}
-                    className="inline-flex min-h-[44px] w-full items-center justify-center rounded-xl bg-[#22C55E] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_28px_-6px_rgba(34,197,94,0.45)] ring-2 ring-[#22C55E]/25 transition hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[132px]"
-                    onClick={() =>
-                      void copyText(
-                        "all",
-                        copyListingAllBlocks(clampedListing),
-                      )
-                    }
-                  >
-                    {t("results.copyAllPrimary")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={resultsBusy}
-                    className="inline-flex min-h-[44px] w-full items-center justify-center rounded-xl border border-white/18 bg-transparent px-4 py-2.5 text-sm font-semibold text-white/88 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#bbf7d0] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-0"
-                    onClick={() =>
-                      void copyText("title", clampedListing.title)
-                    }
-                  >
-                    {t("results.copyTitleButton")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={resultsBusy}
-                    className="inline-flex min-h-[44px] w-full items-center justify-center rounded-xl border border-white/18 bg-transparent px-4 py-2.5 text-sm font-semibold text-white/88 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#bbf7d0] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-0"
-                    onClick={() =>
-                      void copyText(
-                        "short",
-                        clampedListing.shortDescription,
-                      )
-                    }
-                  >
-                    {t("results.copyShortDescription")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={resultsBusy}
-                    className="inline-flex min-h-[44px] w-full items-center justify-center rounded-xl border border-white/18 bg-transparent px-4 py-2.5 text-sm font-semibold text-white/88 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#bbf7d0] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-0"
-                    onClick={() =>
-                      void copyText(
-                        "long",
-                        clampedListing.fullDescription,
-                      )
-                    }
-                  >
-                    {t("results.copyLongDescription")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={resultsBusy}
-                    className="inline-flex min-h-[44px] w-full items-center justify-center rounded-xl border border-white/18 bg-transparent px-4 py-2.5 text-sm font-semibold text-white/88 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#bbf7d0] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-0"
-                    onClick={() => setExportPlayOpen(true)}
-                  >
-                    {t("results.exportPlayConsole")}
-                  </button>
-                </div>
-                <div className="flex w-full shrink-0 lg:w-auto lg:justify-end">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        disabled={!canRegenerate || resultsBusy}
-                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.06] px-5 py-2.5 text-sm font-medium text-white/88 transition hover:border-[#22C55E]/35 hover:bg-[#22C55E]/10 hover:text-[#bbf7d0] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
-                      >
-                        {t("results.regenerate.label")}
-                        <ChevronDown className="h-4 w-4 shrink-0 opacity-70" aria-hidden />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="end"
-                      className="min-w-[14rem] border border-white/10 bg-[#10141c] p-1 text-white shadow-xl"
-                    >
-                      <DropdownMenuItem
-                        className="cursor-pointer rounded-lg text-sm text-white/90 focus:bg-[#22C55E]/15 focus:text-white"
-                        onSelect={() =>
-                          void runListingGeneration({
-                            mode: "regenerate",
-                            userInstruction: REGENERATE_MODEL_INSTRUCTIONS.punchier,
-                          })
-                        }
-                      >
-                        {t("results.regenerate.punchier")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="cursor-pointer rounded-lg text-sm text-white/90 focus:bg-[#22C55E]/15 focus:text-white"
-                        onSelect={() =>
-                          void runListingGeneration({
-                            mode: "regenerate",
-                            userInstruction: REGENERATE_MODEL_INSTRUCTIONS.professional,
-                          })
-                        }
-                      >
-                        {t("results.regenerate.professional")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="cursor-pointer rounded-lg text-sm text-white/90 focus:bg-[#22C55E]/15 focus:text-white"
-                        onSelect={() =>
-                          void runListingGeneration({
-                            mode: "regenerate",
-                            userInstruction: REGENERATE_MODEL_INSTRUCTIONS.arabic,
-                            targetArabicOverride: true,
-                          })
-                        }
-                      >
-                        {t("results.regenerate.arabic")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="cursor-pointer rounded-lg text-sm text-white/90 focus:bg-[#22C55E]/15 focus:text-white"
-                        onSelect={() =>
-                          void runListingGeneration({
-                            mode: "regenerate",
-                            userInstruction: REGENERATE_MODEL_INSTRUCTIONS.tone,
-                          })
-                        }
-                      >
-                        {t("results.regenerate.tone")}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-
-              <div className="flex w-full justify-center border-t border-white/[0.06] pt-8 sm:pt-9">
-                <div
-                  className={cn(
-                    "relative w-full max-w-lg rounded-2xl p-[1px]",
-                    "bg-gradient-to-br from-[#22C55E]/55 via-[#22C55E]/18 to-[#22C55E]/42",
-                    "shadow-[0_0_52px_-14px_rgba(34,197,94,0.45),0_0_0_1px_rgba(34,197,94,0.14)_inset]",
-                    "transition-[box-shadow,filter] duration-300 ease-out",
-                    "hover:shadow-[0_0_64px_-12px_rgba(34,197,94,0.52),0_0_0_1px_rgba(34,197,94,0.2)_inset]",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "flex flex-col items-stretch gap-2 rounded-[0.9375rem] bg-[#0a100e]/95 px-4 py-3.5 sm:items-center sm:px-5 sm:py-4",
-                      "ring-1 ring-inset ring-white/[0.04]",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      disabled={logoGenTriggerDisabled}
-                      title={logoGenTriggerTitle}
-                      aria-label={
-                        logoGenTriggerTitle
-                          ? `${t("logo.openButton")}. ${logoGenTriggerTitle}`
-                          : t("logo.openButton")
-                      }
-                      aria-describedby="lo-logo-cta-microcopy"
-                      onClick={() => {
-                        if (!logoGenTriggerDisabled) setLogoGenOpen(true);
-                      }}
-                      className={cn(
-                        "relative inline-flex min-h-[46px] w-full items-center justify-center rounded-xl border border-[#22C55E]/44 bg-[#22C55E]/[0.1] px-5 py-3 text-sm font-semibold text-[#86efac]",
-                        "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_6px_24px_-14px_rgba(34,197,94,0.35)]",
-                        "ring-2 ring-[#22C55E]/22 transition-[border-color,box-shadow,ring-color,transform,background-color,color] duration-200 ease-out",
-                        "hover:border-[#22C55E]/58 hover:bg-[#22C55E]/16 hover:text-[#d1fae5] hover:shadow-[0_10px_36px_-12px_rgba(34,197,94,0.42),inset_0_1px_0_rgba(255,255,255,0.08)] hover:ring-[#22C55E]/38",
-                        "active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[min(100%,17.5rem)]",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a100e]",
-                      )}
-                    >
-                      {t("logo.openButton")}
-                    </button>
-                    <p
-                      id="lo-logo-cta-microcopy"
-                      className="text-start text-[11px] leading-relaxed text-white/52 sm:text-xs"
-                    >
-                      {t("logo.ctaMicrocopy", {
-                        credits: AI_CREDIT_COSTS.listing_logo_generation,
-                      })}
-                    </p>
-                    {result &&
-                    workspaceId &&
-                    !resultsBusy &&
-                    !selectedAppId.trim() ? (
-                      <p className="text-start text-xs font-medium leading-relaxed text-amber-200/90" role="status">
-                        {appsList.length > 0
-                          ? t("logo.selectAppFirstHint")
-                          : t("logo.addWorkspaceAppForLogo")}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid min-w-0 gap-7 sm:gap-8">
-                <ResultList
-                  title={t("results.keywordsList")}
-                  items={result.keywordSuggestions}
-                  copyLabel={t("results.copyAll")}
-                  onCopyAll={() =>
-                    copyText("keywords", result.keywordSuggestions.join(", "))
-                  }
-                />
-                {workspaceId &&
-                selectedAppId.trim() &&
-                listingGenerationId &&
-                !resultsBusy ? (
-                  <div
-                    className={cn(
-                      "rounded-2xl border border-emerald-500/30 bg-[#07120e]/90 p-6 shadow-[0_0_40px_-18px_rgba(34,197,94,0.35)] ring-1 ring-emerald-500/15",
-                      isRtl && "text-end",
-                    )}
-                  >
-                    <p className="text-[13px] font-semibold uppercase tracking-wide text-emerald-400/95">
-                      {t("results.trackKeywords.kicker")}
-                    </p>
-                    <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-200/95">
-                      {t("results.trackKeywords.pricingLine", {
-                        free: KEYWORD_TRACK_AI_FREE_PER_GENERATION,
-                        per: AI_CREDIT_COSTS.keyword_track_ai_per_keyword,
-                      })}
-                    </p>
-                    <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
-                      <button
-                        type="button"
-                        disabled={trackKwBusy}
-                        onClick={() => void trackKeywordsInKeywordTracker()}
-                        className="inline-flex min-h-[46px] w-full items-center justify-center rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white shadow-[0_8px_28px_-8px_rgba(34,197,94,0.45)] ring-2 ring-emerald-500/25 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
-                      >
-                        {trackKwBusy
-                          ? t("results.trackKeywords.busy")
-                          : t("results.trackKeywords.cta")}
-                      </button>
-                      <Link
-                        href={`/app/${workspaceId}/keywords`}
-                        className="text-center text-sm font-medium text-emerald-300/95 underline-offset-4 hover:text-emerald-200 hover:underline sm:text-start"
-                      >
-                        {t("results.trackKeywords.secondaryLink")}
-                      </Link>
-                    </div>
-                  </div>
-                ) : workspaceId &&
-                  selectedAppId.trim() &&
-                  !listingGenerationId &&
-                  !resultsBusy ? (
-                  <p className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90">
-                    {t("results.trackKeywords.persistHint")}
-                  </p>
-                ) : null}
-                <ResultList
-                  title={t("results.ctaList")}
-                  items={result.ctaSuggestions}
-                  copyLabel={t("results.copyAll")}
-                  onCopyAll={() =>
-                    copyText("CTAs", result.ctaSuggestions.join("\n"))
-                  }
-                />
-              </div>
-            </section>
+            <OptimizerResultsPanel
+              result={result}
+              meta={meta}
+              resultsBusy={resultsBusy}
+              lastGeneratedAtIso={lastGeneratedAtIso}
+              lastGeneratedLabel={formatListingGeneratedAtLabel(
+                lastGeneratedAtIso,
+                lastGeneratedLabelFormatter,
+              )}
+              isRtl={isRtl}
+              editedTitle={editedTitle}
+              setEditedTitle={setEditedTitle}
+              editedShort={editedShort}
+              setEditedShort={setEditedShort}
+              editedLong={editedLong}
+              setEditedLong={setEditedLong}
+              clampedListing={clampedListing}
+              onCopyAllBlocks={() =>
+                void copyText(
+                  "all",
+                  copyListingAllBlocks(clampedListing),
+                )
+              }
+              onCopyKeywordsList={() =>
+                void copyText(
+                  "keywords",
+                  result.keywordSuggestions.join(", "),
+                )
+              }
+              onCopyCtasList={() =>
+                void copyText("CTAs", result.ctaSuggestions.join("\n"))
+              }
+              onCopyTitle={() => void copyText("title", clampedListing.title)}
+              onCopyShort={() =>
+                void copyText("short", clampedListing.shortDescription)
+              }
+              onCopyLong={() =>
+                void copyText("long", clampedListing.fullDescription)
+              }
+              onExportOpen={() => setExportPlayOpen(true)}
+              canRegenerate={canRegenerate}
+              onRegeneratePunchier={() =>
+                void runListingGeneration({
+                  mode: "regenerate",
+                  userInstruction: REGENERATE_MODEL_INSTRUCTIONS.punchier,
+                })
+              }
+              onRegenerateProfessional={() =>
+                void runListingGeneration({
+                  mode: "regenerate",
+                  userInstruction: REGENERATE_MODEL_INSTRUCTIONS.professional,
+                })
+              }
+              onRegenerateArabic={() =>
+                void runListingGeneration({
+                  mode: "regenerate",
+                  userInstruction: REGENERATE_MODEL_INSTRUCTIONS.arabic,
+                  targetArabicOverride: true,
+                })
+              }
+              onRegenerateTone={() =>
+                void runListingGeneration({
+                  mode: "regenerate",
+                  userInstruction: REGENERATE_MODEL_INSTRUCTIONS.tone,
+                })
+              }
+              workspaceId={workspaceId}
+              selectedAppId={selectedAppId}
+              listingGenerationId={listingGenerationId}
+              trackKwBusy={trackKwBusy}
+              onTrackKeywords={() => void trackKeywordsInKeywordTracker()}
+              logoGenTriggerDisabled={logoGenTriggerDisabled}
+              logoGenTriggerTitle={logoGenTriggerTitle}
+              onOpenLogoGen={() => setLogoGenOpen(true)}
+              appsListLength={appsList.length}
+              showGenerateSuccess={generateJustSucceeded}
+              canSaveToTracker={canSaveKeywordsToTracker}
+            />
+            </motion.div>
+          ) : loading || purgedAwaitingGenerate ? (
+            <motion.section
+              key="optimizer-loading"
+              className="pt-4 sm:pt-6"
+              aria-busy={loading ? true : undefined}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+            >
+              <OptimizerResultsGeneratingView isRtl={isRtl} />
+            </motion.section>
           ) : (
-            <section className="rounded-2xl border border-dashed border-white/[0.14] bg-white/[0.025] px-6 py-10 text-center text-sm leading-relaxed text-white/52 ring-1 ring-inset ring-[#22C55E]/10 backdrop-blur-sm">
+            <motion.section
+              key="optimizer-empty"
+              className="border-t border-dashed border-zinc-800/80 px-2 py-10 text-center text-sm leading-relaxed text-white/52 sm:py-12"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: "easeOut" }}
+            >
               {t("empty.body")}
-            </section>
+            </motion.section>
           )}
+          </AnimatePresence>
         </div>
 
-        <aside className="flex w-full flex-col items-center gap-5 lg:sticky lg:top-8 lg:max-h-[min(calc(100dvh-5rem),920px)] lg:w-auto lg:overflow-y-auto lg:self-start lg:overscroll-contain">
-          <div className="relative w-full max-w-[360px] overflow-visible">
-            {showChangeLogoBtn ? (
-              <button
-                type="button"
-                onClick={() => setLogoGenOpen(true)}
-                aria-label={t("preview.clickToChangeLogo")}
-                title={t("preview.clickToChangeLogo")}
-                className={cn(
-                  "absolute end-2 top-2 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-[#22C55E]/38 bg-[#22C55E]/14 text-[#d1fae5] shadow-[0_4px_14px_-6px_rgba(34,197,94,0.35)] backdrop-blur-sm",
-                  "transition-[transform,box-shadow,border-color,background-color] duration-200 motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#22C55E]/55 motion-safe:hover:bg-[#22C55E]/22 motion-safe:hover:shadow-[0_8px_22px_-8px_rgba(34,197,94,0.45)]",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080f0d]",
-                )}
-              >
-                <ImagePlus className="size-3.5 shrink-0 opacity-95" aria-hidden />
-              </button>
-            ) : null}
-            <div
-              className={cn(
-                "w-full max-w-[360px] rounded-2xl border bg-gradient-to-b from-[#0a1210]/96 via-[#080f0d] to-[#050807] p-5 shadow-[0_8px_28px_-16px_rgba(0,0,0,0.42),inset_0_1px_0_0_rgba(34,197,94,0.06)] backdrop-blur-md sm:p-6",
-                previewConnected
-                  ? "border-[#22C55E]/32 ring-1 ring-[#22C55E]/22 shadow-[0_12px_36px_-18px_rgba(34,197,94,0.16)]"
-                  : "border-white/[0.07] ring-1 ring-[#22C55E]/10",
-              )}
-            >
-              <LivePreviewPhone
-                appName={appName}
-                category={category}
-                keywords={keywords}
-                featuresDraft={features}
-                draftShortDescription={previewShortDesc}
-                iconUrl={previewIconUrl}
-                previewFieldsOverride={
-                  result ? clampedListing : null
-                }
-                result={result}
-                loading={loading}
-                scanActive={loading || autofillBusy !== null}
-                previewDir={isRtl ? "rtl" : "ltr"}
-                showEmptyIconAsoHint={!hasValidHttpsPreviewIcon(previewIconUrl)}
-                onLogoSquircleClick={
-                  !logoGenTriggerDisabled
-                    ? () => setLogoGenOpen(true)
-                    : undefined
-                }
-              />
-            </div>
-          </div>
-        </aside>
+        <OptimizerLivePreviewPane
+          workspaceId={workspaceId}
+          isRtl={isRtl}
+          previewConnected={previewConnected}
+          showChangeLogoBtn={showChangeLogoBtn}
+          onOpenLogoGen={() => setLogoGenOpen(true)}
+          appName={previewAppName}
+          category={category}
+          keywords={keywords}
+          features={features}
+          previewShortDesc={previewShortDesc}
+          livePreviewIconUrl={livePreviewIconUrl}
+          clampedListing={clampedListing}
+          result={result}
+          loading={loading}
+          isGenerating={loading && !result}
+          scanActive={loading || autofillBusy !== null}
+          showEmptyIconAsoHint={!hasValidHttpsPreviewIcon(livePreviewIconUrl)}
+          logoGenTriggerDisabled={logoGenTriggerDisabled}
+        />
       </div>
     </div>
-    </div>
-  );
-}
-
-function ResultList(props: {
-  title: string;
-  items: string[];
-  copyLabel: string;
-  onCopyAll: () => void | Promise<void>;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <div className="rounded-2xl border border-white/[0.08] bg-white/[0.045] p-6 shadow-[0_10px_36px_-18px_rgba(0,0,0,0.45)] ring-1 ring-[#22C55E]/10 backdrop-blur-[12px] transition-[border-color,box-shadow] duration-200 hover:border-[#22C55E]/20 hover:shadow-[0_14px_40px_-16px_rgba(34,197,94,0.12)]">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-[15px] font-semibold tracking-tight text-white/95">{props.title}</h3>
-        <button
-          type="button"
-          onClick={async () => {
-            await props.onCopyAll();
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1600);
-          }}
-          className="inline-flex min-w-[4.5rem] items-center justify-center rounded-lg border border-white/14 bg-white/[0.06] px-2 py-1 text-xs font-medium text-white/85 transition hover:border-[#22C55E]/35 hover:bg-[#22C55E]/10 hover:text-[#bbf7d0]"
-        >
-          {copied ? "✓" : props.copyLabel}
-        </button>
-      </div>
-      <ul className="list-disc space-y-2 ps-5 text-sm leading-relaxed text-white/82">
-        {props.items.map((item, i) => (
-          <li key={`${i}-${item}`}>{item}</li>
-        ))}
-      </ul>
     </div>
   );
 }

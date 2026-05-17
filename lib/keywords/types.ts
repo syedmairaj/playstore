@@ -12,6 +12,8 @@ export type KeywordRankSnapshot = {
   snapshot_at: string;
   created_at: string;
   source: string;
+  /** Play market (lowercase alpha-2); null on legacy or manual rows. */
+  country_code: string | null;
 };
 
 /** Row shape for inserts (server fills best_rank via trigger if omitted in SQL; client inserts rank only). */
@@ -21,4 +23,5 @@ export type KeywordRankSnapshotInsert = {
   snapshot_at?: string;
   search_volume?: number | null;
   source?: string;
+  country_code?: string | null;
 };

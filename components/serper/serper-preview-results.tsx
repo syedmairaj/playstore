@@ -1,45 +1,64 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { AlertTriangle, ExternalLink } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { CompetitorSpyOpenPlayButton } from "@/components/competitor-spy/competitor-spy-open-play-button";
 import {
   type SupportedCountryCode,
   isSupportedCountry,
 } from "@/lib/countries";
+import {
+  LIVE_RANKS_PREVIEW_UNAVAILABLE,
+} from "@/lib/keywords/live-ranks-preview-tokens";
+import { extractPackageIdFromPlayStoreDetailsUrl } from "@/lib/keywords/play-store-details-url";
+import { serperPreviewRowMatchesWorkspacePackage } from "@/lib/keywords/serper-snapshot-rank-resolve";
+import type { SerperPreviewCountry, SerperPreviewItem } from "@/lib/keywords/serper-preview-types";
 import { cn } from "@/lib/utils";
 
 /** Shape mirrors the public response from `POST /api/serper/play-store-search`. */
-export type SerperPreviewItem = {
-  title: string;
-  link: string;
-  packageId: string | null;
-  position: number;
-  snippet: string | null;
-};
-
-export type SerperPreviewCountry = {
-  country: string;
-  gl: string;
-  hl: string;
-  items: SerperPreviewItem[];
-  error: string | null;
-};
+export type { SerperPreviewCountry, SerperPreviewItem };
 
 export type SerperPreviewResultsProps = {
   results: SerperPreviewCountry[];
   className?: string;
+  /** Workspace app package (raw); matched with the same rules as saved rank snapshots. */
+  packageName?: string | null;
+  /** Optional display name for contextual copy (reserved for future use). */
+  appDisplayName?: string | null;
+  /**
+   * `serp`: row link uses Serper `item.link`.
+   * `canonical`: Competitor Spy — open `playStoreAppDetailsUrl` from package id (with i18n + loading UX).
+   */
+  playStoreLinks?: "serp" | "canonical";
+  isRtl?: boolean;
 };
 
 function chunkOk(country: string): country is SupportedCountryCode {
   return isSupportedCountry(country);
 }
 
+function mapPreviewCountryError(raw: string, translate: (key: string) => string): string {
+  if (raw === LIVE_RANKS_PREVIEW_UNAVAILABLE) return translate("liveRanksUnavailable");
+  if (raw === "timeout" || raw === "fetch_failed") return translate("liveRanksUnavailable");
+  if (raw.startsWith("Serper ")) return translate("liveRanksUnavailable");
+  return raw;
+}
+
+const PREVIEW_LIST_LIMIT = 20;
+
 export function SerperPreviewResults({
   results,
   className,
+  packageName,
+  appDisplayName,
+  playStoreLinks = "serp",
+  isRtl,
 }: SerperPreviewResultsProps) {
   const t = useTranslations("serperPreview");
   const tCountries = useTranslations("countrySelector");
+
+  const trackPackage = Boolean(packageName?.trim());
+  const namedApp = appDisplayName?.trim() ?? "";
 
   if (!results.length) return null;
 
@@ -85,6 +104,9 @@ export function SerperPreviewResults({
           <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">
             {t("resultsSubtitle")}
           </p>
+          <p className="max-w-2xl text-xs leading-relaxed text-zinc-500" role="note">
+            {t("googleRankDirectionalNote")}
+          </p>
         </div>
       </header>
 
@@ -111,14 +133,20 @@ export function SerperPreviewResults({
                 </span>
               </div>
 
+              {code === "cn" ? (
+                <p className="text-[11px] leading-relaxed text-amber-200/85" role="note">
+                  {t("chinaDisclaimer")}
+                </p>
+              ) : null}
+
               {country.error ? (
                 <p
-                  className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm leading-relaxed text-rose-100/90"
+                  className="rounded-xl border border-rose-500/35 bg-rose-500/[0.14] px-4 py-3 text-sm leading-relaxed text-rose-50/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ring-1 ring-rose-400/15"
                   role="alert"
                 >
                   {t("errorPerCountry", {
                     country: countryLabel,
-                    message: country.error,
+                    message: mapPreviewCountryError(country.error, t),
                   })}
                 </p>
               ) : country.items.length === 0 ? (
@@ -126,47 +154,101 @@ export function SerperPreviewResults({
                   {t("noResults")}
                 </p>
               ) : (
-                <ol className="divide-y divide-white/[0.05] overflow-hidden rounded-xl border border-white/[0.08] bg-[#070a0f]/90">
-                  {country.items.slice(0, 10).map((item) => (
-                    <li
-                      key={`${code}-${item.position}-${item.link}`}
-                      className="flex gap-4 px-4 py-3.5 sm:px-5 sm:py-4"
+                <>
+                  <ol className="divide-y divide-white/[0.05] overflow-hidden rounded-xl border border-white/[0.08] bg-[#070a0f]/90">
+                    {country.items.slice(0, PREVIEW_LIST_LIMIT).map((item) => {
+                      const isYourApp =
+                        trackPackage && serperPreviewRowMatchesWorkspacePackage(packageName, item);
+                      const resolvedPackageId =
+                        item.packageId?.trim() ||
+                        extractPackageIdFromPlayStoreDetailsUrl(item.link);
+                      return (
+                        <li
+                          key={`${code}-${item.position}-${item.link}`}
+                          className={cn(
+                            "flex gap-4 px-4 py-3.5 sm:px-5 sm:py-4",
+                            isYourApp &&
+                              "bg-emerald-500/[0.07] ring-1 ring-inset ring-emerald-500/25",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-lg border text-sm font-bold tabular-nums shadow-sm",
+                              isYourApp
+                                ? "border-emerald-400/50 bg-emerald-500/25 text-emerald-50 ring-1 ring-emerald-400/30"
+                                : "border-emerald-500/35 bg-emerald-500/[0.12] text-emerald-200 ring-1 ring-emerald-400/15",
+                            )}
+                            title={t("rankLabel")}
+                          >
+                            {item.position}
+                          </span>
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-[15px] font-semibold leading-snug text-zinc-50">
+                                {item.title}
+                              </p>
+                              {isYourApp ? (
+                                <span className="inline-flex shrink-0 items-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-100">
+                                  {t("yourAppPositionBadge")}
+                                </span>
+                              ) : null}
+                            </div>
+                            {item.packageId ? (
+                              <p className="truncate font-mono text-xs text-zinc-500">
+                                {item.packageId}
+                              </p>
+                            ) : null}
+                            {item.snippet ? (
+                              <p className="line-clamp-2 text-sm leading-relaxed text-zinc-400">
+                                {item.snippet}
+                              </p>
+                            ) : null}
+                          </div>
+                          {playStoreLinks === "canonical" ? (
+                            <CompetitorSpyOpenPlayButton
+                              packageId={resolvedPackageId}
+                              isRtl={isRtl}
+                              size="sm"
+                              variant="outline"
+                              className="h-9 shrink-0 self-start rounded-lg border-white/[0.1] bg-white/[0.03] px-2.5 text-xs font-medium text-zinc-200 hover:border-emerald-400/35 hover:bg-emerald-500/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40"
+                            />
+                          ) : (
+                            <a
+                              href={item.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={t("openInPlay")}
+                              aria-label={t("openInPlay")}
+                              className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-lg border border-white/[0.1] bg-white/[0.03] px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-400/35 hover:bg-emerald-500/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40"
+                            >
+                              <ExternalLink className="size-3.5 shrink-0" aria-hidden />
+                              <span>{t("openInPlay")}</span>
+                            </a>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  {trackPackage &&
+                  !country.items.some((it) =>
+                    serperPreviewRowMatchesWorkspacePackage(packageName, it),
+                  ) ? (
+                    <div
+                      className="flex gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/[0.08] px-3.5 py-3 text-xs leading-relaxed text-amber-50/95 sm:text-[13px]"
+                      role="note"
                     >
-                      <span
-                        className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/35 bg-emerald-500/[0.12] text-sm font-bold tabular-nums text-emerald-200 shadow-sm ring-1 ring-emerald-400/15"
-                        title={t("rankLabel")}
-                      >
-                        {item.position}
-                      </span>
-                      <div className="min-w-0 flex-1 space-y-1.5">
-                        <p className="text-[15px] font-semibold leading-snug text-zinc-50">
-                          {item.title}
-                        </p>
-                        {item.packageId ? (
-                          <p className="truncate font-mono text-xs text-zinc-500">
-                            {item.packageId}
-                          </p>
-                        ) : null}
-                        {item.snippet ? (
-                          <p className="line-clamp-2 text-sm leading-relaxed text-zinc-400">
-                            {item.snippet}
-                          </p>
-                        ) : null}
-                      </div>
-                      <a
-                        href={item.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={t("openInPlay")}
-                        aria-label={t("openInPlay")}
-                        className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-lg border border-white/[0.1] bg-white/[0.03] px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-400/35 hover:bg-emerald-500/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40"
-                      >
-                        <ExternalLink className="size-3.5 shrink-0" aria-hidden />
-                        <span>{t("openInPlay")}</span>
-                      </a>
-                    </li>
-                  ))}
-                </ol>
+                      <AlertTriangle
+                        className="mt-0.5 size-4 shrink-0 text-amber-400/90"
+                        aria-hidden
+                      />
+                      <p>
+                        {namedApp
+                          ? t("appOutsideTopPreviewFooterWithApp", { appName: namedApp })
+                          : t("appOutsideTopPreviewFooter")}
+                      </p>
+                    </div>
+                  ) : null}
+                </>
               )}
             </li>
           );

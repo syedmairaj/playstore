@@ -9,8 +9,9 @@
 - POST /apps
 - GET /keywords
 - POST /keywords/track
-- GET /competitors
-- POST /competitors
+- GET /workspaces/:workspaceId/competitors (Competitor Spy — persisted analyses)
+- POST /workspaces/:workspaceId/competitors (Competitor Spy — upsert after analyze)
+- DELETE /workspaces/:workspaceId/competitors/:competitorId (Competitor Spy — remove saved analysis)
 - GET /reviews
 - GET /listings
 - POST /listings/generate
@@ -31,7 +32,7 @@ Creates a workspace, adds the caller as **owner** (trigger), inserts the default
 
 ### GET /api/workspaces/:workspaceId/keywords
 
-Returns keywords plus `ranks` (chronological, capped) and `latest` snapshot. **403** if not a member.
+Returns keywords plus `ranks` (chronological, capped) and `latest` snapshot (primary **`keywords.market`** only). Rank rows may include **`country_code`** when snapshots are tagged. Each keyword may include **`trackedCountryCodes`** (distinct snapshot markets) and **`lastSyncedAt`** (max **`snapshot_at`** across all snapshots) for the table UI. **403** if not a member.
 
 - **Query:** `appId` (optional workspace app uuid) — when set, only keywords for that app are returned. Omits or invalid values return all apps (same as listing the full workspace set).
 
@@ -40,29 +41,28 @@ Returns keywords plus `ranks` (chronological, capped) and `latest` snapshot. **4
 **Body:** `{ "term": string, "market"?: string, "locale"?: string, "appId"?: uuid }` — creates a tracked keyword for Google Play ASO.
 
 - **409** — duplicate normalized term for the same workspace **app** + **market** (`duplicate_keyword`).
-- New keywords start **without** rank snapshots until the user saves a Serper preview or uses **Refresh ranks** on a row.
+- New keywords start **without** rank snapshots until the user persists a live preview via **`serper-save`** or uses **Refresh ranks** on a row.
 
 ### POST /api/workspaces/:workspaceId/keywords/serper-save
 
-**Body:** `{ "term": string, "appId": uuid, "market": "us"|"sa"|"ae", "results": SerperPreviewCountry[] }` — persists one `keyword_rank_snapshots` row (`source = serper`) from a preview the user already obtained via **`POST /api/serper/play-store-search`** (no additional Serper debit). Creates the keyword row if it does not exist for that app + market + term. Requires the app’s **`package_name`** to resolve rank from organic results.
+**Body:** `{ "term": string, "appId": uuid, "keywordId"?: uuid, "countries": ("us"|"sa"|"ae"|"in"|"cn")[], "results": SerperPreviewCountry[], "primaryCountry"?: same }` — persists **`keyword_rank_snapshots`** rows (`source = serper`, one row per entry in **`countries`**, each with matching **`country_code`**, `snapshot_at` set server-side) from the **last** client preview payload obtained via **`POST /api/serper/play-store-search`** (no additional Serper call; **no extra AI credit** on this route—preview was already charged). The keyword’s primary **`keywords.market`** is **`countries[0]`** after the server optionally moves **`primaryCountry`** to the front when it is included in **`countries`** (so the UI’s first selected market wins over preview block order). Every listed code must appear in **`results`**. Optional **`keywordId`** must belong to the workspace + **`appId`** and match **`term`** (add-then-save flow). Creates the keyword row if none exists for that app + term when **`keywordId`** is omitted. Requires the app’s **`package_name`** to resolve rank from organic results. **`results`** are validated (bounded strings, item counts, max **4** countries).
 
 ### POST /api/workspaces/:workspaceId/keywords/:keywordId/serper-refresh
 
-Re-runs Serper for the keyword’s term. **Countries:** supported codes from **`apps.target_countries`** (normalized to lowercase), or **`keywords.market`** when none match. Debits **`serper_preview_per_country` × country count** (same wallet pattern as `play-store-search`), refunds on hard failure before a snapshot is stored. Inserts **`keyword_rank_snapshots`** with `source = serper`. **503** when `SERPER_API_KEY` is missing; **400** `no_package_name` when the app has no Android id.
+Re-runs Serper for the keyword’s term (**`num: 100`** per country for a deep organic slice; preview remains **`num: 20`**). **Countries:** distinct **`country_code`** values on existing **`keyword_rank_snapshots`** for that keyword (when any exist); otherwise supported codes from **`apps.target_countries`**, or **`keywords.market`** when none match. Debits **`serper_preview_per_country` × country count** (wallet pattern; same per-country rate as other Serper-backed refresh flows; depth does not multiply credits), refunds on hard failure before snapshots are stored. Inserts **`keyword_rank_snapshots`** with `source = serper`. Ranks resolve by matching **`apps.package_name`** to Play details URLs / extracted package ids (not app titles). **503** when `SERPER_API_KEY` is missing; **400** `no_package_name` when the app has no Android id.
 
 ### POST /api/workspaces/:workspaceId/keywords/bulk
 
 **Body:** `{ "terms": string[], "appId": uuid, "listingGenerationId": uuid, "market"?: string, "locale"?: string }` — bulk-adds keywords suggested by an AI listing run for Keyword Tracker.
 
 - Verifies workspace membership, **app** belongs to workspace, and **listing_generation** belongs to the workspace (optional **`app_id`** on the generation must match **`appId`** when set).
-- Dedupes against existing tracked terms for that app + market; skips duplicates without charging.
-- **AI credits:** first **5** new keywords tied to the same **`listing_generation_id`** are free; each additional new keyword costs **`keyword_track_ai_per_keyword`** (see `lib/features/billing/credit-costs.ts`). Debits via **`consume_workspace_ai_credits`** before inserts; refunds on total insert failure after debit.
+- Dedupes against existing tracked terms for that app + market; skips duplicates.
 - Sets **`keywords.source = 'ai_listing'`** and **`listing_generation_id`** on inserted rows (no automatic rank snapshots; use Serper preview + save or per-row refresh).
-- **402** — `insufficient_credits` when the wallet cannot cover the charge.
+- **No AI credits** are charged for this insert path.
 
 ### GET /api/workspaces/:workspaceId/keywords/:keywordId
 
-Returns a single keyword for the workspace with **`ranks`** (chronological ascending, up to 500 rows) and **`latest`** snapshot. **401** / **403** same as list keywords; **404** if the keyword is missing from the workspace.
+Returns a single keyword for the workspace with **`ranks`** (chronological ascending, up to 500 rows) and **`latest`** snapshot. Each rank row may include **`country_code`** (lowercase alpha-2 when tagged, or `null` for legacy rows) and **`best_rank`**. **`regionalRanks`** lists all tagged snapshots across markets for that keyword (same cap, ascending by time) for multi-line regional charts; omitted or empty when no per-country rows exist. Response may include **`trackedCountryCodes`** and **`lastSyncedAt`** (same semantics as the list endpoint). **401** / **403** same as list keywords; **404** if the keyword is missing from the workspace.
 
 ### DELETE /api/workspaces/:workspaceId/keywords/:keywordId
 
@@ -174,7 +174,7 @@ Marks onboarding finished (`onboarding_state.completed`) and sets `profiles.onbo
 
 ### POST /api/listings/generate (Phase 1 MVP)
 
-Next.js route implementing `POST /listings/generate`. Requires **signed-in user**, **Gemini**, **Supabase user client** (RLS) for persistence, and **service role** only for rate-limit RPC + `usage_logs`. Uses **`listing_generation`** credits from `lib/features/billing/credit-costs.ts` (default **5** per run, including regenerate with `userInstruction`). The handler reads `ai_credits_remaining` (no mutation), then calls `consume_workspace_ai_credits` **before** Gemini; on generation failure it calls `refund_workspace_ai_credits`, so the **net charge matches a successful listing payload** returned to the client. Persisted rows store `listing_generations.credits_ledger_id` when insert succeeds. Optional body **`appId`** (workspace app uuid) is saved on **`listing_generations.app_id`** so Keyword Tracker can load “latest AI listing” keywords per app; success **`meta.generationId`** returns the new row id when persistence succeeds, with **`meta.savedAt`** (ISO timestamp from `listing_generations.created_at`) and **`meta.persisted`** (boolean).
+Next.js route implementing `POST /listings/generate`. Requires **signed-in user**, **Gemini**, **Supabase user client** (RLS) for persistence, and **service role** only for rate-limit RPC + `usage_logs`. Uses **`listing_generation`** credits from `lib/features/billing/credit-costs.ts` (default **5** per run, including regenerate with `userInstruction`). The handler reads `ai_credits_remaining` (no mutation), then calls `consume_workspace_ai_credits` **before** Gemini; on generation failure it calls `refund_workspace_ai_credits`, so the **net charge matches a successful listing payload** returned to the client. Persisted rows store `listing_generations.credits_ledger_id` when insert succeeds. Optional body **`appId`** (workspace app uuid) is saved on **`listing_generations.app_id`** so Keyword Tracker can load “latest AI listing” keywords per app; success **`meta.generationId`** returns the new row id when persistence succeeds, with **`meta.savedAt`** (ISO timestamp from `listing_generations.created_at`) and **`meta.persisted`** (boolean). When ASO score JSON fails validation but listing copy succeeds, **`meta.asoScorePartial`** is set so the UI can show a localized notice; persisted `output_json` may include **`asoScoreDegraded: true`** without numeric score fields.
 
 **Request JSON**
 
@@ -197,17 +197,27 @@ Next.js route implementing `POST /listings/generate`. Requires **signed-in user*
     "shortDescription": "…",
     "fullDescription": "…",
     "keywordSuggestions": ["…"],
-    "ctaSuggestions": ["…"]
+    "ctaSuggestions": ["…"],
+    "asoScore": 92,
+    "scoreBreakdown": {
+      "title": 28,
+      "shortDescription": 17,
+      "longDescription": 37,
+      "persuasiveness": 10
+    },
+    "improvementTips": ["…", "…"]
   },
   "meta": {
     "model": "gemini-2.5-flash",
-    "promptVersion": "listing-optimizer-v3",
+    "promptVersion": "listing-optimizer-v4",
     "persisted": true,
     "generationId": "uuid",
     "savedAt": "2026-05-13T12:00:00.000Z"
   }
 }
 ```
+
+Optional **`meta.asoScorePartial`** (boolean, when `true`) means listing copy was validated but the certified ASO score block was dropped after validation.
 
 **Errors**
 
@@ -257,7 +267,31 @@ Same pattern as `POST /api/listings/generate`: `400` validation, `401` unauthori
 
 ### AI workspace credits (summary)
 
-`POST /api/listings/generate`, `POST /api/listings/optimizer-autofill`, `POST /api/apps/suggest`, and **`POST /api/serper/play-store-search`** share: read `workspaces.ai_credits_remaining` (RLS, non-mutating) when a debit applies, then **`consume_workspace_ai_credits`** (locked debit) **before** the external call, then **`refund_workspace_ai_credits`** on hard failure (e.g. Serper route exception) so **net balance aligns with success**. Costs are centralized in `lib/features/billing/credit-costs.ts` (`listing_generation` **5**, `listing_optimizer_autofill` **3**, `add_app_field_suggest` **3**, `keyword_track_ai_per_keyword` **2** with **5** free keywords per `listing_generation_id` — see `KEYWORD_TRACK_AI_FREE_PER_GENERATION`; Serper live preview **`serper_preview_per_country` × country count**, default **1** credit per selected market). A debit-only-after-success pattern without a reservation RPC would not be concurrency-safe against unpaid parallel model calls; see `lib/features/billing/wallet.ts`.
+`POST /api/listings/generate`, `POST /api/listings/optimizer-autofill`, and `POST /api/apps/suggest` read `workspaces.ai_credits_remaining` (RLS, non-mutating) when a debit applies, then **`consume_workspace_ai_credits`** (locked debit) **before** the external call, then **`refund_workspace_ai_credits`** on hard failure so **net balance aligns with success**. Costs are centralized in `lib/features/billing/credit-costs.ts` (`listing_generation` **5**, `listing_optimizer_autofill` **3**, `add_app_field_suggest` **3**). **Serper / Keyword Tracker:** `POST /api/serper/play-store-search` debits **`serper_preview_per_country` × number of countries** by default (Keyword Tracker live preview; same wallet + refund-on-throw pattern as refresh, **before** calling Serper). When the body includes **`pricingProfile: "competitor_spy"`** (with **`restrictToPlayStore: true`**), the route uses the Competitor Spy bundle instead (**5** credits for up to **2** countries, then **+2** per additional country) via `competitorSpyAiCreditsForCountryCount` in `lib/keywords/keyword-track-ai-pricing.ts`. **`POST …/keywords/serper-save`** does **not** debit; **`POST …/keywords/:keywordId/serper-refresh`** debits **`serper_preview_per_country` × country count** (default **1** per market). A debit-only-after-success pattern without a reservation RPC would not be concurrency-safe against unpaid parallel model calls; see `lib/features/billing/wallet.ts`.
+
+### GET /api/workspaces/:workspaceId/competitors
+
+**Auth:** Workspace member.
+
+Returns saved Competitor Spy analyses for the workspace (newest first, capped at 40). Each row includes normalized insight fields (`topKeywords`, `shared`, `gaps`, `quickWinPlans`, `quickWinTerms`) plus optional `previewResults` embedded in `analysis_json` for sticky snapshot / live rank on reload.
+
+**200:** `{ "ok": true, "competitors": [ … ] }`. If the table is not migrated yet: `{ "ok": true, "competitors": [], "unavailable": true }`.
+
+### POST /api/workspaces/:workspaceId/competitors
+
+**Auth:** Workspace member.
+
+**Body:** `{ "query", "displayName", "packageId", "countries": string[], "category"?, "iconUrl"?, "analysis": { "query", "topKeywords", "shared", "quickWinPlans", "quickWinTerms", "gaps", "previewResults"? } }` — upserts on `(workspace_id, competitor_package_id)` (package id normalized lowercase). Sets `analyzed_at` server-side.
+
+**200:** `{ "ok": true, "id": uuid, "analyzedAt": iso }`. **503** `schema_unavailable` when migration missing.
+
+### DELETE /api/workspaces/:workspaceId/competitors/:competitorId
+
+**Auth:** Workspace member.
+
+Deletes one row from `workspace_competitor_analyses` by `id` scoped to `workspaceId`.
+
+**200:** `{ "ok": true }`. **404** when not found. **503** `schema_unavailable` when migration missing.
 
 ### POST /api/serper/play-store-search
 
@@ -265,22 +299,25 @@ Live Google Play Store SERP preview powered by **Serper.dev**. The Serper API ke
 
 **Auth:** Signed-in workspace member (gated by `getWorkspaceRole` against the supplied `workspaceId`).
 
-**Credits:** When `SERPER_API_KEY` is present, the handler reads `ai_credits_remaining`, then **`consume_workspace_ai_credits`** for **`serper_preview_per_country` × `countries.length`** (default **1** credit per market — `lib/features/billing/credit-costs.ts`) **before** calling Serper. If `searchPlayStore` throws, **`refund_workspace_ai_credits`** reverses that debit. Per-country errors returned inside `results[].error` do **not** refund (the batch completed). **`503` `serper_not_configured`** returns before any debit.
+**Credits:** Reads `ai_credits_remaining`, then **`consume_workspace_ai_credits`** **before** invoking Serper. The debit amount is **`serper_preview_per_country` × `countries.length`** unless the caller sends **`pricingProfile: "competitor_spy"`** (requires **`restrictToPlayStore: true`**), in which case it is **`5 + 2 × max(0, countries.length − 2)`** (bundle for Competitor Spy). **`refund_workspace_ai_credits`** on hard failure after debit (same pattern as **`POST …/keywords/:keywordId/serper-refresh`**). **`402`** with `insufficient_credits` when the workspace balance is too low.
 
 **Request JSON**
 
 - `workspaceId` (uuid, required) — workspace the caller belongs to.
 - `keyword` (string, required, 2–160 chars) — search term, e.g. `meditation timer`.
-- `countries` (string[], required, 1–3 items) — ISO-3166 alpha-2 codes; allowed values: `us`, `sa`, `ae`.
+- `countries` (string[], required, 1–4 items) — ISO-3166 alpha-2 codes; allowed values: `us`, `sa`, `ae`, `in`, `cn`.
 - `restrictToPlayStore` (boolean, optional) — wraps the Google query as `site:play.google.com/store/apps "<q>"`. Used by Competitor Spy.
+- `pricingProfile` (`"competitor_spy"`, optional) — when set, selects Competitor Spy bundled pricing; must be sent with **`restrictToPlayStore: true`** (validation error otherwise).
 
-Each country is fanned out in parallel via `Promise.all` against `https://google.serper.dev/search` (`{ q, gl, hl, num }`). Country → `gl`/`hl` defaults: `us→us/en`, `sa→sa/ar`, `ae→ae/en` (see `lib/serper.ts`). Organic results are filtered down to `play.google.com/store/apps/details` URLs and deduped by `id` query (package name).
+Each country is fanned out in parallel via `Promise.all` against `https://google.serper.dev/search` (`{ q, gl, hl, num: 20 }` for this endpoint). Country → `gl`/`hl` defaults: `us→us/en`, `sa→sa/ar`, `ae→ae/en`, `in→in/en`, `cn→cn/en` (see `constants/regions.ts` / `lib/serper.ts`). Organic results are filtered down to `play.google.com/store/apps/details` URLs and deduped by `id` query (package name).
 
 **200 response**
 
 ```json
 {
   "ok": true,
+  "creditsCharged": 2,
+  "creditsRemaining": 40,
   "results": [
     {
       "country": "us",
@@ -301,17 +338,16 @@ Each country is fanned out in parallel via `Promise.all` against `https://google
 }
 ```
 
-Per-country failures (timeout, non-2xx, JSON parse) are surfaced as `error` on that country entry so partial results still render — the HTTP request still succeeds (**200**) and credits remain charged. The route returns a non-2xx JSON error for validation failures, auth, insufficient credits, wallet read/consume errors, missing Serper key, or when `searchPlayStore` throws (after refund).
+Per-country failures (timeout, non-2xx, JSON parse) are surfaced as `error` on that country entry so partial results still render — the HTTP request still succeeds (**200**). The route returns a non-2xx JSON error for validation failures, auth, missing Serper key, or when `searchPlayStore` throws.
 
 **Errors**
 
 - `400` — `validation_error` or invalid JSON.
 - `401` — `unauthorized` (no session).
+- `402` — `insufficient_credits` (balance lower than **`serper_preview_per_country` × country count**).
 - `403` — `forbidden` (workspace not accessible).
-- `402` — `insufficient_credits` (`remaining` / `required`) when the workspace balance is below the preview cost.
-- `502` — `search_error` (Serper threw / unrecoverable); debit refunded when the failure is a thrown error from `searchPlayStore`.
-- `503` — `serper_not_configured` (server has no `SERPER_API_KEY`). Clients show a "live preview not configured" toast. No credits are debited when the key is missing.
-- `503` — `wallet_error` when the workspace credit balance cannot be read or the debit RPC fails unexpectedly (no charge on read failure before consume; consume failures occur after a successful read).
+- `502` — `search_error` (Serper threw / unrecoverable).
+- `503` — `serper_not_configured` (server has no `SERPER_API_KEY`), or wallet read/debit failure when applicable. Clients show a "live preview not configured" toast for missing Serper key.
 
 ### GET /api/admin/financial-export
 

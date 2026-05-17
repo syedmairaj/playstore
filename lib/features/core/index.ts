@@ -5,4 +5,4 @@
  */
 export { getWorkspaceRole, type WorkspaceRole } from "@/lib/workspace/membership";
 export { normalizePlan, PLAN_META, type PlanId } from "@/lib/plan-limits";
-export { PRICING } from "@/lib/pricing-plans";
+export { PRICING } from "@/constants/pricing";

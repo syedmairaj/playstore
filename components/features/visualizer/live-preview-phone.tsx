@@ -9,6 +9,7 @@ import {
   PIXEL_MOCK_LASER_BOTTOM,
   PixelPhoneFrame,
 } from "@/components/ui/pixel-phone-frame";
+import { OptimizerPreviewTextShimmer } from "@/components/listing/optimizer/optimizer-preview-text-shimmer";
 import { cn } from "@/lib/utils";
 
 export type PreviewMode = "aso" | "ad" | "push";
@@ -36,6 +37,8 @@ type LivePreviewPhoneProps = {
   iconUrl?: string;
   result: ListingGenerationOutput | null;
   loading: boolean;
+  /** Listing generation in progress — shimmer title/description in ASO preview. */
+  isGenerating?: boolean;
   /** When true, newly applied result text animates in the screen. */
   typingEnabled?: boolean;
   /** Use `"hero"` on the marketing landing page; defaults to optimizer copy. */
@@ -166,6 +169,7 @@ export function LivePreviewPhone({
   iconUrl = "",
   result,
   loading,
+  isGenerating = false,
   typingEnabled = true,
   translationNamespace = "optimizer",
   scanActive,
@@ -404,9 +408,13 @@ export function LivePreviewPhone({
                       </div>
                     )}
                     <div className="min-w-0 flex-1">
-                      <h3 className="line-clamp-2 text-[15px] font-semibold leading-tight tracking-tight text-white">
-                        {title}
-                      </h3>
+                      {isGenerating ? (
+                        <OptimizerPreviewTextShimmer variant="title" />
+                      ) : (
+                        <h3 className="line-clamp-2 text-[15px] font-semibold leading-tight tracking-tight text-white">
+                          {title}
+                        </h3>
+                      )}
                       <p className="mt-1 text-[11px] font-medium leading-snug text-[#86efac]/90">
                         {category || "App"}
                       </p>
@@ -430,6 +438,7 @@ export function LivePreviewPhone({
 
                   <button
                     type="button"
+                    disabled={isGenerating}
                     onClick={(e) => {
                       e.preventDefault();
                       toast.message(t("preview.storePreviewToast"));
@@ -445,22 +454,32 @@ export function LivePreviewPhone({
                     {t("preview.viewInStore")}
                   </button>
 
-                  <p className="text-[13px] leading-relaxed text-white/72">
-                    {shortDesc}
-                  </p>
+                  {isGenerating ? (
+                    <OptimizerPreviewTextShimmer variant="short" className="mt-1" />
+                  ) : (
+                    <p className="text-[13px] leading-relaxed text-white/72">
+                      {shortDesc}
+                    </p>
+                  )}
 
                   <div>
-                    <button
-                      type="button"
-                      onClick={() => setReadMore((v) => !v)}
-                      className="text-[12px] font-medium text-[#4285F4] hover:underline"
-                    >
-                      {readMore ? t("preview.readLess") : t("preview.readMore")}
-                    </button>
-                    {readMore && (
-                      <p className="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-white/60">
-                        {fullDesc}
-                      </p>
+                    {isGenerating ? (
+                      <OptimizerPreviewTextShimmer variant="long" />
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setReadMore((v) => !v)}
+                          className="text-[12px] font-medium text-[#4285F4] hover:underline"
+                        >
+                          {readMore ? t("preview.readLess") : t("preview.readMore")}
+                        </button>
+                        {readMore && (
+                          <p className="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-white/60">
+                            {fullDesc}
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

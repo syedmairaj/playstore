@@ -7,6 +7,9 @@ import { createClient } from "@/lib/supabase/server";
 import { getFeatureFlags, isModuleEnabled } from "@/lib/features";
 import { queryWorkspaceAppsList } from "@/lib/workspace/workspace-apps-list";
 
+/** Always load tracked keywords + snapshots from Supabase after save/refresh (no stale RSC cache). */
+export const dynamic = "force-dynamic";
+
 export default async function KeywordsPage({
   params,
 }: {
@@ -20,17 +23,11 @@ export default async function KeywordsPage({
   }
   const t = await getTranslations("keywordTracker");
 
-  const [kwLoaded, appsResult, latestAiByApp, wsCreditsRow] = await Promise.all([
+  const [kwLoaded, appsResult, latestAiByApp] = await Promise.all([
     loadWorkspaceKeywords(supabase, workspaceId),
     queryWorkspaceAppsList(supabase, workspaceId),
     loadLatestAiListingKeywordsByApp(supabase, workspaceId),
-    supabase.from("workspaces").select("ai_credits_remaining").eq("id", workspaceId).maybeSingle(),
   ]);
-
-  const aiCreditsRemaining =
-    typeof wsCreditsRow.data?.ai_credits_remaining === "number"
-      ? wsCreditsRow.data.ai_credits_remaining
-      : undefined;
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -45,7 +42,6 @@ export default async function KeywordsPage({
         keywordsLoadError={kwLoaded.ok ? null : kwLoaded.message}
         appsLoadError={appsResult.error?.message ?? null}
         latestAiByApp={latestAiByApp}
-        aiCreditsRemaining={aiCreditsRemaining}
       />
     </div>
   );

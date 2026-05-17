@@ -88,10 +88,10 @@ export async function resolveWorkspaceBillingPlan(
 
 function buildLimitMessage(plan: PlanId, limit: number): string {
   if (plan === "free") {
-    return `Your Free plan includes ${limit} app. Upgrade to Pro (up to 5 apps) or Growth (unlimited apps).`;
+    return `Your Free plan includes ${limit} app. Upgrade to Pro (up to 5 apps) or Growth (up to 12 apps).`;
   }
   if (plan === "pro") {
-    return `Pro includes up to ${limit} apps. Upgrade to Growth for unlimited apps.`;
+    return `Pro includes up to ${limit} apps. Upgrade to Growth for up to 12 apps.`;
   }
   return "You have reached the app limit for your current plan.";
 }

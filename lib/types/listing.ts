@@ -1,3 +1,5 @@
+import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
+
 export type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
 
 export type ListingOptimizerInput = {
@@ -12,10 +14,5 @@ export type ListingOptimizerInput = {
   userInstruction?: string;
 };
 
-export type ListingOptimizerOutput = {
-  title: string;
-  shortDescription: string;
-  fullDescription: string;
-  keywordSuggestions: string[];
-  ctaSuggestions: string[];
-};
+/** Gemini listing JSON shape (includes optional Certified ASO Score metadata). */
+export type ListingOptimizerOutput = ListingGenerationOutput;

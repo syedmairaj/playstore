@@ -15,7 +15,7 @@ export type CountrySelectorProps = {
   /** Current 1–N selected ISO-3166 alpha-2 codes (lowercase). */
   value: string[];
   onChange: (next: SupportedCountryCode[]) => void;
-  /** Max selectable; defaults to {@link SERPER_MAX_COUNTRIES} (3). */
+  /** Max selectable; defaults to {@link SERPER_MAX_COUNTRIES}. */
   max?: number;
   disabled?: boolean;
   /** Optional id for label association. */
@@ -28,7 +28,7 @@ export type CountrySelectorProps = {
  * Compact multi-select chip picker for Serper.dev country fan-out.
  *
  * - Shows currently-selected countries as removable chips (flag + localized name).
- * - Enforces 1–`max` selection (default 3) — never lets the caller drop to zero.
+ * - Enforces 1–`max` selection (default from `SERPER_MAX_COUNTRIES`) — never lets the caller drop to zero.
  * - Adding via the "+" menu only lists countries not already selected.
  * - Accessible: button-driven menu, ESC closes, ARIA labels for SR users.
  * - RTL-safe via Tailwind logical properties (`ms-*` / `me-*` / `text-start`).

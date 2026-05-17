@@ -7,7 +7,7 @@ export const AI_CREDIT_COSTS = {
   add_app_field_suggest: 3,
   /** Single-field AI autofill on the listing optimizer (keywords or features) */
   listing_optimizer_autofill: 3,
-  /** Single listing draft (title / short / long / CTAs) via Gemini */
+  /** Full listing draft + certified ASO score (title / short / long / CTAs + rubric) via Gemini */
   listing_generation: 5,
   /**
    * Add AI listing keyword suggestions to Keyword Tracker: each keyword beyond the free

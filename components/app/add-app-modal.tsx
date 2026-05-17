@@ -48,6 +48,35 @@ type ApiErr = {
   };
 };
 
+type AppsCreateFlatErr = {
+  error: string;
+  message?: string;
+};
+
+function resolveAppsCreateError(json: unknown): {
+  code?: string;
+  message: string;
+} | null {
+  if (!json || typeof json !== "object") {
+    return { message: "" };
+  }
+  const flat = json as AppsCreateFlatErr;
+  if (typeof flat.error === "string") {
+    return {
+      code: flat.error,
+      message: typeof flat.message === "string" ? flat.message.trim() : "",
+    };
+  }
+  const nested = json as ApiErr;
+  if (nested.ok === false && nested.error) {
+    return {
+      code: nested.error.code,
+      message: nested.error.message?.trim() ?? "",
+    };
+  }
+  return null;
+}
+
 function validHttpsAppIconUrl(raw: string): boolean {
   const s = raw.trim();
   if (!s || !/^https:\/\//i.test(s)) return false;
@@ -185,13 +214,18 @@ export function AddAppModal(props: {
           ...(iconTrimmed ? { icon_url: iconTrimmed } : {}),
         }),
       });
-      const json = (await res.json()) as
-        | { ok: true; app: CreatedWorkspaceApp }
-        | ApiErr;
+      const json: unknown = await res.json();
+      const parsedErr = resolveAppsCreateError(json);
+      const success =
+        res.ok &&
+        json &&
+        typeof json === "object" &&
+        (json as { ok?: boolean }).ok === true &&
+        "app" in json;
 
-      if (!json.ok) {
-        const code = json.error.code;
-        const errMsg = json.error.message?.trim() || t("errors.createFailed");
+      if (!success) {
+        const code = parsedErr?.code;
+        const errMsg = parsedErr?.message || t("errors.createFailed");
 
         if (res.status === 401) {
           const msg = t("errors.signIn");
@@ -228,6 +262,8 @@ export function AddAppModal(props: {
         return;
       }
 
+      const created = (json as { ok: true; app: CreatedWorkspaceApp }).app;
+
       await queryClient.invalidateQueries({
         queryKey: workspaceAppsQueryKey(props.workspaceId),
       });
@@ -241,7 +277,7 @@ export function AddAppModal(props: {
       if (!props.suppressSuccessToast) {
         toast.success(t("toast.success"));
       }
-      props.onSuccess?.(json.app);
+      props.onSuccess?.(created);
       props.onOpenChange(false);
     } catch {
       toast.error(t("errors.network"));
@@ -278,6 +314,13 @@ export function AddAppModal(props: {
         plan={limitsSnapshot?.plan ?? "free"}
         currentCount={limitsSnapshot?.currentCount ?? 0}
         appLimit={limitsSnapshot?.limit ?? 1}
+        workspaceId={props.workspaceId}
+        onSubscriptionSuccess={() => {
+          void queryClient.invalidateQueries({
+            queryKey: appLimitsQueryKey(props.workspaceId),
+          });
+          router.refresh();
+        }}
       />
       <Dialog
         open={props.open}

@@ -4,7 +4,7 @@ import { GrowthHubClient } from "@/components/dashboard/GrowthHubClient";
 import { createClient } from "@/lib/supabase/server";
 import { getFeatureFlags, isModuleEnabled } from "@/lib/features";
 import {
-  listingGenerationOutputSchema,
+  parsePersistedListingOutput,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
 import { cn } from "@/lib/utils";
@@ -57,10 +57,7 @@ export default async function WorkspaceHomePage({
 
   let previewResult: ListingGenerationOutput | null = null;
   if (genRow?.output_json) {
-    const parsed = listingGenerationOutputSchema.safeParse(genRow.output_json);
-    if (parsed.success) {
-      previewResult = parsed.data;
-    }
+    previewResult = parsePersistedListingOutput(genRow.output_json);
   }
 
   const appName =

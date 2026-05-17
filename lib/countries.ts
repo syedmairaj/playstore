@@ -6,22 +6,24 @@
  * in `lib/serper.ts` (`server-only`).
  *
  * Adding a country here? Also update:
- *   1. `COUNTRY_LOCALE_MAP` in `lib/serper.ts`
+ *   1. `SERPER_PLAY_REGION_DEFAULTS` in `constants/regions.ts` (wired in `lib/serper.ts`)
  *   2. `messages/{en,ar}.json` → `countrySelector.countries.<code>`
  */
 
-export const SUPPORTED_COUNTRY_CODES = ["us", "sa", "ae"] as const;
+export const SUPPORTED_COUNTRY_CODES = ["us", "sa", "ae", "in", "cn"] as const;
 
 export type SupportedCountryCode = (typeof SUPPORTED_COUNTRY_CODES)[number];
 
 /** Hard cap on countries per multi-market search call. */
-export const SERPER_MAX_COUNTRIES = 3;
+export const SERPER_MAX_COUNTRIES = 4;
 
 /** Flag emoji for supported markets (keep in sync with `countrySelector.countries.*.flag`). */
 export const COUNTRY_FLAG_EMOJI: Record<SupportedCountryCode, string> = {
   us: "🇺🇸",
   sa: "🇸🇦",
   ae: "🇦🇪",
+  in: "🇮🇳",
+  cn: "🇨🇳",
 };
 
 export function isSupportedCountry(code: string): code is SupportedCountryCode {
@@ -29,7 +31,7 @@ export function isSupportedCountry(code: string): code is SupportedCountryCode {
 }
 
 /**
- * Up to three supported codes for UI chips: prefer `apps.target_countries`,
+ * Up to {@link SERPER_MAX_COUNTRIES} supported codes for UI chips: prefer `apps.target_countries`,
  * else the keyword's single `market`.
  */
 export function countriesForKeywordRankChips(params: {

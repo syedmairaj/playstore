@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { DashboardShell } from "@/components/app/dashboard-shell";
 import { createClient } from "@/lib/supabase/server";
 import { getFeatureFlags } from "@/lib/features";
+import { resolveWorkspaceBillingPlan } from "@/lib/utils/app-limits";
 
 export default async function WorkspaceLayout({
   children,
@@ -36,10 +37,12 @@ export default async function WorkspaceLayout({
     .order("created_at", { ascending: true });
 
   const flags = await getFeatureFlags(supabase);
+  const { normalized: workspacePlan } = await resolveWorkspaceBillingPlan(supabase, workspaceId, user.id);
 
   const t = await getTranslations("dashboard");
   const creditsRemaining =
     typeof workspace.ai_credits_remaining === "number" ? workspace.ai_credits_remaining : 20;
+  /** DB column name is historical; Free uses a one-time pool; paid tiers use monthly allocation per product spec. */
   const creditsAllocation =
     typeof workspace.ai_credits_monthly_allocation === "number"
       ? workspace.ai_credits_monthly_allocation
@@ -63,6 +66,7 @@ export default async function WorkspaceLayout({
     <DashboardShell
       workspaceId={workspaceId}
       workspaceName={workspace.name as string}
+      workspacePlan={workspacePlan}
       workspaces={(allWorkspaces ?? []) as { id: string; name: string }[]}
       creditsRemaining={creditsRemaining}
       creditsAllocation={creditsAllocation}

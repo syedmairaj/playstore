@@ -7,7 +7,7 @@ import { SignOutButton } from "@/components/app/SignOutButton";
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import { useAppLimits } from "@/hooks/use-app-limits";
 import { precheckAddApp } from "@/lib/client/precheck-add-app";
-import { normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS } from "@/lib/plan-limits";
+import { maxAppSlotsForPlan, normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS } from "@/lib/plan-limits";
 
 const TABS = [
   "Workspace",
@@ -191,10 +191,9 @@ export function SettingsTabs(props: {
         onOpenChange={setUpgradeOpen}
         plan={appLimits.data?.plan ?? plan}
         currentCount={appLimits.data?.currentCount ?? props.apps.length}
-        appLimit={
-          appLimits.data?.limit ??
-          (plan === "growth" ? UNLIMITED_APP_SLOTS : plan === "pro" ? 5 : 1)
-        }
+        appLimit={appLimits.data?.limit ?? maxAppSlotsForPlan(plan)}
+        workspaceId={props.workspaceId}
+        onSubscriptionSuccess={() => router.refresh()}
       />
       <AddAppModal
         open={addAppOpen}

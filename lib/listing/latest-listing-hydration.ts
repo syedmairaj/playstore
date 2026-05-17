@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToneStyle } from "@/lib/types/listing";
 import {
-  listingGenerationOutputSchema,
+  parsePersistedListingOutput,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
 
@@ -41,8 +41,7 @@ function keywordsToDisplay(raw: unknown): string {
 
 function parseOutput(raw: unknown): ListingGenerationOutput | null {
   if (raw == null) return null;
-  const parsed = listingGenerationOutputSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  return parsePersistedListingOutput(raw);
 }
 
 type ListingGenerationHydrationRow = {

@@ -1,35 +1,54 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { ArrowDown, ArrowUp, Loader2, Minus, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Loader2, Sparkles, TrendingUp } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { KeywordHistoryDialog } from "@/components/keyword-tracker/keyword-history-dialog";
+import { SaveKeywordModal } from "@/components/keyword-tracker/save-keyword-modal";
+import {
+  buildKeywordWatchlistCsv,
+  downloadCsvFile,
+} from "@/components/keyword-tracker/keyword-watchlist-export";
+import {
+  filterKeywordsBySearch,
+  keywordRowMatchesCountryFilter,
+} from "@/components/keyword-tracker/keyword-watchlist-filter";
+import { KeywordWatchlistTable } from "@/components/keyword-tracker/keyword-watchlist-table";
+import { KeywordWatchlistToolbar } from "@/components/keyword-tracker/keyword-watchlist-toolbar";
 import { Input } from "@/components/ui/input";
 import { CountrySelector } from "@/components/country-selector";
 import {
   SerperPreviewResults,
   type SerperPreviewCountry,
 } from "@/components/serper/serper-preview-results";
-import {
-  COUNTRY_FLAG_EMOJI,
-  countriesForKeywordRankChips,
-  primaryMarketCode,
-  type SupportedCountryCode,
-} from "@/lib/countries";
+import { type SupportedCountryCode } from "@/lib/countries";
 import { formatRelativePastSince } from "@/lib/intl/format-relative-past";
 import type { LatestAiListingKeywordsRow } from "@/lib/keywords/latest-ai-listing-by-app";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
+import { resolveRankInCountryForSerperSnapshot } from "@/lib/keywords/serper-snapshot-rank-resolve";
 import type { WorkspaceAppListRow } from "@/lib/workspace/workspace-apps-list";
+import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
+import { serperAiCreditsForCountryCount } from "@/lib/keywords/keyword-track-ai-pricing";
+import { dispatchWorkspaceKeywordsChanged } from "@/lib/client/workspace-keywords-sync";
 import {
-  AI_CREDIT_COSTS,
-  KEYWORD_TRACK_AI_FREE_PER_GENERATION,
-} from "@/lib/features/billing/credit-costs";
-import { formatRankForDisplay } from "@/lib/keywords/format-rank-display";
+  isKeywordRankSyncPending,
+  KEYWORD_RANK_SYNC_POLL_INTERVAL_MS,
+  KEYWORD_RANK_SYNC_POLL_MAX_ATTEMPTS,
+  rowsNeedingKeywordRankSyncPoll,
+} from "@/lib/keywords/keyword-rank-sync-pending";
 import { cn } from "@/lib/utils";
+import {
+  buildKeywordTrackerPreviewDraft,
+  clearKeywordTrackerPreviewSession,
+  parseKeywordTrackerPreviewDraft,
+  readKeywordTrackerPreviewFromSession,
+  sanitizeDraftCountries,
+  writeKeywordTrackerPreviewToSession,
+} from "@/lib/keywords/keyword-tracker-preview-cache";
 
 export type KeywordTrackerClientProps = {
   workspaceId: string;
@@ -37,98 +56,12 @@ export type KeywordTrackerClientProps = {
   apps: WorkspaceAppListRow[];
   keywordsLoadError?: string | null;
   appsLoadError?: string | null;
-  /** Workspace AI credits (non-mutating); used for Serper preview pre-check UX. */
-  aiCreditsRemaining?: number;
   /** Latest AI listing keyword suggestions per app (listing_generations with app_id). */
   latestAiByApp?: Record<string, LatestAiListingKeywordsRow>;
 };
 
-const MS_7D = 7 * 24 * 60 * 60 * 1000;
+const WATCHLIST_PAGE_SIZES = [10, 25, 50] as const;
 
-function bestRankFromRanks(ranks: { rank: number | null }[]): number | null {
-  const nums = ranks.map((r) => r.rank).filter((n): n is number => n != null);
-  if (nums.length === 0) return null;
-  return Math.min(...nums);
-}
-
-function trendWindowRanks(
-  ranksChronological: { rank: number | null; captured_at: string }[],
-): number[] {
-  const now = Date.now();
-  const inWindow = ranksChronological.filter((r) => {
-    if (r.rank == null) return false;
-    return now - new Date(r.captured_at).getTime() <= MS_7D;
-  });
-  const values = inWindow.map((r) => r.rank as number);
-  if (values.length >= 2) return values.slice(-7);
-  const fallback = ranksChronological
-    .filter((r) => r.rank != null)
-    .map((r) => r.rank as number);
-  return fallback.slice(-7);
-}
-
-function TrendBars({ values, title }: { values: number[]; title: string }) {
-  if (values.length === 0) {
-    return <span className="text-xs text-zinc-500">—</span>;
-  }
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values);
-  const span = Math.max(1, max - min);
-  return (
-    <div className="flex h-9 max-w-[120px] items-end gap-0.5" aria-hidden title={title}>
-      {values.map((v, i) => {
-        const norm = (max - v) / span;
-        const h = 6 + norm * 26;
-        return (
-          <div
-            key={`${i}-${v}`}
-            title={`#${v}`}
-            className="w-1.5 shrink-0 rounded-sm bg-emerald-500/75 ring-1 ring-emerald-400/20"
-            style={{ height: `${h}px` }}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function RankDelta7d({
-  values,
-  labels,
-}: {
-  values: number[];
-  labels: { improved: string; worse: string; same: string };
-}) {
-  if (values.length < 2) {
-    return <span className="text-xs text-zinc-500">—</span>;
-  }
-  const prev = values[0];
-  const curr = values[values.length - 1];
-  if (curr < prev) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
-        <ArrowUp className="size-3.5 shrink-0" aria-hidden />
-        <span className="sr-only">{labels.improved}</span>
-        <span aria-hidden>{prev - curr}</span>
-      </span>
-    );
-  }
-  if (curr > prev) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-400/90">
-        <ArrowDown className="size-3.5 shrink-0" aria-hidden />
-        <span className="sr-only">{labels.worse}</span>
-        <span aria-hidden>{curr - prev}</span>
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
-      <Minus className="size-3.5" aria-hidden />
-      <span>{labels.same}</span>
-    </span>
-  );
-}
 
 export function KeywordTrackerClient({
   workspaceId,
@@ -137,23 +70,30 @@ export function KeywordTrackerClient({
   keywordsLoadError,
   appsLoadError,
   latestAiByApp = {},
-  aiCreditsRemaining,
 }: KeywordTrackerClientProps) {
   const t = useTranslations("keywordTracker");
   const tSerper = useTranslations("serperPreview");
   const tCountrySel = useTranslations("countrySelector");
   const locale = useLocale();
   const router = useRouter();
-  const [, startTransition] = useTransition();
+  const [isRefreshing, startTransition] = useTransition();
   const [mutationPending, setMutationPending] = useState(false);
   const [rows, setRows] = useState<KeywordWithRanks[]>(initialKeywords);
   const [term, setTerm] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [historyFor, setHistoryFor] = useState<KeywordWithRanks | null>(null);
   const [filterAppId, setFilterAppId] = useState<string | "all">("all");
+  const [tableSearch, setTableSearch] = useState("");
+  const [marketFilter, setMarketFilter] = useState<Set<SupportedCountryCode>>(
+    () => new Set(),
+  );
+  const [watchlistPage, setWatchlistPage] = useState(1);
+  const [watchlistPageSize, setWatchlistPageSize] =
+    useState<(typeof WATCHLIST_PAGE_SIZES)[number]>(25);
   const [addTargetAppId, setAddTargetAppId] = useState<string>(() => apps[0]?.id ?? "");
   const [trackingAiTerm, setTrackingAiTerm] = useState<string | null>(null);
   const [saveSerperPending, setSaveSerperPending] = useState(false);
+  const [saveKeywordModalOpen, setSaveKeywordModalOpen] = useState(false);
   const [serperRowRefreshId, setSerperRowRefreshId] = useState<string | null>(null);
   // Live Play Store preview state. Default to the Arabic-first market when the
   // user's locale is Arabic so previews feel relevant out of the box.
@@ -164,10 +104,209 @@ export function KeywordTrackerClient({
   );
   const [previewPending, setPreviewPending] = useState(false);
   const [previewResults, setPreviewResults] = useState<SerperPreviewCountry[] | null>(null);
+  /** After Add keyword, pin row id for Save so snapshots attach to that row (add → preview → save). */
+  const [saveAttach, setSaveAttach] = useState<{
+    id: string;
+    termNorm: string;
+    appId: string;
+  } | null>(null);
+
+  const initialKeywordsSyncKey = useMemo(
+    () =>
+      initialKeywords
+        .map(
+          (k) =>
+            `${k.id}:${k.lastSyncedAt ?? ""}:${k.latest?.rank ?? ""}:${k.ranks?.length ?? 0}`,
+        )
+        .sort()
+        .join("|"),
+    [initialKeywords],
+  );
+
+  const initialKeywordsRef = useRef(initialKeywords);
+  initialKeywordsRef.current = initialKeywords;
 
   useEffect(() => {
-    setRows(initialKeywords);
+    setRows(initialKeywordsRef.current);
+  }, [initialKeywordsSyncKey]);
+
+  const rankSyncPollKey = useMemo(
+    () =>
+      rowsNeedingKeywordRankSyncPoll(rows)
+        .map((r) => r.id)
+        .sort()
+        .join(","),
+    [rows],
+  );
+  const rankSyncPollGenRef = useRef(0);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
+  useEffect(() => {
+    if (!rankSyncPollKey) return;
+
+    const generation = ++rankSyncPollGenRef.current;
+    let attempts = 0;
+    let intervalId: number | undefined;
+
+    const stop = () => {
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+        intervalId = undefined;
+      }
+    };
+
+    const poll = async () => {
+      if (rankSyncPollGenRef.current !== generation) return;
+      attempts += 1;
+
+      const pending = rowsNeedingKeywordRankSyncPoll(rowsRef.current);
+      if (pending.length === 0) {
+        stop();
+        return;
+      }
+      const appIds = [...new Set(pending.map((r) => r.app_id).filter(Boolean))];
+      if (appIds.length === 0) {
+        stop();
+        return;
+      }
+
+      try {
+        const responses = await Promise.all(
+          appIds.map(async (appId) => {
+            const res = await fetch(
+              `/api/workspaces/${workspaceId}/keywords?appId=${encodeURIComponent(appId)}`,
+              { credentials: "include" },
+            );
+            const json = (await res.json()) as {
+              ok?: boolean;
+              keywords?: KeywordWithRanks[];
+            };
+            if (!res.ok || !json.ok || !Array.isArray(json.keywords)) return [];
+            return json.keywords;
+          }),
+        );
+        if (rankSyncPollGenRef.current !== generation) return;
+
+        const byId = new Map<string, KeywordWithRanks>();
+        for (const list of responses) {
+          for (const row of list) byId.set(row.id, row);
+        }
+        if (byId.size === 0) return;
+
+        setRows((prev) => {
+          let changed = false;
+          const next = prev.map((row) => {
+            const fresh = byId.get(row.id);
+            if (!fresh) return row;
+            const wasPending = isKeywordRankSyncPending(row);
+            if (wasPending) {
+              if (!isKeywordRankSyncPending(fresh)) {
+                changed = true;
+                return fresh;
+              }
+              return row;
+            }
+            if (
+              fresh.lastSyncedAt !== row.lastSyncedAt ||
+              fresh.latest?.rank !== row.latest?.rank
+            ) {
+              changed = true;
+              return fresh;
+            }
+            return row;
+          });
+          if (!rowsNeedingKeywordRankSyncPoll(next).length) stop();
+          return changed ? next : prev;
+        });
+      } catch {
+        /* network — retry until max attempts */
+      }
+
+      if (attempts >= KEYWORD_RANK_SYNC_POLL_MAX_ATTEMPTS) stop();
+    };
+
+    void poll();
+    intervalId = window.setInterval(() => void poll(), KEYWORD_RANK_SYNC_POLL_INTERVAL_MS);
+
+    return () => {
+      rankSyncPollGenRef.current += 1;
+      stop();
+    };
+  }, [rankSyncPollKey, workspaceId]);
+
+  useEffect(() => {
+    setHistoryFor((prev) => {
+      if (!prev?.id) return prev;
+      const next = initialKeywords.find((k) => k.id === prev.id);
+      return next ?? prev;
+    });
   }, [initialKeywords]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const sessionDraft = readKeywordTrackerPreviewFromSession(workspaceId);
+      let serverDraft: ReturnType<typeof parseKeywordTrackerPreviewDraft> = null;
+      try {
+        const res = await fetch(
+          `/api/workspaces/${workspaceId}/keywords/serper-preview-draft`,
+          { credentials: "include" },
+        );
+        const json = (await res.json()) as { ok?: boolean; draft?: unknown };
+        if (res.ok && json.ok === true && json.draft != null) {
+          serverDraft = parseKeywordTrackerPreviewDraft(json.draft);
+        }
+      } catch {
+        /* ignore */
+      }
+      if (cancelled) return;
+      const best =
+        !sessionDraft
+          ? serverDraft
+          : !serverDraft
+            ? sessionDraft
+            : new Date(sessionDraft.updatedAt).getTime() >= new Date(serverDraft.updatedAt).getTime()
+              ? sessionDraft
+              : serverDraft;
+      if (!best) return;
+      setPreviewResults(best.results);
+      setTerm(best.term);
+      const sc = sanitizeDraftCountries(best.selectedCountries);
+      if (sc.length > 0) {
+        setSelectedCountries(sc);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  const clearSerperPreviewPersistence = useCallback(() => {
+    clearKeywordTrackerPreviewSession(workspaceId);
+    void fetch(`/api/workspaces/${workspaceId}/keywords/serper-preview-draft`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+  }, [workspaceId]);
+
+  const persistSerperPreviewDraft = useCallback(
+    (args: { term: string; countries: SupportedCountryCode[]; results: SerperPreviewCountry[] }) => {
+      const draft = buildKeywordTrackerPreviewDraft({
+        term: args.term,
+        selectedCountries: args.countries,
+        results: args.results,
+      });
+      writeKeywordTrackerPreviewToSession(workspaceId, draft);
+      void fetch(`/api/workspaces/${workspaceId}/keywords/serper-preview-draft`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+    },
+    [workspaceId],
+  );
 
   useEffect(() => {
     if (apps[0]?.id && !apps.some((a) => a.id === addTargetAppId)) {
@@ -175,10 +314,18 @@ export function KeywordTrackerClient({
     }
   }, [apps, addTargetAppId]);
 
-  const visibleRows = useMemo(() => {
-    if (filterAppId === "all") return rows;
-    return rows.filter((r) => r.app_id === filterAppId);
-  }, [rows, filterAppId]);
+  useEffect(() => {
+    const scope =
+      filterAppId !== "all"
+        ? filterAppId
+        : addTargetAppId || apps[0]?.id || "";
+    const n = term.trim().toLowerCase();
+    setSaveAttach((prev) => {
+      if (!prev) return prev;
+      if (prev.termNorm !== n || prev.appId !== scope) return null;
+      return prev;
+    });
+  }, [term, filterAppId, addTargetAppId, apps]);
 
   const appNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -197,6 +344,94 @@ export function KeywordTrackerClient({
     [tCountrySel],
   );
 
+  const appFilteredRows = useMemo(() => {
+    if (filterAppId === "all") return rows;
+    return rows.filter((r) => r.app_id === filterAppId);
+  }, [rows, filterAppId]);
+
+  const searchFilteredRows = useMemo(
+    () => filterKeywordsBySearch(appFilteredRows, tableSearch, appNameById),
+    [appFilteredRows, tableSearch, appNameById],
+  );
+
+  const countryFilteredRows = useMemo(
+    () =>
+      searchFilteredRows.filter((row) =>
+        keywordRowMatchesCountryFilter(row, marketFilter),
+      ),
+    [searchFilteredRows, marketFilter],
+  );
+
+  const watchlistPageCount = Math.max(
+    1,
+    Math.ceil(countryFilteredRows.length / watchlistPageSize),
+  );
+
+  const safeWatchlistPage = Math.min(watchlistPage, watchlistPageCount);
+
+  const paginatedWatchlistRows = useMemo(() => {
+    const start = (safeWatchlistPage - 1) * watchlistPageSize;
+    return countryFilteredRows.slice(start, start + watchlistPageSize);
+  }, [countryFilteredRows, safeWatchlistPage, watchlistPageSize]);
+
+  useEffect(() => {
+    setWatchlistPage(1);
+  }, [tableSearch, marketFilter, filterAppId, watchlistPageSize]);
+
+  useEffect(() => {
+    if (watchlistPage !== safeWatchlistPage) {
+      setWatchlistPage(safeWatchlistPage);
+    }
+  }, [watchlistPage, safeWatchlistPage]);
+
+  const countryLabelsForExport = useMemo(() => {
+    const codes: SupportedCountryCode[] = ["us", "sa", "ae", "in", "cn"];
+    return Object.fromEntries(
+      codes.map((c) => [c, countryLabel(c)]),
+    ) as Record<SupportedCountryCode, string>;
+  }, [countryLabel]);
+
+  const onExportWatchlistCsv = useCallback(() => {
+    if (countryFilteredRows.length === 0) return;
+    const csv = buildKeywordWatchlistCsv({
+      rows: countryFilteredRows,
+      appNameById,
+      rankFmt: { notInTop: t("table.rankNotInTop") },
+      countryLabels: countryLabelsForExport,
+      headers: {
+        keyword: t("table.csvKeyword"),
+        app: t("table.csvApp"),
+        currentRank: t("table.csvCurrentRank"),
+        bestRank: t("table.csvBestRank"),
+        lastSync: t("table.csvLastSync"),
+      },
+      formatSyncAt: (iso) =>
+        iso
+          ? formatRelativePastSince(iso, locale, { justNow: t("table.justNow") })
+          : "—",
+    });
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadCsvFile(`keyword-watchlist-${stamp}.csv`, csv);
+    toast.success(t("table.exportCsvSuccess"));
+  }, [
+    countryFilteredRows,
+    appNameById,
+    countryLabelsForExport,
+    locale,
+    t,
+  ]);
+
+  const toggleMarketFilter = useCallback((code: SupportedCountryCode) => {
+    setMarketFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }, []);
+
+  const showWatchlistSkeleton = isRefreshing && appFilteredRows.length > 0;
+
   const scopeAppId =
     filterAppId !== "all"
       ? filterAppId
@@ -208,6 +443,35 @@ export function KeywordTrackerClient({
     const p = row?.package_name?.trim();
     return p && p.length > 0 ? p : null;
   }, [apps, scopeAppId]);
+
+  const previewCreditCost = useMemo(
+    () => serperAiCreditsForCountryCount(selectedCountries.length),
+    [selectedCountries],
+  );
+
+  const livePreviewIssueBanner = useMemo(() => {
+    if (!previewResults?.length) return null;
+    const failed = previewResults.filter((r) => Boolean(r.error?.trim()));
+    if (failed.length === 0) return null;
+    if (failed.length === previewResults.length) return "all" as const;
+    return "partial" as const;
+  }, [previewResults]);
+
+  /** Prefer row for the user's first selected market when the same term exists on multiple `keywords.market` rows. */
+  const keywordIdForSerperSave = useMemo(() => {
+    const trimmed = term.trim();
+    const norm = trimmed.toLowerCase();
+    if (norm.length < 2 || !scopeAppId) return undefined;
+    if (saveAttach && saveAttach.termNorm === norm && saveAttach.appId === scopeAppId) {
+      return saveAttach.id;
+    }
+    const primaryM = (selectedCountries[0] ?? "us").toLowerCase();
+    const termRows = rows.filter(
+      (r) => r.app_id === scopeAppId && r.term.trim().toLowerCase() === norm,
+    );
+    const primaryRow = termRows.find((r) => String(r.market ?? "").trim().toLowerCase() === primaryM);
+    return (primaryRow ?? termRows[0])?.id;
+  }, [term, scopeAppId, saveAttach, rows, selectedCountries]);
 
   const aiPack = scopeAppId ? latestAiByApp[scopeAppId] : undefined;
 
@@ -228,11 +492,6 @@ export function KeywordTrackerClient({
       return k.length > 0 && !trackedTermKeysForApp.has(k);
     });
   }, [aiPack, trackedTermKeysForApp]);
-
-  const serperPreviewCredits = useMemo(
-    () => selectedCountries.length * AI_CREDIT_COSTS.serper_preview_per_country,
-    [selectedCountries.length],
-  );
 
   const refresh = useCallback(() => {
     startTransition(() => {
@@ -261,23 +520,48 @@ export function KeywordTrackerClient({
       // tracks one market per keyword, so multi-country fan-out only affects
       // the Serper preview today, not persistence.
       const primaryMarket = selectedCountries[0] ?? "us";
+      const body: Record<string, unknown> = {
+        term: trimmed,
+        appId: targetApp,
+        market: primaryMarket,
+      };
+      if (previewResults?.length && scopePackageName) {
+        const initialRanks = selectedCountries
+          .map((country) => {
+            const hasBlock = previewResults.some(
+              (b) => String(b.country ?? "").trim().toLowerCase() === country,
+            );
+            if (!hasBlock) return null;
+            return {
+              country,
+              rank: resolveRankInCountryForSerperSnapshot(
+                previewResults,
+                scopePackageName,
+                country,
+              ),
+            };
+          })
+          .filter((x): x is { country: SupportedCountryCode; rank: number } => x != null);
+        if (initialRanks.length > 0) {
+          body.initialRanks = initialRanks;
+        }
+      }
       const res = await fetch(`/api/workspaces/${workspaceId}/keywords`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          term: trimmed,
-          appId: targetApp,
-          market: primaryMarket,
-        }),
+        body: JSON.stringify(body),
       });
       const json = (await res.json()) as {
         ok?: boolean;
+        keyword?: { id: string; term?: string };
         error?: { code?: string; message?: string };
       };
 
       if (!res.ok || !json.ok) {
         if (json.error?.code === "duplicate_keyword" || res.status === 409) {
           setFormError(t("add.errorDuplicate"));
+        } else if (json.error?.code === "no_package_name") {
+          toast.error(t("serper.saveNeedsPackage"));
         } else {
           setFormError(json.error?.message ?? t("add.errorGeneric"));
         }
@@ -285,7 +569,17 @@ export function KeywordTrackerClient({
       }
 
       toast.success(t("add.toastSuccess"));
-      setTerm("");
+      if (body.initialRanks) {
+        setPreviewResults(null);
+        clearSerperPreviewPersistence();
+      }
+      if (json.keyword?.id && targetApp) {
+        setSaveAttach({
+          id: json.keyword.id,
+          termNorm: trimmed.toLowerCase(),
+          appId: targetApp,
+        });
+      }
       refresh();
     } finally {
       setMutationPending(false);
@@ -310,37 +604,15 @@ export function KeywordTrackerClient({
       });
       const json = (await res.json()) as {
         ok?: boolean;
-        creditsCharged?: number;
-        creditsRemaining?: number;
         error?: { code?: string; message?: string; remaining?: number; required?: number };
       };
 
       if (!res.ok || !json.ok) {
-        if (res.status === 402 || json.error?.code === "insufficient_credits") {
-          const rem = json.error?.remaining;
-          const req = json.error?.required;
-          const suffix =
-            typeof rem === "number" && typeof req === "number"
-              ? ` (${rem} / ${req})`
-              : "";
-          toast.error(`${t("aiSuggestedKeywords.insufficientCredits")}${suffix}`);
-        } else {
-          toast.error(json.error?.message ?? t("aiSuggestedKeywords.trackError"));
-        }
+        toast.error(json.error?.message ?? t("aiSuggestedKeywords.trackError"));
         return;
       }
 
-      const charged = json.creditsCharged ?? 0;
-      if (charged > 0) {
-        toast.success(
-          t("aiSuggestedKeywords.toastTrackedPaid", {
-            term: trimmed,
-            credits: charged,
-          }),
-        );
-      } else {
-        toast.success(t("aiSuggestedKeywords.toastTrackedFree", { term: trimmed }));
-      }
+      toast.success(t("aiSuggestedKeywords.toastTracked", { term: trimmed }));
       refresh();
     } finally {
       setTrackingAiTerm(null);
@@ -348,6 +620,7 @@ export function KeywordTrackerClient({
   }
 
   async function onDelete(id: string) {
+    const deletedRow = rows.find((r) => r.id === id);
     setMutationPending(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/keywords/${id}`, {
@@ -360,6 +633,13 @@ export function KeywordTrackerClient({
       }
       toast.success(t("delete.toastSuccess"));
       if (historyFor?.id === id) setHistoryFor(null);
+      setRows((prev) => prev.filter((r) => r.id !== id));
+      if (deletedRow?.term?.trim()) {
+        dispatchWorkspaceKeywordsChanged({
+          workspaceId,
+          removedTerms: [deletedRow.term.trim()],
+        });
+      }
       refresh();
     } finally {
       setMutationPending(false);
@@ -379,17 +659,8 @@ export function KeywordTrackerClient({
     }
     if (selectedCountries.length === 0) return;
 
-    const creditCost = selectedCountries.length * AI_CREDIT_COSTS.serper_preview_per_country;
-    if (typeof aiCreditsRemaining === "number" && aiCreditsRemaining < creditCost) {
-      toast.error(
-        tSerper("insufficientCredits", {
-          credits: creditCost,
-          count: selectedCountries.length,
-        }),
-      );
-      return;
-    }
-
+    clearSerperPreviewPersistence();
+    setPreviewResults(null);
     setPreviewPending(true);
     setFormError(null);
     try {
@@ -410,9 +681,13 @@ export function KeywordTrackerClient({
 
       if (!res.ok || !json.ok || !Array.isArray(json.results)) {
         if (res.status === 402 || json.error?.code === "insufficient_credits") {
-          const req = json.error?.required ?? creditCost;
-          const count = selectedCountries.length;
-          toast.error(tSerper("insufficientCredits", { credits: req, count }));
+          const req = json.error?.required;
+          const rem = json.error?.remaining;
+          if (typeof req === "number" && typeof rem === "number") {
+            toast.error(t("serper.previewInsufficient", { required: req, remaining: rem }));
+          } else {
+            toast.error(json.error?.message ?? tSerper("insufficientCredits"));
+          }
         } else if (
           res.status === 503 ||
           json.error?.code === "serper_not_configured"
@@ -420,6 +695,8 @@ export function KeywordTrackerClient({
           toast.message(tSerper("configMissingTitle"), {
             description: tSerper("configMissingBody"),
           });
+        } else if (json.error?.code === "search_error") {
+          toast.error(tSerper("liveRanksUnavailable"));
         } else {
           toast.error(json.error?.message ?? tSerper("errorGeneric"));
         }
@@ -427,6 +704,11 @@ export function KeywordTrackerClient({
         return;
       }
       setPreviewResults(json.results);
+      persistSerperPreviewDraft({
+        term: trimmed,
+        countries: selectedCountries,
+        results: json.results,
+      });
     } catch {
       toast.error(tSerper("errorGeneric"));
       setPreviewResults(null);
@@ -440,75 +722,104 @@ export function KeywordTrackerClient({
     workspaceId,
     t,
     tSerper,
-    aiCreditsRemaining,
+    clearSerperPreviewPersistence,
+    persistSerperPreviewDraft,
   ]);
 
-  const onSaveSerperPreview = useCallback(async () => {
-    if (saveSerperPending || !previewResults?.length) return;
-    const trimmed = term.trim();
-    if (trimmed.length < 2) {
-      setFormError(t("add.errorEmpty"));
-      return;
-    }
-    const targetApp = scopeAppId;
-    if (!targetApp) {
-      setFormError(t("add.errorNoApp"));
-      return;
-    }
-    if (!scopePackageName) {
-      toast.error(t("serper.saveNeedsPackage"));
-      return;
-    }
-
-    const market = (selectedCountries[0] ?? "us") as SupportedCountryCode;
-    setSaveSerperPending(true);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/keywords/serper-save`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          term: trimmed,
-          appId: targetApp,
-          market,
-          results: previewResults,
-        }),
-      });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        createdKeyword?: boolean;
-        error?: { code?: string; message?: string };
-      };
-      if (!res.ok || !json.ok) {
-        if (json.error?.code === "duplicate_keyword" || res.status === 409) {
-          toast.error(t("add.errorDuplicate"));
-        } else if (json.error?.code === "no_package_name") {
-          toast.error(t("serper.saveNeedsPackage"));
-        } else {
-          toast.error(json.error?.message ?? t("serper.saveError"));
-        }
+  const onSaveSerperPreview = useCallback(
+    async (countries: SupportedCountryCode[]) => {
+      if (saveSerperPending || !previewResults?.length || countries.length === 0) return;
+      const trimmed = term.trim();
+      if (trimmed.length < 2) {
+        setFormError(t("add.errorEmpty"));
         return;
       }
-      toast.success(
-        json.createdKeyword ? t("serper.saveToastNew") : t("serper.saveToastUpdated"),
-      );
-      setPreviewResults(null);
-      refresh();
-    } catch {
-      toast.error(t("serper.saveError"));
-    } finally {
-      setSaveSerperPending(false);
-    }
-  }, [
-    saveSerperPending,
-    previewResults,
-    term,
-    scopeAppId,
-    scopePackageName,
-    selectedCountries,
-    workspaceId,
-    t,
-    refresh,
-  ]);
+      const targetApp = scopeAppId;
+      if (!targetApp) {
+        setFormError(t("add.errorNoApp"));
+        return;
+      }
+      if (!scopePackageName) {
+        toast.error(t("serper.saveNeedsPackage"));
+        return;
+      }
+
+      setSaveSerperPending(true);
+      try {
+        const primarySave = selectedCountries[0];
+        const body: Record<string, unknown> = {
+          term: trimmed,
+          appId: targetApp,
+          countries,
+          results: previewResults,
+        };
+        if (primarySave && countries.includes(primarySave)) {
+          body.primaryCountry = primarySave;
+        }
+        if (keywordIdForSerperSave) {
+          body.keywordId = keywordIdForSerperSave;
+        }
+        if (scopePackageName && previewResults.length > 0) {
+          body.snapshotRanks = countries.map((country) => ({
+            country,
+            rank: resolveRankInCountryForSerperSnapshot(
+              previewResults,
+              scopePackageName,
+              country,
+            ),
+          }));
+        }
+        const res = await fetch(`/api/workspaces/${workspaceId}/keywords/serper-save`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = (await res.json()) as {
+          ok?: boolean;
+          createdKeyword?: boolean;
+          error?: { code?: string; message?: string };
+        };
+        if (!res.ok || !json.ok) {
+          if (json.error?.code === "duplicate_keyword" || res.status === 409) {
+            toast.error(t("add.errorDuplicate"));
+          } else if (json.error?.code === "no_package_name") {
+            toast.error(t("serper.saveNeedsPackage"));
+          } else if (json.error?.code === "invalid_keyword") {
+            toast.error(t("serper.saveInvalidKeyword"));
+          } else {
+            toast.error(json.error?.message ?? t("serper.saveError"));
+          }
+          return;
+        }
+        toast.success(
+          json.createdKeyword ? t("serper.saveToastNew") : t("serper.saveToastUpdated"),
+        );
+        setPreviewResults(null);
+        clearSerperPreviewPersistence();
+        setSaveKeywordModalOpen(false);
+        setFormError(null);
+        setSaveAttach(null);
+        refresh();
+      } catch {
+        toast.error(t("serper.saveError"));
+      } finally {
+        setSaveSerperPending(false);
+      }
+    },
+    [
+      saveSerperPending,
+      previewResults,
+      selectedCountries,
+      term,
+      scopeAppId,
+      scopePackageName,
+      workspaceId,
+      keywordIdForSerperSave,
+      t,
+      refresh,
+      clearSerperPreviewPersistence,
+    ],
+  );
 
   const onSerperRefreshRow = useCallback(
     async (keywordId: string) => {
@@ -546,11 +857,7 @@ export function KeywordTrackerClient({
           return;
         }
         const charged = json.creditsCharged ?? 0;
-        toast.success(
-          charged > 0
-            ? t("serper.rowRefreshToast", { credits: charged })
-            : t("serper.rowRefreshToastFree"),
-        );
+        toast.success(t("serper.rowRefreshToast", { credits: charged }));
         refresh();
       } catch {
         toast.error(t("serper.rowRefreshError"));
@@ -665,12 +972,15 @@ export function KeywordTrackerClient({
             </div>
 
             {selectedCountries.length > 0 && apps.length > 0 && !blockingError ? (
-              <p className="text-xs leading-relaxed text-zinc-400">
-                {t("serper.costPreview", {
-                  credits: serperPreviewCredits,
-                  count: selectedCountries.length,
-                })}
-              </p>
+              <div className="space-y-1.5 text-xs leading-relaxed text-zinc-400">
+                <p>{t("serper.previewCreditsWillUse", {
+                  credits: previewCreditCost,
+                  per: AI_CREDIT_COSTS.serper_preview_per_country,
+                })}</p>
+                <p className="text-zinc-500" role="note">
+                  {t("serper.creditsRules")}
+                </p>
+              </div>
             ) : null}
 
             <div className="flex flex-wrap items-center gap-3">
@@ -710,11 +1020,27 @@ export function KeywordTrackerClient({
 
           {previewResults && previewResults.length > 0 ? (
             <div className="mt-1 space-y-4">
-              <SerperPreviewResults results={previewResults} />
+              {livePreviewIssueBanner ? (
+                <div
+                  className="rounded-xl border border-rose-500/35 bg-rose-500/[0.12] px-4 py-3 text-sm leading-relaxed text-rose-50/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ring-1 ring-rose-400/15"
+                  role="alert"
+                >
+                  {livePreviewIssueBanner === "all"
+                    ? tSerper("previewAllMarketsUnavailable")
+                    : tSerper("previewSomeMarketsUnavailable")}
+                </div>
+              ) : null}
+              <SerperPreviewResults
+                results={previewResults}
+                packageName={scopePackageName ?? undefined}
+                appDisplayName={
+                  scopeAppId ? (appNameById.get(scopeAppId) ?? undefined) : undefined
+                }
+              />
               <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/[0.08] p-4 sm:p-5">
                 <p className="text-sm font-medium text-emerald-50">{t("serper.saveTitle")}</p>
                 <p className="mt-1.5 text-xs leading-relaxed text-emerald-100/80">
-                  {t("serper.saveHint", { market: (selectedCountries[0] ?? "us").toUpperCase() })}
+                  {t("serper.saveHintMulti")}
                 </p>
                 {!scopePackageName ? (
                   <p className="mt-3 text-xs text-amber-200/90">{t("serper.saveNeedsPackage")}</p>
@@ -729,12 +1055,9 @@ export function KeywordTrackerClient({
                     blockingError ||
                     mutationPending
                   }
-                  onClick={() => void onSaveSerperPreview()}
+                  onClick={() => setSaveKeywordModalOpen(true)}
                 >
-                  {saveSerperPending ? (
-                    <Loader2 className="me-2 size-4 shrink-0 animate-spin" aria-hidden />
-                  ) : null}
-                  {saveSerperPending ? t("serper.savePending") : t("serper.saveButton")}
+                  {t("serper.saveButton")}
                 </Button>
               </div>
             </div>
@@ -774,8 +1097,7 @@ export function KeywordTrackerClient({
                 </div>
                 <p className="text-[11px] leading-relaxed text-zinc-500">
                   {t("aiSuggestedKeywords.pricingNote", {
-                    free: KEYWORD_TRACK_AI_FREE_PER_GENERATION,
-                    per: AI_CREDIT_COSTS.keyword_track_ai_per_keyword,
+                    per: AI_CREDIT_COSTS.serper_preview_per_country,
                   })}
                 </p>
               </div>
@@ -844,175 +1166,60 @@ export function KeywordTrackerClient({
             className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3.5 py-2.5 text-start text-xs leading-relaxed text-emerald-100/90"
             role="note"
           >
-            {t("table.liveRankingsNote")}
+            {t("table.liveRankingsNote", {
+              per: AI_CREDIT_COSTS.serper_preview_per_country,
+            })}
           </p>
         </CardHeader>
         <CardContent className="p-0">
-          {visibleRows.length === 0 ? (
+          {appFilteredRows.length === 0 ? (
             <div className="px-6 py-16 text-center sm:px-10 sm:py-20">
               <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-400 shadow-[0_0_48px_-16px_rgba(16,185,129,0.45)]">
                 <TrendingUp className="size-8" aria-hidden />
               </div>
               <p className="text-lg font-semibold tracking-tight text-white">{t("empty.title")}</p>
               <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-zinc-400">{t("empty.body")}</p>
-              <p className="mx-auto mt-4 max-w-md text-xs leading-relaxed text-zinc-500">{t("empty.demoHint")}</p>
+              <p className="mx-auto mt-4 max-w-md text-xs leading-relaxed text-zinc-500">{t("empty.hint")}</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead>
-                  <tr className="border-b border-white/[0.06] text-start text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    <th className="px-5 py-3.5">{t("table.keyword")}</th>
-                    <th className="px-4 py-3.5" title={t("table.rankTooltip")}>
-                      {t("table.currentRank")}
-                    </th>
-                    <th className="px-4 py-3.5" title={t("table.rankTooltip")}>
-                      {t("table.bestRank")}
-                    </th>
-                    <th className="px-4 py-3.5" title={t("table.trendTooltip")}>
-                      {t("table.trend")}
-                    </th>
-                    <th className="px-4 py-3.5">{t("table.lastSync")}</th>
-                    <th className="px-5 py-3.5 text-end">{t("table.actions")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleRows.map((row) => {
-                    const trendVals = trendWindowRanks(row.ranks);
-                    const best = bestRankFromRanks(row.ranks);
-                    const latest = row.latest;
-                    const rankFmt = { notInTop: t("table.rankNotInTop") };
-                    const chipCodes = countriesForKeywordRankChips({
-                      market: row.market,
-                      targetCountries: appRowById.get(row.app_id)?.target_countries ?? null,
-                    });
-                    const primary = primaryMarketCode(row.market);
-                    const rankAuthenticityTitle =
-                      primary != null
-                        ? t("table.rankAuthenticityTooltip", {
-                            country: countryLabel(primary),
-                          })
-                        : t("table.rankTooltip");
-                    return (
-                      <tr
-                        key={row.id}
-                        className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.03]"
-                      >
-                        <td className="px-5 py-4">
-                          <button
-                            type="button"
-                            className="text-start font-medium text-emerald-300/95 underline-offset-4 hover:text-emerald-200 hover:underline"
-                            onClick={() => setHistoryFor(row)}
-                          >
-                            {row.term}
-                          </button>
-                          {filterAppId === "all" ? (
-                            <p className="mt-0.5 text-xs text-zinc-500">
-                              {appNameById.get(row.app_id) ?? row.app_id}
-                            </p>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-4 font-mono text-zinc-100">
-                          <span
-                            className="inline-flex max-w-full flex-wrap items-center gap-2"
-                            title={rankAuthenticityTitle}
-                          >
-                            {chipCodes.length > 0 ? (
-                              <span className="inline-flex shrink-0 items-center gap-1" aria-hidden>
-                                {chipCodes.map((c) => (
-                                  <span
-                                    key={c}
-                                    className="inline-flex items-center rounded-md border border-white/[0.1] bg-white/[0.04] px-1 py-0.5 text-[13px] leading-none tabular-nums shadow-sm"
-                                    title={countryLabel(c)}
-                                  >
-                                    {COUNTRY_FLAG_EMOJI[c]}
-                                  </span>
-                                ))}
-                              </span>
-                            ) : null}
-                            <span>{formatRankForDisplay(latest?.rank ?? null, rankFmt)}</span>
-                          </span>
-                        </td>
-                        <td className="px-4 py-4 font-mono text-zinc-300" title={t("table.rankTooltip")}>
-                          {best != null ? formatRankForDisplay(best, rankFmt) : "—"}
-                        </td>
-                        <td className="px-4 py-4">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <TrendBars values={trendVals} title={t("table.trendTooltip")} />
-                            <RankDelta7d
-                              values={trendVals}
-                              labels={{
-                                improved: t("delta.improved"),
-                                worse: t("delta.worse"),
-                                same: t("delta.same"),
-                              }}
-                            />
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 text-start text-zinc-300">
-                          {latest?.captured_at ? (
-                            <span className="text-sm tabular-nums text-zinc-200">
-                              {formatRelativePastSince(latest.captured_at, locale)}
-                            </span>
-                          ) : (
-                            <span className="text-zinc-500">—</span>
-                          )}
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-end">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="gap-1.5 text-emerald-300/90 hover:bg-emerald-500/10 hover:text-emerald-200"
-                              disabled={
-                                blockingError ||
-                                mutationPending ||
-                                serperRowRefreshId === row.id
-                              }
-                              onClick={() => void onSerperRefreshRow(row.id)}
-                            >
-                              {serperRowRefreshId === row.id ? (
-                                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-                              ) : (
-                                <RefreshCw className="size-3.5 shrink-0" aria-hidden />
-                              )}
-                              {serperRowRefreshId === row.id
-                                ? t("actions.syncingPlayStore")
-                                : t("actions.refreshSerper")}
-                            </Button>
-                            <span className="text-zinc-600" aria-hidden>
-                              ·
-                            </span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-emerald-300/90 hover:bg-emerald-500/10 hover:text-emerald-200"
-                              onClick={() => setHistoryFor(row)}
-                            >
-                              {t("actions.viewHistory")}
-                            </Button>
-                            <span className="text-zinc-600" aria-hidden>
-                              ·
-                            </span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-zinc-400 hover:bg-rose-500/10 hover:text-rose-300"
-                              onClick={() => onDelete(row.id)}
-                            >
-                              {t("actions.delete")}
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <KeywordWatchlistToolbar
+                search={tableSearch}
+                onSearchChange={setTableSearch}
+                marketFilter={marketFilter}
+                onToggleMarket={toggleMarketFilter}
+                onSelectAllMarkets={() => setMarketFilter(new Set())}
+                onExportCsv={onExportWatchlistCsv}
+                exportDisabled={countryFilteredRows.length === 0 || blockingError}
+                countryLabel={countryLabel}
+              />
+              {countryFilteredRows.length === 0 && !showWatchlistSkeleton ? (
+                <p className="px-6 py-12 text-center text-sm text-zinc-400">
+                  {t("table.noFilterResults")}
+                </p>
+              ) : (
+                <KeywordWatchlistTable
+                  rows={paginatedWatchlistRows}
+                  totalFilteredCount={countryFilteredRows.length}
+                  page={safeWatchlistPage}
+                  pageSize={watchlistPageSize}
+                  pageCount={watchlistPageCount}
+                  onPageChange={setWatchlistPage}
+                  onPageSizeChange={setWatchlistPageSize}
+                  appNameById={appNameById}
+                  appRowById={appRowById}
+                  filterAppId={filterAppId}
+                  showSkeleton={showWatchlistSkeleton}
+                  blockingError={blockingError}
+                  mutationPending={mutationPending}
+                  serperRowRefreshId={serperRowRefreshId}
+                  countryLabel={countryLabel}
+                  onHistory={setHistoryFor}
+                  onDelete={(id) => void onDelete(id)}
+                  onSerperRefresh={(id) => void onSerperRefreshRow(id)}
+                />
+              )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -1023,6 +1230,15 @@ export function KeywordTrackerClient({
         apps={apps}
         open={historyFor != null}
         onOpenChange={(next) => !next && setHistoryFor(null)}
+      />
+
+      <SaveKeywordModal
+        open={saveKeywordModalOpen}
+        onOpenChange={setSaveKeywordModalOpen}
+        term={term}
+        results={previewResults ?? []}
+        pending={saveSerperPending}
+        onSave={(countries) => onSaveSerperPreview(countries)}
       />
     </div>
   );

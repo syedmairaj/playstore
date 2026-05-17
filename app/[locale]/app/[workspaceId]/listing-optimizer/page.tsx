@@ -1,8 +1,9 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { ListingOptimizer } from "@/components/ListingOptimizer";
-import { loadLatestListingHydrationMaps } from "@/lib/listing/latest-listing-hydration";
 import { createClient } from "@/lib/supabase/server";
 import { getFeatureFlags, isModuleEnabled } from "@/lib/features";
+import { loadLatestListingHydrationMaps } from "@/lib/listing/latest-listing-hydration";
 import { canAddNewApp } from "@/lib/utils/app-limits";
 import { queryWorkspaceAppsList } from "@/lib/workspace/workspace-apps-list";
 
@@ -19,32 +20,36 @@ export default async function ListingOptimizerPage({
   }
   /** Same limits as GET /app-limits + `precheckAddApp` in the client — avoids wrong navigation on first paint. */
   const initialAppLimits = await canAddNewApp(workspaceId);
-  const { rows: appsSnapshot, error: appsSnapshotError } =
-    await queryWorkspaceAppsList(supabase, workspaceId);
+  const [{ rows: appsSnapshot, error: appsSnapshotError }, listingHydration] =
+    await Promise.all([
+      queryWorkspaceAppsList(supabase, workspaceId),
+      loadLatestListingHydrationMaps(supabase, workspaceId),
+    ]);
   const { data: wsRow } = await supabase
     .from("workspaces")
     .select("ai_credits_remaining")
     .eq("id", workspaceId)
     .maybeSingle();
-  const hydrationMaps = await loadLatestListingHydrationMaps(supabase, workspaceId);
   const uiLocale = locale === "ar" ? "ar" : "en";
 
   return (
-    <div className="mx-auto w-full min-h-0 max-w-[1120px]">
-      <ListingOptimizer
-        workspaceId={workspaceId}
-        embedded
-        locale={uiLocale}
-        initialAppLimits={initialAppLimits}
-        initialApps={appsSnapshotError ? undefined : appsSnapshot}
-        initialAiCreditsRemaining={
-          typeof wsRow?.ai_credits_remaining === "number"
-            ? wsRow.ai_credits_remaining
-            : undefined
-        }
-        initialHydrationByApp={hydrationMaps.byAppId}
-        initialHydrationNoApp={hydrationMaps.noApp}
-      />
+    <div className="w-full min-h-0 max-w-[1600px]">
+      <Suspense fallback={null}>
+        <ListingOptimizer
+          workspaceId={workspaceId}
+          embedded
+          locale={uiLocale}
+          initialAppLimits={initialAppLimits}
+          initialApps={appsSnapshotError ? undefined : appsSnapshot}
+          initialHydrationByApp={listingHydration.byAppId}
+          initialHydrationNoApp={listingHydration.noApp}
+          initialAiCreditsRemaining={
+            typeof wsRow?.ai_credits_remaining === "number"
+              ? wsRow.ai_credits_remaining
+              : undefined
+          }
+        />
+      </Suspense>
     </div>
   );
 }

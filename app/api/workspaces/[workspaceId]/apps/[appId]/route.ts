@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { APP_METADATA_LOGO_GENERATOR_KEY } from "@/lib/apps/logo-generator-metadata";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { patchAppSchema } from "@/lib/validation/api";
@@ -54,6 +55,34 @@ export async function PATCH(request: Request, context: Ctx) {
     }
 
     const updates: Record<string, unknown> = {};
+    const prevMeta: Record<string, unknown> =
+      app.metadata && typeof app.metadata === "object" && !Array.isArray(app.metadata)
+        ? { ...(app.metadata as Record<string, unknown>) }
+        : {};
+
+    if (parsed.icon_url !== undefined) {
+      const icon = parsed.icon_url?.trim();
+      if (icon) {
+        prevMeta.icon_url = icon;
+        updates.icon_url = icon;
+      } else {
+        delete prevMeta.icon_url;
+        updates.icon_url = null;
+      }
+    }
+
+    if (parsed.logoGenerator !== undefined) {
+      if (parsed.logoGenerator === null) {
+        delete prevMeta[APP_METADATA_LOGO_GENERATOR_KEY];
+      } else {
+        prevMeta[APP_METADATA_LOGO_GENERATOR_KEY] = parsed.logoGenerator;
+      }
+    }
+
+    if (parsed.icon_url !== undefined || parsed.logoGenerator !== undefined) {
+      updates.metadata = prevMeta;
+    }
+
     if (parsed.name != null) updates.name = parsed.name;
     if (parsed.package_name !== undefined) {
       updates.package_name = parsed.package_name || null;
@@ -64,21 +93,6 @@ export async function PATCH(request: Request, context: Ctx) {
     }
     if (parsed.target_countries != null) {
       updates.target_countries = parsed.target_countries;
-    }
-    if (parsed.icon_url !== undefined) {
-      const prevMeta =
-        app.metadata && typeof app.metadata === "object" && !Array.isArray(app.metadata)
-          ? { ...(app.metadata as Record<string, unknown>) }
-          : {};
-      const icon = parsed.icon_url?.trim();
-      if (icon) {
-        prevMeta.icon_url = icon;
-        updates.icon_url = icon;
-      } else {
-        delete prevMeta.icon_url;
-        updates.icon_url = null;
-      }
-      updates.metadata = prevMeta;
     }
 
     if (Object.keys(updates).length === 0) {

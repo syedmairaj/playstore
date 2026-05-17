@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { captureKeywordAsoBaselineIfUnset } from "@/lib/keywords/capture-aso-baseline";
+import { maybeCreateAsoRankImprovementAlert } from "@/lib/keywords/evaluate-aso-improvement-alert";
 import { maybeCreateRankAlerts } from "@/lib/keywords/evaluate-alerts";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { createRankSchema } from "@/lib/validation/api";
@@ -42,7 +44,7 @@ export async function POST(request: Request, context: Ctx) {
     const parsed = createRankSchema.parse(body);
     const { data: keyword, error: kwErr } = await supabase
       .from("keywords")
-      .select("id,term,workspace_id")
+      .select("id,term,workspace_id,market")
       .eq("id", keywordId)
       .eq("workspace_id", workspaceId)
       .maybeSingle();
@@ -54,10 +56,12 @@ export async function POST(request: Request, context: Ctx) {
       );
     }
 
+    const mkt = String(keyword.market ?? "us").trim().toLowerCase() || "us";
     const { data: prevRows } = await supabase
       .from("keyword_rank_snapshots")
-      .select("rank,snapshot_at")
+      .select("rank,snapshot_at,country_code")
       .eq("keyword_id", keywordId)
+      .or(`country_code.is.null,country_code.eq.${mkt}`)
       .order("snapshot_at", { ascending: false })
       .limit(1);
 
@@ -70,6 +74,7 @@ export async function POST(request: Request, context: Ctx) {
         keyword_id: keywordId,
         rank: parsed.rank,
         source: parsed.source ?? "manual",
+        country_code: null,
       })
       .select("id,rank,snapshot_at,best_rank,source")
       .single();
@@ -88,6 +93,20 @@ export async function POST(request: Request, context: Ctx) {
       keywordTerm: keyword.term as string,
       prevRank,
       newRank: parsed.rank,
+    });
+
+    await captureKeywordAsoBaselineIfUnset(supabase, {
+      keywordId,
+      candidateRank: parsed.rank,
+      source: "initial_save",
+    });
+
+    await maybeCreateAsoRankImprovementAlert({
+      supabase,
+      workspaceId,
+      keywordId,
+      keywordTerm: keyword.term as string,
+      newPrimaryRank: parsed.rank,
     });
 
     const payload = {

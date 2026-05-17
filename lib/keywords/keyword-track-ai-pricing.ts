@@ -1,21 +1,21 @@
-import {
-  AI_CREDIT_COSTS,
-  KEYWORD_TRACK_AI_FREE_PER_GENERATION,
-} from "@/lib/features/billing/credit-costs";
+import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 
 /**
- * Credits to debit when adding `newTermCount` new keywords tied to `listingGenerationId`,
- * given how many keywords are already tracked from that same generation.
+ * AI credits for Serper-backed Play Store queries: one unit per country/market
+ * (`serper_preview_per_country` in `credit-costs.ts`). Used by Keyword Tracker
+ * live preview and per-keyword refresh so debit math stays in one place.
  */
-export function creditsForAiListingKeywordAdds(
-  newTermCount: number,
-  alreadyTrackedFromSameGeneration: number,
-): number {
-  if (newTermCount <= 0) return 0;
-  const freeSlots = Math.max(
-    0,
-    KEYWORD_TRACK_AI_FREE_PER_GENERATION - alreadyTrackedFromSameGeneration,
-  );
-  const paidKeywords = Math.max(0, newTermCount - freeSlots);
-  return paidKeywords * AI_CREDIT_COSTS.keyword_track_ai_per_keyword;
+export function serperAiCreditsForCountryCount(countryCount: number): number {
+  const n = Math.max(0, Math.floor(Number(countryCount)));
+  return n * AI_CREDIT_COSTS.serper_preview_per_country;
+}
+
+/**
+ * Competitor Spy live preview bundle: **5** credits cover up to **2** markets,
+ * then **+2** credits per additional market (3→7, 4→9, …).
+ */
+export function competitorSpyAiCreditsForCountryCount(countryCount: number): number {
+  const n = Math.max(0, Math.floor(Number(countryCount)));
+  if (n === 0) return 0;
+  return 5 + 2 * Math.max(0, n - 2);
 }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 
 type AlertRow = {
   id: string;
@@ -15,6 +16,19 @@ type AlertRow = {
   meta: unknown;
 };
 
+type AsoImprovementMeta = {
+  listing_generation_id?: string;
+  fromRank?: number;
+  toRank?: number;
+  positions?: number;
+  keywordTerm?: string;
+};
+
+function parseAsoMeta(meta: unknown): AsoImprovementMeta | null {
+  if (!meta || typeof meta !== "object") return null;
+  return meta as AsoImprovementMeta;
+}
+
 export function AlertsPanel({
   workspaceId,
   initialAlerts,
@@ -23,6 +37,7 @@ export function AlertsPanel({
   initialAlerts: AlertRow[];
 }) {
   const router = useRouter();
+  const t = useTranslations("workspaceAlerts");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,31 +99,48 @@ export function AlertsPanel({
             one here.
           </li>
         ) : (
-          initialAlerts.map((a) => (
-            <li
-              key={a.id}
-              className={`rounded-2xl border px-4 py-4 shadow-sm ${
-                a.read_at
-                  ? "border-neutral-100 bg-white"
-                  : "border-indigo-100 bg-indigo-50/40"
-              }`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                    {a.type.replace("_", " ")}
-                  </p>
-                  <h3 className="text-sm font-semibold text-neutral-900">
-                    {a.title}
-                  </h3>
+          initialAlerts.map((a) => {
+            const asoMeta = a.type === "aso_rank_improvement" ? parseAsoMeta(a.meta) : null;
+            const title =
+              asoMeta?.keywordTerm != null &&
+              asoMeta.fromRank != null &&
+              asoMeta.toRank != null
+                ? t("asoRankImprovement.title")
+                : a.title;
+            const body =
+              asoMeta?.keywordTerm != null &&
+              asoMeta.fromRank != null &&
+              asoMeta.toRank != null
+                ? t("asoRankImprovement.body", {
+                    keyword: asoMeta.keywordTerm,
+                    from: asoMeta.fromRank,
+                    to: asoMeta.toRank,
+                  })
+                : a.body;
+            return (
+              <li
+                key={a.id}
+                className={`rounded-2xl border px-4 py-4 shadow-sm ${
+                  a.read_at
+                    ? "border-neutral-100 bg-white"
+                    : "border-indigo-100 bg-indigo-50/40"
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                      {a.type.replace("_", " ")}
+                    </p>
+                    <h3 className="text-sm font-semibold text-neutral-900">{title}</h3>
+                  </div>
+                  <span className="text-xs text-neutral-500">
+                    {new Date(a.created_at).toLocaleString()}
+                  </span>
                 </div>
-                <span className="text-xs text-neutral-500">
-                  {new Date(a.created_at).toLocaleString()}
-                </span>
-              </div>
-              <p className="mt-2 text-sm text-neutral-700">{a.body}</p>
-            </li>
-          ))
+                <p className="mt-2 text-sm text-neutral-700">{body}</p>
+              </li>
+            );
+          })
         )}
       </ul>
     </div>

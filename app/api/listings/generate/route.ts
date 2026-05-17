@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ZodError, z } from "zod";
 import { getClientIp } from "@/lib/client-ip";
 import { insertListingGeneration } from "@/lib/db/listing-generations";
+import { linkListingGenerationToTrackedKeywords } from "@/lib/keywords/link-listing-generation-to-keywords";
 import { generateListingWithGemini } from "@/lib/gemini/generate-listing";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import { resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
@@ -270,7 +271,7 @@ export async function POST(request: NextRequest) {
   ledgerId = debit.ledgerId;
 
   try {
-    const data = await generateListingWithGemini(listingInput);
+    const { data, asoScorePartial } = await generateListingWithGemini(listingInput);
     const persist = await insertListingGeneration(supabase, {
       input: listingInput,
       output: data,
@@ -282,6 +283,14 @@ export async function POST(request: NextRequest) {
       creditsLedgerId: ledgerId,
       appId: bodyAppId ?? null,
     });
+    if (persist.ok && bodyAppId) {
+      await linkListingGenerationToTrackedKeywords({
+        supabase,
+        workspaceId,
+        appId: bodyAppId,
+        listingGenerationId: persist.id,
+      });
+    }
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
@@ -303,6 +312,7 @@ export async function POST(request: NextRequest) {
         persisted: persist.ok,
         generationId: persist.ok ? persist.id : undefined,
         savedAt: persist.ok ? persist.createdAt : undefined,
+        asoScorePartial: asoScorePartial ? true : undefined,
       },
     });
   } catch (e) {

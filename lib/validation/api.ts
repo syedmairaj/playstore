@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { SERPER_MAX_COUNTRIES } from "@/lib/countries";
 import { PLAY_STORE_CATEGORIES } from "@/lib/play-categories";
+import { snapshotRankEntrySchema } from "@/lib/validation/keyword-serper-save-body";
 
 /** Reverse-DNS Android application id (Play / Gradle style). */
 export const ANDROID_PACKAGE_NAME_REGEX =
@@ -52,12 +54,36 @@ export const createWorkspaceSchema = z.object({
   name: z.string().trim().min(2).max(80),
 });
 
-export const createKeywordSchema = z.object({
-  term: z.string().trim().min(2).max(120),
-  market: z.string().trim().min(2).max(8).optional(),
-  locale: z.string().trim().min(2).max(16).optional(),
-  appId: z.string().uuid().optional(),
-});
+export const createKeywordSchema = z
+  .object({
+    term: z.string().trim().min(2).max(120),
+    market: z.string().trim().min(2).max(8).optional(),
+    locale: z.string().trim().min(2).max(16).optional(),
+    appId: z.string().uuid().optional(),
+    /**
+     * Optional ranks from the last Serper preview (same shape as serper-save `snapshotRanks`).
+     * When present, server inserts `keyword_rank_snapshots` rows (`source = serper`) after the keyword row.
+     */
+    initialRanks: z.array(snapshotRankEntrySchema).max(SERPER_MAX_COUNTRIES).optional(),
+  })
+  .superRefine((val, ctx) => {
+    const ranks = val.initialRanks;
+    if (!ranks?.length) return;
+    const seen = new Set<string>();
+    for (let i = 0; i < ranks.length; i++) {
+      const c = String(ranks[i]?.country ?? "")
+        .trim()
+        .toLowerCase();
+      if (seen.has(c)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Duplicate initialRanks country.",
+          path: ["initialRanks", i, "country"],
+        });
+      }
+      seen.add(c);
+    }
+  });
 
 export const createRankSchema = z.object({
   rank: z.number().int().min(1).max(500).nullable(),
@@ -120,12 +146,29 @@ const patchAppIconUrlSchema = z.preprocess(
     .optional(),
 );
 
+/** HTTPS-only URLs for AI logo variants / selection (persisted under `apps.metadata.logoGenerator`). */
+const logoGenHttpsUrlSchema = z
+  .string()
+  .trim()
+  .max(2000)
+  .url({ message: "URL must be well-formed" })
+  .refine((u) => /^https:\/\//i.test(u), { message: "Logo URL must use HTTPS" });
+
+export const logoGeneratorMetadataPayloadSchema = z.object({
+  generatedUrls: z.array(logoGenHttpsUrlSchema).min(1).max(4),
+  selectedUrl: z.union([logoGenHttpsUrlSchema, z.null()]),
+  /** ISO timestamp for ordering vs client sessionStorage. */
+  updatedAt: z.string().trim().min(8).max(64),
+});
+
 export const patchAppSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   package_name: z.string().trim().max(200).nullable().optional(),
   play_store_url: z.string().trim().max(2000).nullable().optional(),
   target_countries: z.array(z.string().min(2).max(4)).max(40).optional(),
   icon_url: patchAppIconUrlSchema,
+  /** Merges into `apps.metadata.logoGenerator`; `null` removes the key. */
+  logoGenerator: z.union([logoGeneratorMetadataPayloadSchema, z.null()]).optional(),
 });
 
 export const inviteMemberSchema = z.object({

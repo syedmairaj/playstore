@@ -1,17 +1,8 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { creditsForAiListingKeywordAdds } from "@/lib/keywords/keyword-track-ai-pricing";
-import {
-  buildInsufficientAiCreditsPayload,
-  consumeWorkspaceAiCredits,
-  readWorkspaceAiCreditsRemaining,
-  refundWorkspaceAiCredits,
-} from "@/lib/features";
 import { createClient } from "@/lib/supabase/server";
 import { keywordsBulkBodySchema } from "@/lib/validation/keywords-bulk-body";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
-
-const ROUTE = "POST /api/workspaces/[workspaceId]/keywords/bulk";
 
 type Ctx = { params: Promise<{ workspaceId: string }> };
 
@@ -166,78 +157,6 @@ export async function POST(request: Request, context: Ctx) {
     });
   }
 
-  const { count: alreadyFromGen, error: countErr } = await supabase
-    .from("keywords")
-    .select("*", { count: "exact", head: true })
-    .eq("workspace_id", workspaceId)
-    .eq("listing_generation_id", listingGenerationId);
-
-  if (countErr) {
-    return NextResponse.json(
-      { ok: false, error: { code: "query_error", message: countErr.message } },
-      { status: 500 },
-    );
-  }
-
-  const creditCost = creditsForAiListingKeywordAdds(
-    pending.length,
-    alreadyFromGen ?? 0,
-  );
-
-  let ledgerId: string | null = null;
-  let creditsRemainingAfter: number | undefined;
-  if (creditCost > 0) {
-    const balancePre = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
-    if (!balancePre.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: { code: "wallet_error", message: "Could not read AI credit balance." },
-        },
-        { status: 503 },
-      );
-    }
-    if (balancePre.remaining < creditCost) {
-      return NextResponse.json(
-        buildInsufficientAiCreditsPayload(creditCost, balancePre.remaining),
-        { status: 402 },
-      );
-    }
-
-    const debit = await consumeWorkspaceAiCredits(supabase, {
-      workspaceId,
-      userId: user.id,
-      amount: creditCost,
-      description: `Track ${pending.length} AI listing keyword(s) in Keyword Tracker`,
-      sourceType: "generation",
-      meta: {
-        route: ROUTE,
-        listing_generation_id: listingGenerationId,
-        app_id: appId,
-        pending_count: pending.length,
-        free_allowance: true,
-      },
-    });
-
-    if (!debit.ok) {
-      if (debit.code === "insufficient_credits") {
-        return NextResponse.json(
-          buildInsufficientAiCreditsPayload(
-            creditCost,
-            debit.remaining ?? 0,
-          ),
-          { status: 402 },
-        );
-      }
-      return NextResponse.json(
-        { ok: false, error: { code: "wallet_error", message: "Could not debit AI credits." } },
-        { status: 503 },
-      );
-    }
-    ledgerId = debit.ledgerId;
-    creditsRemainingAfter = debit.balanceAfter;
-  }
-
   const added: { id: string; term: string }[] = [];
 
   try {
@@ -270,13 +189,6 @@ export async function POST(request: Request, context: Ctx) {
       added.push({ id: keyword.id as string, term: keyword.term as string });
     }
   } catch (e) {
-    if (ledgerId) {
-      await refundWorkspaceAiCredits(supabase, {
-        ledgerId,
-        userId: user.id,
-        reason: "Keyword bulk insert failed after debit",
-      });
-    }
     const msg = e instanceof Error ? e.message : "Insert failed";
     return NextResponse.json(
       { ok: false, error: { code: "insert_error", message: msg } },
@@ -284,23 +196,10 @@ export async function POST(request: Request, context: Ctx) {
     );
   }
 
-  if (ledgerId && added.length === 0) {
-    await refundWorkspaceAiCredits(supabase, {
-      ledgerId,
-      userId: user.id,
-      reason: "No keywords inserted after debit",
-    });
-    creditsRemainingAfter = undefined;
-  }
-
   return NextResponse.json({
     ok: true,
     added,
     skippedDuplicates,
-    creditsCharged: added.length > 0 ? creditCost : 0,
-    creditsRemaining:
-      added.length > 0 && typeof creditsRemainingAfter === "number"
-        ? creditsRemainingAfter
-        : undefined,
+    creditsCharged: 0,
   });
 }

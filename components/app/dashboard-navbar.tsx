@@ -19,6 +19,8 @@ import { cn } from "@/lib/utils";
 type Props = {
   workspaceId: string;
   workspaceName: string;
+  /** Normalized billing plan (`free` | `pro` | `growth`). */
+  workspacePlan: string;
   workspaces: { id: string; name: string }[];
   creditsRemaining: number;
   creditsAllocation: number;
@@ -31,6 +33,7 @@ type Props = {
 export function DashboardNavbar({
   workspaceId,
   workspaceName,
+  workspacePlan,
   workspaces,
   creditsRemaining,
   creditsAllocation,
@@ -79,6 +82,7 @@ export function DashboardNavbar({
           balance={creditsRemaining}
           monthlyAllocation={creditsAllocation}
           workspaceId={workspaceId}
+          workspacePlan={workspacePlan}
           className="border-white/[0.1] bg-white/[0.05] text-white [&_.text-muted-foreground]:text-white/50"
         />
         {/*
