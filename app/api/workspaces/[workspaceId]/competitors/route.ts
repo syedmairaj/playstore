@@ -130,10 +130,63 @@ export async function POST(request: Request, context: Ctx) {
   try {
     const parsed = saveCompetitorAnalysisBodySchema.parse(body);
     const pkg = parsed.packageId.trim().toLowerCase();
+
+    // ── Preserve custom rows across re-analysis ─────────────────────────────
+    // When a competitor is re-analyzed the incoming shared[] only contains
+    // auto-detected overlap rows.  Any manually-added entries (isCustom: true)
+    // that were previously merged by the custom-keyword route must be carried
+    // forward so they survive upsert.
+    type RawSharedRow = Record<string, unknown>;
+    let incomingShared: RawSharedRow[] = Array.isArray(parsed.analysis.shared)
+      ? (parsed.analysis.shared as RawSharedRow[])
+      : [];
+
+    try {
+      const { data: existingRow } = await supabase
+        .from(COMPETITOR_ANALYSES_TABLE)
+        .select("analysis_json")
+        .eq("workspace_id", workspaceId)
+        .eq("competitor_package_id", pkg)
+        .maybeSingle();
+
+      if (existingRow?.analysis_json) {
+        const existingJson = existingRow.analysis_json as Record<string, unknown>;
+        const existingShared: RawSharedRow[] = Array.isArray(existingJson.shared)
+          ? (existingJson.shared as RawSharedRow[])
+          : [];
+
+        // Collect isCustom rows from the existing DB record.
+        const customRows = existingShared.filter((s) => s.isCustom === true);
+
+        if (customRows.length > 0) {
+          // Build a dedup set from the incoming automated rows (keyword+country key).
+          const incomingKeys = new Set(
+            incomingShared.map(
+              (s) =>
+                `${String(s.keyword ?? "").trim().toLowerCase()}|${String(s.country ?? "").trim().toLowerCase()}`,
+            ),
+          );
+          // Append only custom rows that don't collide with an incoming automated row.
+          const safeCustom = customRows.filter(
+            (s) =>
+              !incomingKeys.has(
+                `${String(s.keyword ?? "").trim().toLowerCase()}|${String(s.country ?? "").trim().toLowerCase()}`,
+              ),
+          );
+          incomingShared = [...incomingShared, ...safeCustom];
+        }
+      }
+    } catch {
+      // Non-fatal — proceed with the incoming shared as-is.
+      console.warn(
+        `[api/workspaces/${workspaceId}/competitors] POST: could not read existing row for custom-row preservation`,
+      );
+    }
+
     const analysisJson = {
       query: parsed.analysis.query,
       topKeywords: parsed.analysis.topKeywords,
-      shared: parsed.analysis.shared,
+      shared: incomingShared,
       quickWinPlans: parsed.analysis.quickWinPlans,
       quickWinTerms: parsed.analysis.quickWinTerms,
       gaps: parsed.analysis.gaps,

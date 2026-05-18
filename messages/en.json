@@ -402,8 +402,10 @@
       "rankNotInTopDetailTooltip": "Your app \"{appName}\" is not yet ranking in the top results for this term. Use the AI Listing Optimizer to improve visibility.",
       "linkedApp": "App",
       "keyword": "Keyword",
+      "market": "Market",
       "currentRank": "Current rank",
-      "bestRank": "Best rank",
+      "competitorRank": "Competitor rank",
+      "bestRank": "Your rank",
       "trend": "Trend (7d)",
       "lastUpdated": "Last updated",
       "lastSync": "Last sync",
@@ -561,6 +563,14 @@
     "shared": {
       "title": "You vs {name} (shared keywords)",
       "subtitle": "Overlap terms where both apps appear — tighten copy where you trail.",
+      "explainer": {
+        "title": "🎯 How to action this data and rank higher",
+        "trailingLabel": "Trailing keywords (their rank beats yours)",
+        "trailingBody": "Click \"Send to AI Listing Optimizer\" to automatically restructure your description and metadata around these terms — directly challenging the competitor's stronger position.",
+        "leadingLabel": "Leading keywords (your rank beats theirs)",
+        "leadingBody": "These are your core traffic drivers. Lock them into your title, short description, and metadata to protect and compound your visibility lead.",
+        "cta": "Use the table below to identify each keyword's position, then act on every gap."
+      },
       "emptyTitle": "No shared keywords yet",
       "emptyBody": "Run analyze on this competitor to see overlap terms from live Play Store results.",
       "emptyAfterAnalyzeTitle": "No overlap in the top 20 yet",
@@ -569,17 +579,27 @@
       "emptyTerritoryBody": "No overlapping keyword metrics found for {competitor} in {country}. Insert manual target keywords using the input field below.",
       "loadingSkeleton": "Loading shared keywords…",
       "addKeyword": "Add keyword",
-      "addCustomKeyword": "+ Add Custom Keyword",
+      "addCustomKeyword": "Add Custom Keyword",
       "addKeywordPlaceholder": "Custom keyword…",
+      "addKeywordPlaceholderCountry": "Type custom keyword for {country}…",
       "addKeywordPrompt": "Add a keyword to your local tracking stack for this session:",
       "addKeywordError": "Enter at least 2 characters.",
+      "addKeywordSuccess": "\"{keyword}\" added — live ranks fetched.",
       "dismissAria": "Dismiss {keyword} from this view",
       "removeAria": "Remove {keyword}",
       "columns": {
-        "actions": "Actions"
+        "actions": "Actions",
+        "yourRankTooltip": "Your current position in this country's Google Play store. If you are unranked or 'Not Published', click 'Send to AI Listing Optimizer' to add this word to your store text and start getting traffic.",
+        "theirRankTooltip": "Where your competitor ranks. If they rank in the Top 10 (#1 to #10), they are getting huge downloads. Use these terms in your listing to challenge them and steal their market share.",
+        "autoTracking": "✓ Auto-Tracking"
       },
       "noSharedTitle": "No shared keywords found yet.",
-      "noSharedBody": "This means you and your competitor aren't indexing for the same terms in this market. Try adding custom targets below!"
+      "noSharedBody": "This means you and your competitor aren't indexing for the same terms in this market. Try adding custom targets below!",
+      "customKeywordCreditsConfirm": {
+        "title": "Check live ranks for this keyword?",
+        "body": "Adding a custom keyword will check live search rankings for both you and your competitor in this territory. This costs 1 AI credit. Continue?",
+        "confirm": "Yes, use 1 credit"
+      }
     },
     "ranks": {
       "notInTop": "20+",

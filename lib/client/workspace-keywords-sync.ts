@@ -5,6 +5,8 @@ export type WorkspaceKeywordsChangedDetail = {
   workspaceId: string;
   /** Lowercased terms removed from the watchlist (if known). */
   removedTerms?: string[];
+  /** Terms newly added to the watchlist (original casing). */
+  addedTerms?: string[];
 };
 
 export function dispatchWorkspaceKeywordsChanged(

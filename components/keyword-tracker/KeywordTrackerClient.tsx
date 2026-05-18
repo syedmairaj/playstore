@@ -17,6 +17,12 @@ import {
   filterKeywordsBySearch,
   keywordRowMatchesCountryFilter,
 } from "@/components/keyword-tracker/keyword-watchlist-filter";
+import {
+  flattenKeywordsToRows,
+  filterFlatRowsByMarket,
+  filterFlatRowsBySearch,
+  type FlatKeywordRow,
+} from "@/lib/keywords/flatten-keyword-rows";
 import { KeywordWatchlistTable } from "@/components/keyword-tracker/keyword-watchlist-table";
 import { KeywordWatchlistToolbar } from "@/components/keyword-tracker/keyword-watchlist-toolbar";
 import { Input } from "@/components/ui/input";
@@ -95,6 +101,7 @@ export function KeywordTrackerClient({
   const [saveSerperPending, setSaveSerperPending] = useState(false);
   const [saveKeywordModalOpen, setSaveKeywordModalOpen] = useState(false);
   const [serperRowRefreshId, setSerperRowRefreshId] = useState<string | null>(null);
+  const [competitorRankByTerm, setCompetitorRankByTerm] = useState<ReadonlyMap<string, number> | undefined>(undefined);
   // Live Play Store preview state. Default to the Arabic-first market when the
   const isRtl = locale === "ar";
   // user's locale is Arabic so previews feel relevant out of the box.
@@ -303,6 +310,43 @@ export function KeywordTrackerClient({
     };
   }, [workspaceId]);
 
+  // Fetch first competitor's shared rows to populate Competitor Rank column
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/competitors`, {
+          credentials: "include",
+        });
+        if (!res.ok || cancelled) return;
+        const json = (await res.json()) as {
+          ok?: boolean;
+          competitors?: { shared?: { keyword: string; theirRank: number }[] }[];
+        };
+        if (cancelled || !json.ok || !Array.isArray(json.competitors) || json.competitors.length === 0) return;
+        const first = json.competitors[0];
+        if (!first?.shared) return;
+        const map = new Map<string, number>();
+        for (const row of first.shared) {
+          if (typeof row.keyword === "string" && typeof row.theirRank === "number") {
+            const key = row.keyword.trim().toLowerCase();
+            // Keep the best (lowest) rank if the same term appears multiple times
+            const existing = map.get(key);
+            if (existing == null || row.theirRank < existing) {
+              map.set(key, row.theirRank);
+            }
+          }
+        }
+        if (!cancelled) setCompetitorRankByTerm(map.size > 0 ? map : undefined);
+      } catch {
+        /* ignore — competitor rank column is best-effort */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
   const clearSerperPreviewPersistence = useCallback(() => {
     clearKeywordTrackerPreviewSession(workspaceId);
     void fetch(`/api/workspaces/${workspaceId}/keywords/serper-preview-draft`, {
@@ -365,22 +409,30 @@ export function KeywordTrackerClient({
     [tCountrySel],
   );
 
+  // ── Keyword rows filtered by app ──────────────────────────────────────────
   const appFilteredRows = useMemo(() => {
     if (filterAppId === "all") return rows;
     return rows.filter((r) => r.app_id === filterAppId);
   }, [rows, filterAppId]);
 
-  const searchFilteredRows = useMemo(
-    () => filterKeywordsBySearch(appFilteredRows, tableSearch, appNameById),
-    [appFilteredRows, tableSearch, appNameById],
+  // ── Flatten: one FlatKeywordRow per (keyword × country) ───────────────────
+  // This is the data shape the table consumes. Each row has a single country,
+  // a single yourRank, and a single competitorRank — no multi-badge merging.
+  const flatRows = useMemo(
+    () => flattenKeywordsToRows(appFilteredRows),
+    [appFilteredRows],
   );
 
+  // ── Search filter operates on flat rows ───────────────────────────────────
+  const searchFilteredFlatRows = useMemo(
+    () => filterFlatRowsBySearch(flatRows, tableSearch, appNameById),
+    [flatRows, tableSearch, appNameById],
+  );
+
+  // ── Market chip filter: exact country match on flat row ───────────────────
   const countryFilteredRows = useMemo(
-    () =>
-      searchFilteredRows.filter((row) =>
-        keywordRowMatchesCountryFilter(row, marketFilter),
-      ),
-    [searchFilteredRows, marketFilter],
+    () => filterFlatRowsByMarket(searchFilteredFlatRows, marketFilter),
+    [searchFilteredFlatRows, marketFilter],
   );
 
   const watchlistPageCount = Math.max(
@@ -414,8 +466,14 @@ export function KeywordTrackerClient({
 
   const onExportWatchlistCsv = useCallback(() => {
     if (countryFilteredRows.length === 0) return;
+    // Deduplicate source keyword rows for CSV (the CSV builder works on KeywordWithRanks[])
+    const seen = new Set<string>();
+    const sourceRows = countryFilteredRows.reduce<typeof appFilteredRows>((acc, fr) => {
+      if (!seen.has(fr.source.id)) { seen.add(fr.source.id); acc.push(fr.source); }
+      return acc;
+    }, []);
     const csv = buildKeywordWatchlistCsv({
-      rows: countryFilteredRows,
+      rows: sourceRows,
       appNameById,
       rankFmt: { notInTop: t("table.rankNotInTop") },
       countryLabels: countryLabelsForExport,
@@ -436,6 +494,7 @@ export function KeywordTrackerClient({
     toast.success(t("table.exportCsvSuccess"));
   }, [
     countryFilteredRows,
+    appFilteredRows,
     appNameById,
     countryLabelsForExport,
     locale,
@@ -1246,7 +1305,6 @@ export function KeywordTrackerClient({
                   onPageChange={setWatchlistPage}
                   onPageSizeChange={setWatchlistPageSize}
                   appNameById={appNameById}
-                  appRowById={appRowById}
                   filterAppId={filterAppId}
                   showSkeleton={showWatchlistSkeleton}
                   blockingError={blockingError}
@@ -1256,6 +1314,7 @@ export function KeywordTrackerClient({
                   onHistory={setHistoryFor}
                   onDelete={(id) => void onDelete(id)}
                   onSerperRefresh={(id) => void onSerperRefreshRow(id)}
+                  competitorRankByTerm={competitorRankByTerm}
                 />
               )}
             </>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crosshair, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
@@ -69,10 +69,25 @@ import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import type { WorkspaceAppListRow } from "@/lib/workspace/workspace-apps-list";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 
 const STORAGE_COMPETITORS = "playstore:competitorSpy:competitors";
 const STORAGE_TRACKED = "playstore:competitorSpy:tracked";
 const STORAGE_PREVIEWS = "playstore:competitorSpy:previews";
+
+/**
+ * Converts a lowercase ISO country code to a flag emoji + uppercase code badge label.
+ * Uses regional indicator Unicode codepoints — supported in all modern browsers/OSes.
+ * Example: "us" → "🇺🇸 US", "in" → "🇮🇳 IN", "sa" → "🇸🇦 SA"
+ */
+function countryBadgeLabel(code: string): string {
+  const upper = code.toUpperCase();
+  // Regional indicator symbols: A = 0x1F1E6, offset from 'A' charcode.
+  const flag = [...upper]
+    .map((c) => String.fromCodePoint(0x1f1e6 + c.charCodeAt(0) - 65))
+    .join("");
+  return `${flag} ${upper}`;
+}
 
 export type CompetitorSpyClientProps = {
   workspaceId: string;
@@ -88,7 +103,11 @@ type WorkspaceKeywordListRow = {
   term: string;
   latest?: { rank: number | null } | null;
   ranks?: { rank: number | null }[];
-  latestPerCountry?: unknown[];
+  /**
+   * Newest snapshot per country from the DB. Shape matches KeywordWithRanks.latestPerCountry.
+   * Used to pick the correct rank for the currently-active country tab.
+   */
+  latestPerCountry?: { country: string; rank: number; captured_at: string }[];
   lastSyncedAt?: string | null;
 };
 
@@ -299,6 +318,14 @@ export function CompetitorSpyClient({
     () => new Set(),
   );
   const [sessionKeywordStack, setSessionKeywordStack] = useState<string[]>([]);
+  /** Live custom rows appended via the credit-gated API call. Replaces session-only stack. */
+  const [liveCustomRows, setLiveCustomRows] = useState<
+    (StoredCompetitorSharedRow & { isCustom: true; hasLiveRanks: boolean; country: string })[]
+  >([]);
+  /** Keyword draft queued for the custom-keyword credit confirmation dialog. */
+  const [customKwConfirmDraft, setCustomKwConfirmDraft] = useState<string | null>(null);
+  /** Whether the custom keyword API call is currently in-flight. */
+  const [customKwPending, setCustomKwPending] = useState(false);
   const [customKeywordDraft, setCustomKeywordDraft] = useState("");
   const [selectedCountries, setSelectedCountriesRaw] = useState<SupportedCountryCode[]>(
     () => [defaultMarket],
@@ -434,7 +461,7 @@ export function CompetitorSpyClient({
     };
   }, []);
 
-  const refreshTrackedKeywordHints = useCallback(async () => {
+  const refreshTrackedKeywordHints = useCallback(async (forCountry?: string) => {
     if (!keywordTrackerEnabled) {
       setTrackedKeywordHints([]);
       return;
@@ -453,13 +480,24 @@ export function CompetitorSpyClient({
         keywords?: WorkspaceKeywordListRow[];
       };
       if (!res.ok || !json.ok || !Array.isArray(json.keywords)) return;
+
+      // Pick the most accurate rank for the active country tab:
+      // 1. If latestPerCountry has an entry for forCountry, use it.
+      // 2. Otherwise fall back to the headline latest rank.
+      const targetCountry = (forCountry ?? activeCountry).toLowerCase();
       const hints = json.keywords
-        .map((k) => ({
-          term: String(k.term ?? "").trim(),
-          yourRank: k.latest?.rank ?? null,
-        }))
-        .filter((k) => k.term.length >= 2)
+        .map((k) => {
+          const term = String(k.term ?? "").trim();
+          if (term.length < 2) return null;
+          const countryHit = k.latestPerCountry?.find(
+            (p) => String(p.country ?? "").toLowerCase() === targetCountry,
+          );
+          const yourRank = countryHit != null ? countryHit.rank : (k.latest?.rank ?? null);
+          return { term, yourRank };
+        })
+        .filter((h): h is { term: string; yourRank: number | null } => h !== null)
         .slice(0, 40);
+
       setTrackedKeywordHints(hints);
       // Replace trackedTerms entirely with the live DB result so stale
       // sessionStorage entries never resurface deleted keywords.
@@ -467,7 +505,7 @@ export function CompetitorSpyClient({
     } catch {
       setTrackedKeywordHints([]);
     }
-  }, [apps, keywordTrackerEnabled, targetAppId, workspaceId]);
+  }, [activeCountry, apps, keywordTrackerEnabled, targetAppId, workspaceId]);
 
   useEffect(() => {
     function onKeywordsChanged(e: Event) {
@@ -668,6 +706,15 @@ export function CompetitorSpyClient({
     void refreshTrackedKeywordHints();
   }, [refreshTrackedKeywordHints, targetAppId]);
 
+  // Re-hydrate hints when the country tab changes so "Your Rank" values and the
+  // Auto-Tracking badge reflect the correct per-country snapshot immediately.
+  useEffect(() => {
+    void refreshTrackedKeywordHints(activeCountry);
+  // refreshTrackedKeywordHints already captures activeCountry via closure, but
+  // listing it explicitly ensures the effect fires whenever the tab switches.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCountry]);
+
   /**
    * Optimistic retry: if we finish the initial DB load and the selected competitor has
    * no shared-keyword rows and no live rank data, poll every 3 seconds (up to 4 attempts)
@@ -778,6 +825,14 @@ export function CompetitorSpyClient({
     });
   }, [selectedCountries]);
 
+  // Clear the custom keyword draft whenever the active country tab changes so the
+  // user starts fresh for the new market and doesn't accidentally submit a
+  // keyword against the wrong country.
+  useEffect(() => {
+    setCustomKeywordDraft("");
+    setCustomKwConfirmDraft(null);
+  }, [activeCountry]);
+
   useEffect(() => {
     if (!hydrated) return;
     if (competitors.length === 0) {
@@ -878,14 +933,46 @@ export function CompetitorSpyClient({
     [activeCompetitor, countryInsights],
   );
 
-  const sharedRows = useMemo((): (StoredCompetitorSharedRow & { isCustom?: boolean })[] => {
+  const sharedRows = useMemo((): (StoredCompetitorSharedRow & { isCustom?: boolean; hasLiveRanks?: boolean })[] => {
     if (!activeCompetitor) return [];
     const base = previewResults?.length ? countryOverlapShared : activeCompetitor.shared;
-    const automated = filterSharedRowsBothSidesTracked(base).filter(
+
+    // Automated rows come from the live preview path (countryOverlapShared) or the
+    // DB snapshot — whichever is active.  Custom rows ALWAYS come from
+    // activeCompetitor.shared directly, because countryOverlapShared is rebuilt from
+    // Serper results which never contain custom entries, so they would be lost when
+    // previewResults is present.
+    const baseAutomated = base.filter((r) => !r.isCustom);
+    const baseCustom = activeCompetitor.shared.filter((r) => r.isCustom === true);
+
+    const automated = filterSharedRowsBothSidesTracked(baseAutomated).filter(
       (row) => !dismissedSharedKeywords.has(row.keyword.trim().toLowerCase()),
     );
     const seen = new Set(automated.map((r) => r.keyword.trim().toLowerCase()));
-    const custom: (StoredCompetitorSharedRow & { isCustom: boolean })[] = [];
+
+    // Append DB-persisted custom rows (survive F5), not filtered by rank.
+    // Strict country filter: only show rows whose country matches the active tab.
+    const custom: (StoredCompetitorSharedRow & { isCustom: true; hasLiveRanks: boolean })[] = [];
+    const activeCountryKey = activeCountry.toLowerCase();
+    for (const dbRow of baseCustom) {
+      // If the row carries a country tag, only show it for the matching tab.
+      if (dbRow.country && dbRow.country.toLowerCase() !== activeCountryKey) continue;
+      const key = dbRow.keyword.trim().toLowerCase();
+      if (seen.has(key) || dismissedSharedKeywords.has(key)) continue;
+      seen.add(key);
+      custom.push({ ...dbRow, isCustom: true, hasLiveRanks: true });
+    }
+
+    // Live custom rows added this session — filter strictly by active country tab.
+    for (const liveRow of liveCustomRows) {
+      if (liveRow.country.toLowerCase() !== activeCountryKey) continue;
+      const key = liveRow.keyword.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      custom.push(liveRow);
+    }
+
+    // Legacy session keyword stack (plain strings without live ranks).
     for (const kw of sessionKeywordStack) {
       const trimmed = kw.trim();
       const key = trimmed.toLowerCase();
@@ -896,16 +983,50 @@ export function CompetitorSpyClient({
         yourRank: null,
         theirRank: 0,
         isCustom: true,
+        hasLiveRanks: false,
       });
     }
-    return [...automated, ...custom];
+    // ── Single source of truth for "Your Rank" ─────────────────────────────
+    // Patch yourRank on every row (automated + custom) from trackedKeywordHints
+    // for the active country.  This ensures the Overlap table always shows the
+    // same rank the Keyword Tracker shows for that term + country, eliminating
+    // any stale DB snapshot or Serper-preview mismatch.
+    const hintMap = new Map<string, number | null>();
+    for (const h of trackedKeywordHints) {
+      hintMap.set(h.term.trim().toLowerCase(), h.yourRank);
+    }
+
+    const patchRank = (
+      row: StoredCompetitorSharedRow & { isCustom?: boolean; hasLiveRanks?: boolean },
+    ) => {
+      const k = row.keyword.trim().toLowerCase();
+      if (hintMap.has(k)) return { ...row, yourRank: hintMap.get(k) ?? null };
+      return row;
+    };
+
+    const all = [...automated.map(patchRank), ...custom.map(patchRank)];
+
+    // ── Sort by competitor rank significance ────────────────────────────────
+    // Rows with a real rank (< SERPER_RANK_NOT_IN_FIRST_PAGE = 101) float to the
+    // top in ascending order (#1 before #2 before #15).  Unranked / sentinel rows
+    // (theirRank >= 101 or null) sink to the bottom.
+    const UNRANKED_SENTINEL = 101; // SERPER_RANK_NOT_IN_FIRST_PAGE
+    all.sort((a, b) => {
+      const ra = typeof a.theirRank === "number" && a.theirRank < UNRANKED_SENTINEL ? a.theirRank : Infinity;
+      const rb = typeof b.theirRank === "number" && b.theirRank < UNRANKED_SENTINEL ? b.theirRank : Infinity;
+      return ra - rb;
+    });
+
+    return all;
   }, [
     activeCompetitor,
     activeCountry,
     countryOverlapShared,
     dismissedSharedKeywords,
+    liveCustomRows,
     previewResults,
     sessionKeywordStack,
+    trackedKeywordHints,
   ]);
 
   const sharedEmptyTerritory = Boolean(
@@ -1024,16 +1145,77 @@ export function CompetitorSpyClient({
   );
 
   const removeSharedRow = useCallback(
-    (row: StoredCompetitorSharedRow & { isCustom?: boolean }) => {
+    (row: StoredCompetitorSharedRow & { isCustom?: boolean; hasLiveRanks?: boolean }) => {
       const key = row.keyword.trim().toLowerCase();
       if (!key) return;
+
       if (row.isCustom) {
+        const rowCountry = (row.country ?? activeCountry).toLowerCase();
+
+        // 1. Optimistically remove from all local state immediately.
+        setLiveCustomRows((prev) =>
+          prev.filter(
+            (r) =>
+              !(r.keyword.trim().toLowerCase() === key && r.country.toLowerCase() === rowCountry),
+          ),
+        );
         setSessionKeywordStack((prev) => prev.filter((x) => x.toLowerCase() !== key));
+
+        // 2. Remove from competitors state so the row disappears from activeCompetitor.shared.
+        setCompetitors((prev) =>
+          prev.map((c) =>
+            c.id === activeCompetitor?.id
+              ? {
+                  ...c,
+                  shared: c.shared.filter(
+                    (s) =>
+                      !(
+                        s.isCustom === true &&
+                        s.keyword.trim().toLowerCase() === key &&
+                        (s.country ?? "").toLowerCase() === rowCountry
+                      ),
+                  ),
+                }
+              : c,
+          ),
+        );
+
+        // 3. Dispatch removal so trackedTermKeys and Auto-Tracking badge update instantly.
+        setTrackedTerms((prev) => prev.filter((t) => t.toLowerCase() !== key));
+        setTrackedKeywordHints((prev) => prev.filter((h) => h.term.toLowerCase() !== key));
+        window.dispatchEvent(
+          new CustomEvent<WorkspaceKeywordsChangedDetail>(WORKSPACE_KEYWORDS_CHANGED_EVENT, {
+            detail: { workspaceId, removedTerms: [row.keyword.trim()] },
+          }),
+        );
+
+        // 4. Server-side cascade: prune analysis_json.shared + delete from keywords table.
+        const appId = targetAppId || apps[0]?.id;
+        const competitorPackageId = activeCompetitor?.packageId;
+        if (appId && competitorPackageId) {
+          void fetch(
+            `/api/workspaces/${workspaceId}/competitors/custom-keyword`,
+            {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                appId,
+                competitorPackageId,
+                keyword: row.keyword.trim(),
+                country: rowCountry,
+              }),
+            },
+          ).catch((e) => {
+            console.error("[removeSharedRow] cascade DELETE failed:", e);
+          });
+        }
         return;
       }
+
+      // Non-custom rows: just hide locally (no DB record to remove).
       setDismissedSharedKeywords((prev) => new Set([...prev, key]));
     },
-    [],
+    [activeCompetitor, activeCountry, apps, targetAppId, workspaceId],
   );
 
   const addCustomKeywordToStack = useCallback(() => {
@@ -1042,12 +1224,102 @@ export function CompetitorSpyClient({
       toast.error(tShared("addKeywordError"));
       return;
     }
-    const key = trimmed.toLowerCase();
-    setSessionKeywordStack((prev) =>
-      prev.some((x) => x.toLowerCase() === key) ? prev : [...prev, trimmed],
-    );
-    setCustomKeywordDraft("");
+    // Intercept — show credit confirmation before making the live API call.
+    setCustomKwConfirmDraft(trimmed);
   }, [customKeywordDraft, tShared]);
+
+  const executeCustomKeywordLive = useCallback(async (keyword: string) => {
+    const trimmed = keyword.trim();
+    if (trimmed.length < 2) return;
+    const appId = targetAppId || apps[0]?.id;
+    const competitorPackageId = activeCompetitor?.packageId;
+    if (!appId || !competitorPackageId) {
+      toast.error(tShared("addKeywordError"));
+      return;
+    }
+    setCustomKwPending(true);
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/competitors/custom-keyword`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            appId,
+            competitorPackageId,
+            keyword: trimmed,
+            country: activeCountry,
+          }),
+        },
+      );
+      const json = (await res.json()) as {
+        ok?: boolean;
+        yourRank?: number;
+        theirRank?: number;
+        keywordId?: string | null;
+        autoTracked?: boolean;
+        creditsRemaining?: number;
+        error?: { code?: string; message?: string };
+      };
+
+      if (!res.ok || !json.ok) {
+        toast.error(json.error?.message ?? tShared("addKeywordError"));
+        return;
+      }
+
+      const RANK_NOT_IN_PAGE = 101;
+      const yourRank = typeof json.yourRank === "number" ? json.yourRank : null;
+      const theirRank = typeof json.theirRank === "number" ? json.theirRank : RANK_NOT_IN_PAGE;
+      const key = trimmed.toLowerCase();
+
+      setLiveCustomRows((prev) =>
+        prev.some(
+          (r) =>
+            r.keyword.trim().toLowerCase() === key &&
+            r.country === activeCountry,
+        )
+          ? prev
+          : [
+              ...prev,
+              {
+                keyword: trimmed,
+                yourRank: yourRank === RANK_NOT_IN_PAGE ? null : yourRank,
+                theirRank,
+                isCustom: true,
+                hasLiveRanks: true,
+                country: activeCountry,
+              },
+            ],
+      );
+
+      // If the server confirmed auto-tracking, immediately reflect the term in the
+      // tracked sets so the "✓ Auto-Tracking" badge renders without waiting for a
+      // full API refresh, and notify any Keyword Tracker page that is open in the
+      // same tab via the shared event channel.
+      if (json.autoTracked) {
+        setTrackedTerms((prev) =>
+          prev.some((t) => t.toLowerCase() === key) ? prev : [...prev, trimmed],
+        );
+        setTrackedKeywordHints((prev) => {
+          const has = prev.some((h) => h.term.toLowerCase() === key);
+          if (has) return prev;
+          return [...prev, { term: trimmed, yourRank: yourRank === RANK_NOT_IN_PAGE ? null : yourRank }];
+        });
+        window.dispatchEvent(
+          new CustomEvent<WorkspaceKeywordsChangedDetail>(WORKSPACE_KEYWORDS_CHANGED_EVENT, {
+            detail: { workspaceId, addedTerms: [trimmed] },
+          }),
+        );
+      }
+
+      setCustomKeywordDraft("");
+      toast.success(tShared("addKeywordSuccess", { keyword: trimmed }));
+    } catch {
+      toast.error(tShared("addKeywordError"));
+    } finally {
+      setCustomKwPending(false);
+    }
+  }, [activeCompetitor?.packageId, activeCountry, apps, targetAppId, tShared, workspaceId]);
 
   const removeCompetitorLocal = useCallback((id: string) => {
     setCompetitors((prev) => {
@@ -1112,6 +1384,30 @@ export function CompetitorSpyClient({
     countries: SupportedCountryCode[],
   ) {
     try {
+      // Merge any live custom rows for this competitor into the shared payload so
+      // they are included in the POST body and survive the upsert.  The server also
+      // preserves isCustom rows from the existing DB record, so this is belt-and-
+      // suspenders: the client sends them explicitly and the server re-attaches any
+      // that the client might not yet know about (e.g. added from another tab).
+      const liveCustomForCompetitor = liveCustomRows.filter(
+        // liveCustomRows are keyed per workspace-session, not per competitor, so we
+        // can't filter by packageId here — include them all so nothing is lost.
+        () => true,
+      );
+      const seenInBase = new Set(
+        competitor.shared.map(
+          (s) =>
+            `${s.keyword.trim().toLowerCase()}|${(s.country ?? "").trim().toLowerCase()}`,
+        ),
+      );
+      const extraCustom = liveCustomForCompetitor.filter(
+        (r) =>
+          !seenInBase.has(
+            `${r.keyword.trim().toLowerCase()}|${r.country.trim().toLowerCase()}`,
+          ),
+      );
+      const sharedWithCustom = [...competitor.shared, ...extraCustom];
+
       const res = await fetch(`/api/workspaces/${workspaceId}/competitors`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1123,7 +1419,7 @@ export function CompetitorSpyClient({
           analysis: {
             query: competitor.query,
             topKeywords: competitor.topKeywords,
-            shared: competitor.shared,
+            shared: sharedWithCustom,
             quickWinPlans: competitor.quickWinPlans ?? [],
             quickWinTerms: competitor.quickWinTerms,
             gaps: competitor.gaps,
@@ -1270,14 +1566,52 @@ export function CompetitorSpyClient({
         return;
       }
 
-      const existingId = competitors.find((c) => c.packageId === built.packageId)?.id;
+      const existingCompetitor = competitors.find((c) => c.packageId === built.packageId);
+      const existingId = existingCompetitor?.id;
+
+      // ── Carry forward custom rows across re-analysis ────────────────────────
+      // built.shared contains only auto-detected Serper rows (CompetitorSpySharedRow,
+      // no country field); we must re-attach any isCustom rows so they are not lost
+      // when applyCompetitorAnalysisToUi replaces competitors state.
+      //
+      // Automated rows are keyed by keyword only (they have no country tag).
+      // Custom rows are keyed by keyword+country to allow the same term in multiple markets.
+      const automatedKeySet = new Set(
+        built.shared.map((s) => s.keyword.trim().toLowerCase()),
+      );
+      // Collect custom rows from the existing DB-loaded competitor record.
+      const existingCustom: StoredCompetitorSharedRow[] = (existingCompetitor?.shared ?? []).filter(
+        (s) => s.isCustom === true,
+      );
+      // Also collect any live custom rows added this session.
+      const sessionCustom: StoredCompetitorSharedRow[] = liveCustomRows.map((r) => ({
+        keyword: r.keyword,
+        yourRank: r.yourRank,
+        theirRank: r.theirRank,
+        isCustom: true as const,
+        country: r.country,
+      }));
+      // Merge, deduplicating: skip custom rows whose keyword collides with an
+      // automated row, and dedup custom rows against each other by keyword+country.
+      const customSeen = new Set<string>();
+      const carryForwardCustom: StoredCompetitorSharedRow[] = [];
+      for (const row of [...existingCustom, ...sessionCustom]) {
+        const kwLower = row.keyword.trim().toLowerCase();
+        if (automatedKeySet.has(kwLower)) continue; // automated row wins
+        const k = `${kwLower}|${(row.country ?? "").trim().toLowerCase()}`;
+        if (!customSeen.has(k)) {
+          customSeen.add(k);
+          carryForwardCustom.push(row);
+        }
+      }
+
       const next: StoredCompetitor = {
         id: existingId ?? `cmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         query: built.query,
         displayName: built.displayName,
         packageId: built.packageId,
         topKeywords: built.topKeywords,
-        shared: built.shared,
+        shared: [...built.shared, ...carryForwardCustom],
         quickWins: [],
         quickWinPlans: built.quickWinPlans,
         quickWinTerms: built.quickWinTerms,
@@ -1439,6 +1773,24 @@ export function CompetitorSpyClient({
           const term = trackCreditsConfirmTerm;
           setTrackCreditsConfirmTerm(null);
           if (term) void executeTrackKeyword(term);
+        }}
+      />
+
+      {/* 1-credit confirmation gate before adding a custom keyword (live rank check) */}
+      <CompetitorSpyCreditsConfirmDialog
+        open={customKwConfirmDraft !== null}
+        onOpenChange={(open) => {
+          if (!open) setCustomKwConfirmDraft(null);
+        }}
+        credits={AI_CREDIT_COSTS.serper_preview_per_country}
+        isRtl={isRtl}
+        titleOverride={tShared("customKeywordCreditsConfirm.title")}
+        bodyOverride={tShared("customKeywordCreditsConfirm.body")}
+        confirmOverride={tShared("customKeywordCreditsConfirm.confirm")}
+        onConfirm={() => {
+          const kw = customKwConfirmDraft;
+          setCustomKwConfirmDraft(null);
+          if (kw) void executeCustomKeywordLive(kw);
         }}
       />
 
@@ -1609,7 +1961,6 @@ export function CompetitorSpyClient({
                   >
                     {t("shared.title", { name: activeCompetitor.displayName })}
                   </h2>
-                  <p className="max-w-2xl text-sm text-zinc-400">{t("shared.subtitle")}</p>
                 </div>
                 <div
                   className={cn(
@@ -1626,9 +1977,10 @@ export function CompetitorSpyClient({
                         addCustomKeywordToStack();
                       }
                     }}
-                    placeholder={tShared("addKeywordPlaceholder")}
+                    placeholder={tShared("addKeywordPlaceholderCountry", { country: activeCountryLabel })}
                     className="h-9 flex-1 border-white/10 bg-[#070a0f] text-sm text-zinc-100 placeholder:text-zinc-500"
-                    aria-label={tShared("addKeywordPlaceholder")}
+                    aria-label={tShared("addKeywordPlaceholderCountry", { country: activeCountryLabel })}
+                    disabled={customKwPending}
                   />
                   <Button
                     type="button"
@@ -1636,12 +1988,84 @@ export function CompetitorSpyClient({
                     variant="outline"
                     className="shrink-0 border-white/10 text-zinc-200"
                     onClick={addCustomKeywordToStack}
+                    disabled={customKwPending}
                   >
-                    <Plus className="size-3.5" aria-hidden />
+                    {customKwPending ? (
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <Plus className="size-3.5" aria-hidden />
+                    )}
                     {tShared("addCustomKeyword")}
                   </Button>
                 </div>
               </div>
+
+              {/* ── Explainer banner ──────────────────────────────────────────── */}
+              <div
+                className={cn(
+                  "rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-4 sm:px-5",
+                  isRtl && "font-arabic",
+                )}
+                dir={gridDir}
+              >
+                <p
+                  className={cn(
+                    "mb-3 text-sm font-semibold text-emerald-300",
+                    isRtl ? "text-end" : "text-start",
+                  )}
+                >
+                  {tShared("explainer.title")}
+                </p>
+                <div className="space-y-3">
+                  {/* Trailing keywords step */}
+                  <div
+                    className={cn(
+                      "flex gap-3",
+                      isRtl ? "flex-row-reverse" : "flex-row",
+                    )}
+                  >
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-[10px] font-bold text-rose-300">
+                      1
+                    </span>
+                    <div className={cn("space-y-0.5", isRtl ? "text-end" : "text-start")}>
+                      <p className="text-xs font-semibold text-rose-300">
+                        {tShared("explainer.trailingLabel")}
+                      </p>
+                      <p className="text-xs leading-relaxed text-zinc-400">
+                        {tShared("explainer.trailingBody")}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Leading keywords step */}
+                  <div
+                    className={cn(
+                      "flex gap-3",
+                      isRtl ? "flex-row-reverse" : "flex-row",
+                    )}
+                  >
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-[10px] font-bold text-emerald-300">
+                      2
+                    </span>
+                    <div className={cn("space-y-0.5", isRtl ? "text-end" : "text-start")}>
+                      <p className="text-xs font-semibold text-emerald-300">
+                        {tShared("explainer.leadingLabel")}
+                      </p>
+                      <p className="text-xs leading-relaxed text-zinc-400">
+                        {tShared("explainer.leadingBody")}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p
+                  className={cn(
+                    "mt-3 text-[11px] leading-relaxed text-zinc-500",
+                    isRtl ? "text-end" : "text-start",
+                  )}
+                >
+                  {tShared("explainer.cta")}
+                </p>
+              </div>
+
               {(dbLoadPending || previewPending || optimisticRetryPending) && !previewResults ? (
                 <SharedKeywordsTableSkeletonBody
                   isRtl={isRtl}
@@ -1649,6 +2073,7 @@ export function CompetitorSpyClient({
                   syncingMessage={optimisticRetryPending ? "Syncing live search visibility matrices across regional markets..." : undefined}
                 />
               ) : (
+              <TooltipProvider>
               <div
                 className={cn(
                   "overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0c1018]",
@@ -1657,13 +2082,51 @@ export function CompetitorSpyClient({
                 dir={gridDir}
               >
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[320px] border-collapse text-start text-sm">
+                  <table className="w-full min-w-[320px] table-fixed border-collapse text-start text-sm">
+                    <colgroup>
+                      <col className="w-1/3" />
+                      <col className="w-1/4" />
+                      <col className="w-1/4" />
+                      <col className="w-12" />
+                    </colgroup>
                     <thead className="border-b border-white/[0.06] bg-[#070a0f] text-xs text-zinc-500">
                       <tr>
-                        <th className="px-4 py-3 font-medium">{t("gap.columns.keyword")}</th>
-                        <th className="px-4 py-3 font-medium">{t("myCompetitors.yourRank")}</th>
-                        <th className="px-4 py-3 font-medium">{t("myCompetitors.theirRank")}</th>
-                        <th className="px-4 py-3 text-end font-medium">{tShared("columns.actions")}</th>
+                        <th className="px-4 py-3 text-start font-medium">{t("gap.columns.keyword")}</th>
+                        <th className="px-4 py-3 text-center font-medium">
+                          <span className="inline-flex items-center justify-center gap-1">
+                            {t("myCompetitors.yourRank")}
+                            <Tooltip
+                              content={tShared("columns.yourRankTooltip")}
+                              side="top"
+                            >
+                              <button
+                                type="button"
+                                className="cursor-default rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+                                aria-label={tShared("columns.yourRankTooltip")}
+                              >
+                                <Info className="size-3 text-zinc-500 hover:text-zinc-300 transition-colors" aria-hidden />
+                              </button>
+                            </Tooltip>
+                          </span>
+                        </th>
+                        <th className="px-4 py-3 text-center font-medium">
+                          <span className="inline-flex items-center justify-center gap-1">
+                            {t("myCompetitors.theirRank")}
+                            <Tooltip
+                              content={tShared("columns.theirRankTooltip")}
+                              side="top"
+                            >
+                              <button
+                                type="button"
+                                className="cursor-default rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+                                aria-label={tShared("columns.theirRankTooltip")}
+                              >
+                                <Info className="size-3 text-zinc-500 hover:text-zinc-300 transition-colors" aria-hidden />
+                              </button>
+                            </Tooltip>
+                          </span>
+                        </th>
+                        <th className="w-12 px-4 py-3 text-end font-medium">{tShared("columns.actions")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1704,44 +2167,67 @@ export function CompetitorSpyClient({
                             key={row.keyword}
                             className="border-b border-white/[0.04] transition-colors last:border-0 hover:bg-white/[0.02]"
                           >
-                            <td className="px-4 py-3 text-zinc-200">{row.keyword}</td>
-                            <td className="px-4 py-3 text-zinc-400">
-                              {row.isCustom ? (
-                                <span className="text-zinc-500">—</span>
+                            <td className="overflow-hidden px-4 py-3 text-start text-zinc-200">
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate">{row.keyword}</span>
+                                {row.isCustom && row.country ? (
+                                  <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-medium text-[10px] text-zinc-400">
+                                    {countryBadgeLabel(row.country)}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-zinc-400">
+                              {row.isCustom && !row.hasLiveRanks ? (
+                                <span className="inline-flex items-center justify-center rounded-md border border-white/[0.06] bg-white/[0.04] px-2 py-0.5 text-xs text-zinc-500">
+                                  —
+                                </span>
                               ) : (
-                                <RankDisplay
-                                  rank={row.yourRank}
-                                  labels={rankLabels}
-                                  context={{
-                                    column: "yours",
-                                    workspaceAppLive: workspaceAppPlayLive,
-                                  }}
-                                />
+                                <span className="inline-flex justify-center">
+                                  <RankDisplay
+                                    rank={row.yourRank}
+                                    labels={rankLabels}
+                                    context={{
+                                      column: "yours",
+                                      workspaceAppLive: workspaceAppPlayLive,
+                                    }}
+                                  />
+                                </span>
                               )}
                             </td>
-                            <td className="px-4 py-3 font-medium text-emerald-300/90">
-                              {row.isCustom ? (
-                                <span className="text-zinc-500">—</span>
+                            <td className="px-4 py-3 text-center font-medium text-emerald-300/90">
+                              {row.isCustom && !row.hasLiveRanks ? (
+                                <span className="inline-flex items-center justify-center rounded-md border border-white/[0.06] bg-white/[0.04] px-2 py-0.5 text-xs text-zinc-500">
+                                  —
+                                </span>
                               ) : (
-                              <RankDisplay
-                                rank={row.theirRank}
-                                labels={rankLabels}
-                                context={{ column: "theirs" }}
-                                emphasize
-                              />
+                                <span className="inline-flex justify-center">
+                                  <RankDisplay
+                                    rank={row.theirRank}
+                                    labels={rankLabels}
+                                    context={{ column: "theirs" }}
+                                    emphasize
+                                  />
+                                </span>
                               )}
                             </td>
-                            <td className="px-4 py-3 text-end">
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                className="size-8 text-zinc-400 hover:text-rose-300"
-                                aria-label={tShared("removeAria", { keyword: row.keyword })}
-                                onClick={() => removeSharedRow(row)}
-                              >
-                                <Trash2 className="size-4" aria-hidden />
-                              </Button>
+                            <td className="w-12 px-4 py-3 text-end">
+                              {row.isCustom && trackedTermKeys.has(row.keyword.trim().toLowerCase()) ? (
+                                <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 whitespace-nowrap">
+                                  {tShared("columns.autoTracking")}
+                                </span>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="size-8 text-zinc-400 hover:text-rose-300"
+                                  aria-label={tShared("removeAria", { keyword: row.keyword })}
+                                  onClick={() => removeSharedRow(row)}
+                                >
+                                  <Trash2 className="size-4" aria-hidden />
+                                </Button>
+                              )}
                             </td>
                           </tr>
                         ))
@@ -1750,6 +2236,7 @@ export function CompetitorSpyClient({
                   </table>
                 </div>
               </div>
+              </TooltipProvider>
               )}
             </section>
           ) : null}

@@ -5,6 +5,10 @@ export type StoredCompetitorSharedRow = {
   keyword: string;
   yourRank: number | null;
   theirRank: number;
+  /** True for manually added custom overlap keywords (persisted via custom-keyword API). */
+  isCustom?: boolean;
+  /** ISO country code (e.g. "us", "in") this row belongs to. Present on custom rows. */
+  country?: string;
 };
 
 export type StoredCompetitor = {
@@ -100,7 +104,9 @@ export function normalizeStoredCompetitorFromAnalysisJson(
             if (typeof s.keyword !== "string") return null;
             if (typeof s.theirRank !== "number") return null;
             const yourRank = typeof s.yourRank === "number" ? s.yourRank : null;
-            return { keyword: s.keyword, yourRank, theirRank: s.theirRank };
+            const isCustom = s.isCustom === true ? true : undefined;
+            const country = typeof s.country === "string" && s.country ? s.country : undefined;
+            return { keyword: s.keyword, yourRank, theirRank: s.theirRank, isCustom, country };
           })
           .filter((x): x is StoredCompetitorSharedRow => x !== null)
       : [],
