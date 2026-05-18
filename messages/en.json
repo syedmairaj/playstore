@@ -526,6 +526,11 @@
       "confirmContinue": "Continue",
       "confirmWithCredits": "Analyze ({credits, plural, one {# AI credit} other {# AI credits}})"
     },
+    "trackCreditsConfirm": {
+      "title": "Use 1 AI credit?",
+      "body": "Tracking this keyword fires a live Serper search to capture your current rank — the same scan as a manual refresh. This costs {credits, plural, one {# AI credit} other {# AI credits}}. Continue?",
+      "confirm": "Track Keyword"
+    },
     "manage": {
       "button": "Manage Competitors",
       "title": "Manage competitors",
@@ -572,7 +577,9 @@
       "removeAria": "Remove {keyword}",
       "columns": {
         "actions": "Actions"
-      }
+      },
+      "noSharedTitle": "No shared keywords found yet.",
+      "noSharedBody": "This means you and your competitor aren't indexing for the same terms in this market. Try adding custom targets below!"
     },
     "ranks": {
       "notInTop": "20+",
@@ -1010,6 +1017,10 @@
       "invalidModelOutputRegenerating": "Short description was too long. Regenerating with stricter limits…",
       "confirmCreditsTitle": "Use AI credits?",
       "confirmCreditsBody": "This will use {credits, plural, one {# AI credit} other {# AI credits}}. Continue?",
+      "confirmCreditsBodyWithTip": "This will spend {credits, plural, one {# AI credit} other {# AI credits}} to generate data from scratch.\n\n💡 Pro-Tip: Running a scan in Competitor Spy first unlocks a full multi-market live preview for 5 credits, and lets you auto-populate these inputs here for 0 additional credits.",
+      "confirmCreditsBodyKeywords": "This will use 3 AI credits to generate a basic list of keywords from scratch for this single box only. It does not analyze your competitors.\n\n⚡ Recommended Value Option: Go to Competitor Spy instead. For 5 credits, you unlock their live market ranking data, plus you get their high-traffic keywords and your app features pre-loaded into this entire workspace for 0 extra credits.",
+      "confirmCreditsBodyFeatures": "This will use 3 AI credits to write an app features description from scratch for this single box only.\n\n⚡ Recommended Value Option: Go to Competitor Spy first. Your 5-credit competitive analysis completely bundles this step—automatically pulling your core app profile and competitor targets into this page for 0 additional credits.",
+      "confirmCreditsSpyLink": "Go to Competitor Spy →",
       "confirmCreditsYes": "Yes, Generate",
       "confirmCreditsCancel": "Cancel",
       "autofill": {
@@ -1185,7 +1196,24 @@
       "copiedDescription": "Optimized for Play Store!"
     },
     "empty": {
-      "body": "Results appear here after you generate. Everything stays editable in the Play Console—use this as a strong first draft."
+      "body": "Results appear here after you generate. Everything stays editable in the Play Console—use this as a strong first draft.",
+      "runScanCta": "⚡ Run Optimization Scan",
+      "runScanHint": "Keywords are loaded and ready. Generate your Play Store listing now."
+    },
+    "smartWorkflow": {
+      "bannerTitle": "💡 Smart ASO Workflow Tip",
+      "bannerBody": "Want to maximize your credits? Instead of building from scratch, run the Competitor Spy tool first (5 credits for a full multi-market live preview). Once complete, you can push their top keywords and extracted features directly into this workspace for 0 additional credits before running your final generation.",
+      "bannerCta": "Go to Competitor Spy →",
+      "keywordsHelper": "💡 Uses 3 credits to generate raw ideas from scratch. Better Alternative: Run a 5-credit scan in Competitor Spy to inject high-traffic rival keywords here at no extra cost.",
+      "featuresHelper": "💡 Uses 3 credits to write features from scratch. Better Alternative: Let the Competitor Spy pipeline automatically fetch and load your core workspace profile here for 0 extra credits.",
+      "interceptTitle": "Maximize Your Credit Value",
+      "interceptBody": "You are about to spend 3 credits to generate data for this single field from scratch.",
+      "interceptStrategicLabel": "The Strategic Path",
+      "interceptStrategicDetail": "Go to Competitor Spy first. For 5 credits, you get a complete multi-market competitive live preview, plus the ability to auto-populate both this Keyword block and your Features list for 0 extra credits.",
+      "interceptStandaloneLabel": "The Standalone Path",
+      "interceptStandaloneDetail": "Continue here and spend 3 credits to brainstorm this single input field from scratch.",
+      "interceptGoSpy": "🔍 Go to Competitor Spy",
+      "interceptProceed": "Proceed Anyway (−3 Credits)"
     },
     "preview": {
       "label": "Live Preview",

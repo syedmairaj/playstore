@@ -65,6 +65,7 @@ import {
 } from "@/lib/keywords/keyword-rank-sync-pending";
 import { type SupportedCountryCode } from "@/lib/countries";
 import { competitorSpyAiCreditsForCountryCount } from "@/lib/keywords/keyword-track-ai-pricing";
+import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import type { WorkspaceAppListRow } from "@/lib/workspace/workspace-apps-list";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -173,6 +174,11 @@ function findCachedCompetitorForQuery(
 
 type CompetitorApiRow = StoredCompetitor & {
   previewResults?: SerperPreviewCountry[] | null;
+  /** Set to "complete" by the GET /competitors route once the DB read is settled.
+   *  Polling should stop the moment this field equals "complete" on the target
+   *  competitor row — even when shared/topKeywords arrays are legitimately empty
+   *  (e.g. USA/India with no competitive keyword intersection). */
+  syncStatus?: "syncing" | "complete";
 };
 
 async function fetchWorkspaceCompetitors(
@@ -198,7 +204,7 @@ function SharedKeywordsTableSkeleton({ isRtl }: { isRtl: boolean }) {
   return <SharedKeywordsTableSkeletonBody isRtl={isRtl} label={t("loadingSkeleton")} />;
 }
 
-function SharedKeywordsTableSkeletonBody({ isRtl, label }: { isRtl: boolean; label: string }) {
+function SharedKeywordsTableSkeletonBody({ isRtl, label, syncingMessage }: { isRtl: boolean; label: string; syncingMessage?: string }) {
   return (
     <div
       dir={isRtl ? "rtl" : "ltr"}
@@ -243,6 +249,11 @@ function SharedKeywordsTableSkeletonBody({ isRtl, label }: { isRtl: boolean; lab
         </table>
       </div>
       <p className="sr-only">{label}</p>
+      {syncingMessage && (
+        <p className="px-4 pb-3 pt-1 text-center text-xs leading-relaxed text-zinc-500">
+          {syncingMessage}
+        </p>
+      )}
     </div>
   );
 }
@@ -296,6 +307,11 @@ export function CompetitorSpyClient({
   const [manageOpen, setManageOpen] = useState(false);
   const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
   const [countriesHydrated, setCountriesHydrated] = useState(false);
+  /**
+   * Optimistic retry flag: set true while a 2-second background re-fetch is pending.
+   * Cleared once the retry resolves (with or without data).
+   */
+  const [optimisticRetryPending, setOptimisticRetryPending] = useState(false);
 
   const setSelectedCountries = useCallback(
     (next: SupportedCountryCode[]) => {
@@ -307,6 +323,8 @@ export function CompetitorSpyClient({
   const [previewResults, setPreviewResults] = useState<SerperPreviewCountry[] | null>(null);
   const [previewByCompetitorId, setPreviewByCompetitorId] = useState<PreviewByCompetitorId>({});
   const [creditsConfirmOpen, setCreditsConfirmOpen] = useState(false);
+  /** Term queued for tracking, pending the 1-credit confirmation dialog. */
+  const [trackCreditsConfirmTerm, setTrackCreditsConfirmTerm] = useState<string | null>(null);
   const [trackedKeywordHints, setTrackedKeywordHints] = useState<TrackedKeywordRankHint[]>([]);
   const [dbLoadPending, setDbLoadPending] = useState(false);
   const rankPollAbortByTermRef = useRef<Map<string, AbortController>>(new Map());
@@ -443,15 +461,9 @@ export function CompetitorSpyClient({
         .filter((k) => k.term.length >= 2)
         .slice(0, 40);
       setTrackedKeywordHints(hints);
-      const apiKeys = new Set(hints.map((h) => h.term.toLowerCase()));
-      setTrackedTerms((prev) => {
-        const merged = [...hints.map((h) => h.term)];
-        for (const term of prev) {
-          const key = term.toLowerCase();
-          if (!apiKeys.has(key)) merged.push(term);
-        }
-        return merged;
-      });
+      // Replace trackedTerms entirely with the live DB result so stale
+      // sessionStorage entries never resurface deleted keywords.
+      setTrackedTerms(hints.map((h) => h.term));
     } catch {
       setTrackedKeywordHints([]);
     }
@@ -468,7 +480,15 @@ export function CompetitorSpyClient({
           for (const term of removed) next.delete(term);
           return next;
         });
-        setTrackedTerms((prev) => prev.filter((t) => !removed.has(t.toLowerCase())));
+        setTrackedTerms((prev) => {
+          const next = prev.filter((t) => !removed.has(t.toLowerCase()));
+          // Eagerly flush to sessionStorage so a same-tab page navigation picks up the
+          // pruned list before the React re-render writes the state via the deferred effect.
+          try {
+            sessionStorage.setItem(storageKeyTracked(workspaceId), JSON.stringify(next));
+          } catch { /* private mode / quota */ }
+          return next;
+        });
         setTrackedKeywordHints((prev) =>
           prev.filter((h) => !removed.has(h.term.toLowerCase())),
         );
@@ -567,6 +587,10 @@ export function CompetitorSpyClient({
 
   const trackedTermKeys = useMemo(() => {
     const keys = new Set<string>();
+    // trackedKeywordHints is the authoritative live-DB source; trackedTerms
+    // mirrors it after every refreshTrackedKeywordHints call and is kept in
+    // sync by executeTrackKeyword / startRankPollForTerm for newly added terms
+    // until the next API refresh.
     for (const h of trackedKeywordHints) keys.add(h.term.toLowerCase());
     for (const term of trackedTerms) keys.add(term.toLowerCase());
     for (const term of optimisticTracked) keys.add(term);
@@ -643,6 +667,88 @@ export function CompetitorSpyClient({
   useEffect(() => {
     void refreshTrackedKeywordHints();
   }, [refreshTrackedKeywordHints, targetAppId]);
+
+  /**
+   * Optimistic retry: if we finish the initial DB load and the selected competitor has
+   * no shared-keyword rows and no live rank data, poll every 3 seconds (up to 4 attempts)
+   * until the API returns syncStatus === "complete" for that competitor.
+   *
+   * IMPORTANT: we do NOT stop on array length. A region like USA or India may return
+   * zero shared keywords because no competitive keyword intersection exists — that is a
+   * valid empty result, not a sign that data is still pending. We stop only when the API
+   * explicitly signals syncStatus === "complete", or after MAX_ATTEMPTS.
+   * Once stopped, the loading skeleton is cleared and the empty-state UI is rendered.
+   */
+  useEffect(() => {
+    if (dbLoadPending) return;
+    if (!hydrated) return;
+    if (!selectedCompetitorId) return;
+    const comp = competitors.find((c) => c.id === selectedCompetitorId);
+    if (!comp) return;
+    // Skip polling if data is present.
+    const sharedEmpty = comp.shared.length === 0;
+    const topKwEmpty = comp.topKeywords.length === 0;
+    if (!sharedEmpty && !topKwEmpty) return;
+
+    setOptimisticRetryPending(true);
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 4;
+
+    const intervalId = window.setInterval(async () => {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const fromApi = await fetchWorkspaceCompetitors(workspaceId);
+        if (cancelled) return;
+
+        // Merge all returned rows into local state regardless of array contents.
+        if (fromApi.length > 0) {
+          const previews: PreviewByCompetitorId = {};
+          const normalized: StoredCompetitor[] = [];
+          for (const row of fromApi) {
+            const { previewResults: pr, syncStatus: _s, ...c } = row;
+            normalized.push(c);
+            if (Array.isArray(pr) && pr.length > 0) previews[c.id] = pr;
+          }
+          setCompetitors((prev) => {
+            const byPackage = new Map(prev.map((c) => [c.packageId, c]));
+            for (const fresh of normalized) byPackage.set(fresh.packageId, fresh);
+            return [...byPackage.values()];
+          });
+          if (Object.keys(previews).length > 0) {
+            setPreviewByCompetitorId((prev) => ({ ...prev, ...previews }));
+          }
+          void refreshTrackedKeywordHints();
+        }
+
+        // Stop condition: the API signals that this competitor row is fully settled
+        // (syncStatus === "complete"). This fires even when arrays are empty —
+        // a legitimate zero-overlap result in a given market.
+        const refreshed = fromApi.find((r) => r.id === selectedCompetitorId);
+        const isComplete = refreshed?.syncStatus === "complete";
+
+        if (isComplete || attempts >= MAX_ATTEMPTS) {
+          window.clearInterval(intervalId);
+          if (!cancelled) setOptimisticRetryPending(false);
+        }
+      } catch {
+        /* network unavailable — silently ignore */
+        if (attempts >= MAX_ATTEMPTS) {
+          window.clearInterval(intervalId);
+          if (!cancelled) setOptimisticRetryPending(false);
+        }
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      setOptimisticRetryPending(false);
+    };
+    // Re-run only when dbLoadPending flips to false or the selected competitor changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbLoadPending, hydrated, selectedCompetitorId, workspaceId]);
 
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
@@ -966,13 +1072,30 @@ export function CompetitorSpyClient({
             `/api/workspaces/${workspaceId}/competitors/${encodeURIComponent(competitor.id)}`,
             { method: "DELETE" },
           );
-          const json = (await res.json()) as { ok?: boolean; error?: { message?: string } };
+          const json = (await res.json()) as { ok?: boolean; error?: { code?: string; message?: string } };
           if (!res.ok || !json.ok) {
-            toast.error(json.error?.message ?? t("manage.deleteError"));
-            return;
+            // 404 not_found means the row is already gone from the DB — treat it
+            // as a successful deletion so the UI clears rather than surfacing an
+            // error that confuses the user (they wanted it removed; it is removed).
+            if (res.status !== 404 && json.error?.code !== "not_found") {
+              toast.error(json.error?.message ?? t("manage.deleteError"));
+              return;
+            }
           }
         }
         removeCompetitorLocal(competitor.id);
+        // Purge sessionStorage entry immediately so a subsequent mount does not
+        // resurrect the deleted row from the session cache before the next DB fetch.
+        try {
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem(storageKeyCompetitors(workspaceId));
+            sessionStorage.removeItem(storageKeyPreviews(workspaceId));
+          }
+        } catch { /* private mode / quota */ }
+        // Invalidate the Next.js router cache so any in-flight or cached GET
+        // /competitors response is discarded and the next fetch returns the
+        // post-deletion state from the database.
+        router.refresh();
         toast.success(t("manage.deleteSuccess"));
       } catch {
         toast.error(t("manage.deleteError"));
@@ -1190,7 +1313,7 @@ export function CompetitorSpyClient({
     setCreditsConfirmOpen(true);
   }
 
-  async function onTrackKeyword(term: string) {
+  async function executeTrackKeyword(term: string) {
     const trimmed = term.trim();
     const key = trimmed.toLowerCase();
     if (!key) return;
@@ -1272,6 +1395,18 @@ export function CompetitorSpyClient({
     }
   }
 
+  function onTrackKeyword(term: string) {
+    const trimmed = term.trim();
+    const key = trimmed.toLowerCase();
+    if (!key) return;
+    if (trackedTermKeys.has(key)) {
+      toast.info(t("gap.alreadyTracked"));
+      return;
+    }
+    // Route through the 1-credit confirmation dialog before executing.
+    setTrackCreditsConfirmTerm(trimmed);
+  }
+
   const isTracked = useCallback(
     (term: string) => trackedTermKeys.has(term.trim().toLowerCase()),
     [trackedTermKeys],
@@ -1287,6 +1422,24 @@ export function CompetitorSpyClient({
         credits={analyzeCreditCost}
         isRtl={isRtl}
         onConfirm={() => void runAnalyze()}
+      />
+
+      {/* 1-credit confirmation gate before tracking a gap keyword */}
+      <CompetitorSpyCreditsConfirmDialog
+        open={trackCreditsConfirmTerm !== null}
+        onOpenChange={(open) => {
+          if (!open) setTrackCreditsConfirmTerm(null);
+        }}
+        credits={AI_CREDIT_COSTS.serper_preview_per_country}
+        isRtl={isRtl}
+        titleOverride={t("trackCreditsConfirm.title")}
+        bodyOverride={t("trackCreditsConfirm.body", { credits: AI_CREDIT_COSTS.serper_preview_per_country })}
+        confirmOverride={t("trackCreditsConfirm.confirm")}
+        onConfirm={() => {
+          const term = trackCreditsConfirmTerm;
+          setTrackCreditsConfirmTerm(null);
+          if (term) void executeTrackKeyword(term);
+        }}
       />
 
       <CompetitorSpyManageSheet
@@ -1361,7 +1514,13 @@ export function CompetitorSpyClient({
                 />
               ) : null}
 
-              <form className="flex flex-col gap-4 sm:flex-row sm:items-end" onSubmit={onAnalyzeRequest}>
+              <form
+                className={cn(
+                  "flex flex-col gap-4 sm:items-end",
+                  isRtl ? "sm:flex-row-reverse" : "sm:flex-row",
+                )}
+                onSubmit={onAnalyzeRequest}
+              >
                 <div className="min-w-0 flex-1 space-y-2">
                   <Input
                     value={query}
@@ -1483,8 +1642,12 @@ export function CompetitorSpyClient({
                   </Button>
                 </div>
               </div>
-              {(dbLoadPending || previewPending) && !previewResults ? (
-                <SharedKeywordsTableSkeleton isRtl={isRtl} />
+              {(dbLoadPending || previewPending || optimisticRetryPending) && !previewResults ? (
+                <SharedKeywordsTableSkeletonBody
+                  isRtl={isRtl}
+                  label={optimisticRetryPending ? "Syncing live search visibility matrices across regional markets..." : tShared("loadingSkeleton")}
+                  syncingMessage={optimisticRetryPending ? "Syncing live search visibility matrices across regional markets..." : undefined}
+                />
               ) : (
               <div
                 className={cn(
@@ -1507,23 +1670,32 @@ export function CompetitorSpyClient({
                       {sharedRows.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="px-4 py-10 text-center">
-                            <p className="text-sm font-medium text-zinc-300">
-                              {sharedEmptyTerritory
-                                ? t("shared.emptyTerritoryTitle")
-                                : previewResults?.length
-                                  ? t("shared.emptyAfterAnalyzeTitle")
-                                  : t("shared.emptyTitle")}
-                            </p>
-                            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-                              {sharedEmptyTerritory
-                                ? t("shared.emptyTerritoryBody", {
-                                    competitor: activeCompetitor?.displayName ?? "",
-                                    country: activeCountryLabel,
-                                  })
-                                : previewResults?.length
-                                  ? t("shared.emptyAfterAnalyzeBody")
-                                  : t("shared.emptyBody")}
-                            </p>
+                            {sharedEmptyTerritory || previewResults?.length ? (
+                              <>
+                                <p className="text-sm font-medium text-zinc-300">
+                                  {sharedEmptyTerritory
+                                    ? t("shared.emptyTerritoryTitle")
+                                    : t("shared.emptyAfterAnalyzeTitle")}
+                                </p>
+                                <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                                  {sharedEmptyTerritory
+                                    ? t("shared.emptyTerritoryBody", {
+                                        competitor: activeCompetitor?.displayName ?? "",
+                                        country: activeCountryLabel,
+                                      })
+                                    : t("shared.emptyAfterAnalyzeBody")}
+                                </p>
+                              </>
+                            ) : (
+                              <div className="mx-auto max-w-sm space-y-2 rounded-xl border border-white/[0.06] bg-[#080c12] px-5 py-6">
+                                <p className="text-sm font-semibold text-zinc-200">
+                                  {tShared("noSharedTitle")}
+                                </p>
+                                <p className="text-xs leading-relaxed text-zinc-500">
+                                  {tShared("noSharedBody")}
+                                </p>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ) : (
@@ -1683,7 +1855,11 @@ export function CompetitorSpyClient({
             ) : quickWinItems.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/[0.1] bg-[#080c12] px-6 py-12 text-center">
                 <Crosshair className="size-10 text-emerald-500/40" aria-hidden />
-                <p className="max-w-md text-sm text-zinc-500">{t("quickWins.empty")}</p>
+                <p className="max-w-md text-sm text-zinc-500">
+                  {optimisticRetryPending
+                    ? "Syncing live search visibility matrices across regional markets..."
+                    : t("quickWins.empty")}
+                </p>
               </div>
             ) : (
               <ul className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">

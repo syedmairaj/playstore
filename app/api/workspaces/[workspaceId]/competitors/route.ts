@@ -75,6 +75,10 @@ export async function GET(_request: Request, context: Ctx) {
       if (!normalized) return null;
       return {
         ...normalized,
+        // syncStatus signals to the polling client that the DB read is settled.
+        // "complete" means this row reflects the scraper's latest write — even when
+        // topKeywords/shared arrays are empty (legitimate zero-overlap result).
+        syncStatus: "complete" as const,
         countries: Array.isArray(row.countries) ? row.countries : [],
         analyzedAt: row.analyzed_at as string,
         category: (row.category as string | null) ?? null,

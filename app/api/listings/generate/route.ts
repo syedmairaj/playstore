@@ -24,8 +24,13 @@ import { createClient } from "@/lib/supabase/server";
 import { logUsage } from "@/lib/usage-log";
 import { listingGenerateBodySchema } from "@/lib/validation/listing-generate-body";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
+import {
+  acquireGenerationLock,
+  releaseGenerationLock,
+} from "@/lib/server/generation-idempotency-lock";
 
 const ROUTE = "POST /api/listings/generate";
+const LOCK_ACTION = "listing_generate";
 
 function rateLimitMax(): number {
   const raw = process.env.RATE_LIMIT_MAX;
@@ -168,12 +173,41 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ── Workspace-scoped idempotency lock ────────────────────────────────────────
+  // Reject duplicate generation POSTs for the same workspace within 4 seconds to
+  // prevent double credit deduction from double-clicks / network retries.
+  if (!acquireGenerationLock(workspaceId, LOCK_ACTION)) {
+    await logUsage(admin, {
+      route: ROUTE,
+      clientIp,
+      success: false,
+      durationMs: Date.now() - started,
+      errorMessage: "idempotency_lock_held",
+      meta: { user_id: user.id, workspace_id: workspaceId },
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "duplicate_request",
+          message:
+            "A generation is already in progress for this workspace. Please wait a moment before trying again.",
+        },
+      },
+      { status: 429 },
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const model = resolveGeminiModel();
   const promptVersion = getListingOptimizerPromptVersion();
   const creditCost = AI_CREDIT_COSTS.listing_generation;
 
+  // All paths past the idempotency lock must release it so the user can retry
+  // after any error without waiting for the full TTL to expire.
   const balancePre = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
   if (!balancePre.ok) {
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
@@ -194,6 +228,7 @@ export async function POST(request: NextRequest) {
     );
   }
   if (balancePre.remaining < creditCost) {
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
@@ -225,6 +260,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (!debit.ok) {
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     if (debit.code === "insufficient_credits") {
       await logUsage(admin, {
         route: ROUTE,
@@ -303,6 +339,7 @@ export async function POST(request: NextRequest) {
         persist_error: persist.ok ? undefined : persist.message,
       },
     });
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     return NextResponse.json({
       ok: true,
       data,
@@ -330,6 +367,7 @@ export async function POST(request: NextRequest) {
           reason: "Listing AI generation failed before a saved result",
         });
       }
+      releaseGenerationLock(workspaceId, LOCK_ACTION);
       await logUsage(admin, {
         route: ROUTE,
         clientIp,
@@ -371,6 +409,7 @@ export async function POST(request: NextRequest) {
     }
     const internalMessage =
       e instanceof Error ? e.message : "Generation failed unexpectedly";
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     await logUsage(admin, {
       route: ROUTE,
       clientIp,

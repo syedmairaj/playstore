@@ -96,6 +96,7 @@ export function KeywordTrackerClient({
   const [saveKeywordModalOpen, setSaveKeywordModalOpen] = useState(false);
   const [serperRowRefreshId, setSerperRowRefreshId] = useState<string | null>(null);
   // Live Play Store preview state. Default to the Arabic-first market when the
+  const isRtl = locale === "ar";
   // user's locale is Arabic so previews feel relevant out of the box.
   const defaultCountry: SupportedCountryCode =
     locale === "ar" ? "sa" : "us";
@@ -130,14 +131,23 @@ export function KeywordTrackerClient({
     setRows(initialKeywordsRef.current);
   }, [initialKeywordsSyncKey]);
 
-  const rankSyncPollKey = useMemo(
-    () =>
-      rowsNeedingKeywordRankSyncPoll(rows)
-        .map((r) => r.id)
-        .sort()
-        .join(","),
-    [rows],
-  );
+  /**
+   * IDs that have been polled to max-attempts without a Serper snapshot appearing.
+   * Excluded from rankSyncPollKey so a subsequent initialKeywords re-render (e.g. after
+   * router.refresh()) cannot restart the loop for rows that never resolved.
+   * Cleared only when the component unmounts or the row's ID is removed from rows.
+   */
+  const syncGaveUpRef = useRef<Set<string>>(new Set());
+
+  const rankSyncPollKey = useMemo(() => {
+    const gaveUp = syncGaveUpRef.current;
+    return rowsNeedingKeywordRankSyncPoll(rows)
+      .filter((r) => !gaveUp.has(r.id))
+      .map((r) => r.id)
+      .sort()
+      .join(",");
+  }, [rows]);
+
   const rankSyncPollGenRef = useRef(0);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -160,7 +170,9 @@ export function KeywordTrackerClient({
       if (rankSyncPollGenRef.current !== generation) return;
       attempts += 1;
 
-      const pending = rowsNeedingKeywordRankSyncPoll(rowsRef.current);
+      const pending = rowsNeedingKeywordRankSyncPoll(rowsRef.current).filter(
+        (r) => !syncGaveUpRef.current.has(r.id),
+      );
       if (pending.length === 0) {
         stop();
         return;
@@ -202,9 +214,12 @@ export function KeywordTrackerClient({
             const wasPending = isKeywordRankSyncPending(row);
             if (wasPending) {
               if (!isKeywordRankSyncPending(fresh)) {
+                // Serper snapshot arrived — remove from gave-up set in case it was added
+                syncGaveUpRef.current.delete(row.id);
                 changed = true;
                 return fresh;
               }
+              // Still pending: do NOT touch the row so rankSyncPollKey stays stable
               return row;
             }
             if (
@@ -216,14 +231,20 @@ export function KeywordTrackerClient({
             }
             return row;
           });
-          if (!rowsNeedingKeywordRankSyncPoll(next).length) stop();
+          if (!rowsNeedingKeywordRankSyncPoll(next).filter((r) => !syncGaveUpRef.current.has(r.id)).length) stop();
           return changed ? next : prev;
         });
       } catch {
         /* network — retry until max attempts */
       }
 
-      if (attempts >= KEYWORD_RANK_SYNC_POLL_MAX_ATTEMPTS) stop();
+      if (attempts >= KEYWORD_RANK_SYNC_POLL_MAX_ATTEMPTS) {
+        // Mark all still-pending rows as gave-up so they are excluded from future rankSyncPollKey
+        // computations (prevents infinite restart when initialKeywords prop re-renders).
+        const stillPending = rowsNeedingKeywordRankSyncPoll(rowsRef.current);
+        for (const r of stillPending) syncGaveUpRef.current.add(r.id);
+        stop();
+      }
     };
 
     void poll();
@@ -876,10 +897,13 @@ export function KeywordTrackerClient({
   );
 
   return (
-    <div className="space-y-8">
+    <div className={cn("space-y-8", isRtl && "font-arabic")} dir={isRtl ? "rtl" : "ltr"}>
       {blockingError ? (
         <div
-          className="flex flex-col items-start gap-3 rounded-2xl border border-rose-500/25 bg-rose-500/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+          className={cn(
+            "flex flex-col items-start gap-3 rounded-2xl border border-rose-500/25 bg-rose-500/10 px-5 py-4 sm:items-center sm:justify-between",
+            isRtl ? "sm:flex-row-reverse" : "sm:flex-row",
+          )}
           role="alert"
         >
           <div className="space-y-1 text-sm text-rose-100/90">
@@ -899,7 +923,12 @@ export function KeywordTrackerClient({
         </CardHeader>
         <CardContent className="space-y-4">
           {apps.length > 0 ? (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              className={cn(
+                "flex flex-col gap-2 sm:items-center sm:justify-between",
+                isRtl ? "sm:flex-row-reverse" : "sm:flex-row",
+              )}
+            >
               <label className="flex flex-col gap-1.5 text-sm sm:max-w-xs">
                 <span className="font-medium text-zinc-300">{t("filter.label")}</span>
                 <select
@@ -1075,7 +1104,12 @@ export function KeywordTrackerClient({
             aria-hidden
           />
           <div className="relative space-y-6 px-5 pb-6 pt-7 sm:px-8 sm:pb-7 sm:pt-8">
-            <div className="flex flex-col gap-4 border-b border-white/[0.06] pb-6 sm:flex-row sm:items-start sm:justify-between">
+            <div
+              className={cn(
+                "flex flex-col gap-4 border-b border-white/[0.06] pb-6 sm:items-start sm:justify-between",
+                isRtl ? "sm:flex-row-reverse" : "sm:flex-row",
+              )}
+            >
               <div className="min-w-0 space-y-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-400/90">
                   {t("sections.aiSuggestedKicker")}
@@ -1140,7 +1174,12 @@ export function KeywordTrackerClient({
         )}
       >
         <CardHeader className="space-y-4 border-b border-white/[0.06] pb-5">
-          <div className="flex w-full flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+          <div
+            className={cn(
+              "flex w-full flex-col gap-4 sm:items-start sm:justify-between sm:gap-6",
+              isRtl ? "sm:flex-row-reverse" : "sm:flex-row",
+            )}
+          >
             <div className="min-w-0 flex-1 space-y-2 text-start">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
                 {t("sections.trackedKicker")}

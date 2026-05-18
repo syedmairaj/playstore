@@ -18,6 +18,14 @@ type Props = {
   credits: number;
   isRtl: boolean;
   onConfirm: () => void;
+  /** When true, renders a pro-tip block steering the user toward Competitor Spy first. */
+  showSpyTip?: boolean;
+  /** Which autofill field triggered the dialog — selects field-specific body copy when showSpyTip is true. */
+  autofillField?: "keywords" | "features";
+  /** href for the "Go to Competitor Spy" link (e.g. `/app/{workspaceId}/competitors`). */
+  spyHref?: string;
+  /** Called when the user clicks the spy link so the parent can close/reset pending state. */
+  onGoToSpy?: () => void;
 };
 
 export function OptimizerCreditsConfirmDialog({
@@ -26,8 +34,21 @@ export function OptimizerCreditsConfirmDialog({
   credits,
   isRtl,
   onConfirm,
+  showSpyTip,
+  autofillField,
+  spyHref,
+  onGoToSpy,
 }: Props) {
   const t = useTranslations("optimizer");
+
+  function resolveBodyText(): string {
+    if (showSpyTip) {
+      if (autofillField === "keywords") return t("form.confirmCreditsBodyKeywords");
+      if (autofillField === "features") return t("form.confirmCreditsBodyFeatures");
+      return t("form.confirmCreditsBodyWithTip", { credits });
+    }
+    return t("form.confirmCreditsBody", { credits });
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -44,10 +65,28 @@ export function OptimizerCreditsConfirmDialog({
           <DialogTitle className="text-lg font-semibold text-white">
             {t("form.confirmCreditsTitle")}
           </DialogTitle>
-          <DialogDescription className="text-sm leading-relaxed text-white/60">
-            {t("form.confirmCreditsBody", { credits })}
+          <DialogDescription
+            className="whitespace-pre-line text-sm leading-relaxed text-white/60"
+          >
+            {resolveBodyText()}
           </DialogDescription>
         </DialogHeader>
+
+        {showSpyTip && spyHref ? (
+          <div className={cn(isRtl ? "text-end" : "text-start")}>
+            <a
+              href={spyHref}
+              onClick={() => {
+                onGoToSpy?.();
+                onOpenChange(false);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/20"
+            >
+              {t("form.confirmCreditsSpyLink")}
+            </a>
+          </div>
+        ) : null}
+
         <DialogFooter
           className={cn(
             "gap-2 sm:gap-2",

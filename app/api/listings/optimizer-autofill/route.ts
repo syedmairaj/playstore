@@ -22,8 +22,13 @@ import { createClient } from "@/lib/supabase/server";
 import { logUsage } from "@/lib/usage-log";
 import { listingOptimizerAutofillBodySchema } from "@/lib/validation/listing-optimizer-autofill-body";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
+import {
+  acquireGenerationLock,
+  releaseGenerationLock,
+} from "@/lib/server/generation-idempotency-lock";
 
 const ROUTE = "POST /api/listings/optimizer-autofill";
+const LOCK_ACTION = "listing_optimizer_autofill";
 
 function inferOptimizerAutofillHttpStatus(error: unknown): number {
   if (error instanceof GoogleGenerativeAIFetchError) {
@@ -217,11 +222,40 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ── Workspace-scoped idempotency lock ────────────────────────────────────────
+  // Reject duplicate autofill POSTs for the same workspace within 4 seconds to
+  // prevent double credit deduction from double-clicks / network retries.
+  if (!acquireGenerationLock(workspaceId, LOCK_ACTION)) {
+    await logUsage(admin, {
+      route: ROUTE,
+      clientIp,
+      success: false,
+      durationMs: Date.now() - started,
+      errorMessage: "idempotency_lock_held",
+      meta: { user_id: user.id, workspace_id: workspaceId },
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "duplicate_request",
+          message:
+            "A generation is already in progress for this workspace. Please wait a moment before trying again.",
+        },
+      },
+      { status: 429 },
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const model = resolveGeminiModel();
   const creditCost = AI_CREDIT_COSTS.listing_optimizer_autofill;
 
+  // All paths past the idempotency lock must release it so the user can retry
+  // after any error without waiting for the full TTL to expire.
   const balancePre = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
   if (!balancePre.ok) {
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
@@ -242,6 +276,7 @@ export async function POST(request: NextRequest) {
     );
   }
   if (balancePre.remaining < creditCost) {
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
@@ -274,6 +309,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (!debit.ok) {
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     if (debit.code === "insufficient_credits") {
       await logUsage(admin, {
         route: ROUTE,
@@ -371,6 +407,7 @@ export async function POST(request: NextRequest) {
         persisted_inputs: persistedInputs,
       },
     });
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     return NextResponse.json({
       ok: true,
       data: { text, field },
@@ -403,6 +440,7 @@ export async function POST(request: NextRequest) {
           ? "The AI service is temporarily unavailable. Please try again shortly."
           : "Autofill could not be completed. Please try again shortly."
       : internalMessage;
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
     await logUsage(admin, {
       route: ROUTE,
       clientIp,

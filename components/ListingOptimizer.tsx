@@ -35,9 +35,11 @@ import type { AppLimitsData } from "@/hooks/use-app-limits";
 import { useAppLimits, workspaceAppsQueryKey } from "@/hooks/use-app-limits";
 import { precheckAddApp } from "@/lib/client/precheck-add-app";
 import {
-  clearCachedListingGeneration,
-  readCachedListingGeneration,
-  writeCachedListingGeneration,
+  clearFinalListingCache,
+  finalListingCacheToOutput,
+  listingOutputToFinalListingCache,
+  readFinalListingCache,
+  writeFinalListingCache,
 } from "@/lib/client/listing-optimizer-generated-cache";
 import {
   consumeInjectedOptimizerKeywords,
@@ -254,6 +256,13 @@ export function ListingOptimizer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ListingGenerationOutput | null>(null);
+  /**
+   * Mirrors `result` synchronously so async effects can read the current value
+   * without being re-triggered by stale closures.  Used to guard against the
+   * hydration effect clearing a live result when the DB returns a null-output row.
+   */
+  const resultRef = useRef<ListingGenerationOutput | null>(null);
+  resultRef.current = result;
   const [editedTitle, setEditedTitle] = useState("");
   const [editedShort, setEditedShort] = useState("");
   const [editedLong, setEditedLong] = useState("");
@@ -262,6 +271,9 @@ export function ListingOptimizer({
     string | undefined
   >();
   const [trackKwBusy, setTrackKwBusy] = useState(false);
+  /** Dedicated debounce flag: set true the instant a credit-consuming action is dispatched,
+   *  cleared in the finally block. Prevents double-click / double-fire before React re-renders. */
+  const [isProcessingCredits, setIsProcessingCredits] = useState(false);
   const [selectedAppId, setSelectedAppId] = useState("");
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [addAppOpen, setAddAppOpen] = useState(false);
@@ -423,13 +435,29 @@ export function ListingOptimizer({
     return "";
   }, [previewIconUrl, selectedPersistedIconUrl]);
 
-  /** Phone header when no generation: workspace app row, not stale listing hydration title. */
-  const previewAppName = useMemo(() => {
-    if (result) return appName.trim();
+  /**
+   * Canonical display name for the App Identity input and phone mockup header.
+   * Priority: workspace app row (always authoritative) → hydration record
+   * → appName state (user-typed draft).
+   * This ensures "Salt Sugar" (or whatever the primary app is) never goes blank
+   * during injection, hydration suppression, or intermediate loading states.
+   */
+  const displayAppName = useMemo(() => {
     const fromRow = selectedAppRow?.name?.trim();
     if (fromRow) return fromRow;
+    if (selectedAppId) {
+      const fromHyd = hydrationByApp[selectedAppId]?.appName?.trim();
+      if (fromHyd) return fromHyd;
+    }
     return appName.trim();
-  }, [appName, result, selectedAppRow]);
+  }, [appName, hydrationByApp, selectedAppId, selectedAppRow]);
+
+  /** Phone mockup header: after a generation the result was generated for the current
+   *  draft, so use the draft appName; before generation always lock to the primary app row. */
+  const previewAppName = useMemo(() => {
+    if (result) return appName.trim() || displayAppName;
+    return displayAppName;
+  }, [appName, displayAppName, result]);
 
   useEffect(() => {
     if (!generateJustSucceeded) return;
@@ -459,7 +487,7 @@ export function ListingOptimizer({
       setWizardPanelPeek({});
       setPurgedAwaitingGenerate(false);
       if (opts?.clearLocalCache && opts.appId?.trim()) {
-        clearCachedListingGeneration(opts.appId.trim());
+        clearFinalListingCache(opts.appId.trim());
       }
     },
     [],
@@ -480,8 +508,24 @@ export function ListingOptimizer({
       setEditedLong(output.fullDescription);
       setLastGeneratedAtIso(savedAt);
       if (generationId) setListingGenerationId(generationId);
+      setPurgedAwaitingGenerate(false);
     },
     [],
+  );
+
+  const tryApplyFinalListingCache = useCallback(
+    (aid: string): boolean => {
+      const final = readFinalListingCache(aid);
+      if (!final) return false;
+      applyCachedOrHydratedListingOutput(
+        aid,
+        finalListingCacheToOutput(final),
+        final.generatedAt,
+        final.generationId,
+      );
+      return true;
+    },
+    [applyCachedOrHydratedListingOutput],
   );
 
   const syncPreviewFromWorkspaceApp = useCallback(
@@ -558,41 +602,92 @@ export function ListingOptimizer({
         : selectedAppId.trim();
 
     if (injectedReplace.length > 0) {
+      // ── Atomic isolated state overwrite ─────────────────────────────────────
+      // Flush the entire optimizer form to a clean slate derived from the injected
+      // context, preventing stale ASO results, scoring spinners, or previous-app
+      // identity from bleeding through into the new session.
       suppressListingHydrationRef.current = true;
-      clearOptimizerGeneratedOutputs();
+
+      // Explicit localStorage guard: consumePlaystoreKeywordContext() already removed
+      // the key but we remove it again atomically here to prevent any concurrent
+      // effect cycle from re-reading a partially-written value.
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("playstore_injected_keyword_context");
+        }
+      } catch { /* quota / private mode */ }
+
+      // 1. Clear all generated output (nulls result → nulls asoScore) and reset
+      //    wizard to step 0. purgedAwaitingGenerate=true holds the skeleton open
+      //    until the user runs a fresh generation.
+      clearOptimizerGeneratedOutputs({
+        clearLocalCache: Boolean(resolvedAppId),
+        appId: resolvedAppId || undefined,
+      });
       setPurgedAwaitingGenerate(true);
       setError(null);
-      setKeywords((prev) => mergeOptimizerKeywordText(prev, injectedReplace));
+
+      // 2. Overwrite keywords with the injected payload — no merge with stale chips.
+      setKeywords(injectedReplace.join(", "));
+
       if (resolvedAppId) {
         if (resolvedAppId !== selectedAppId) {
           workspacePickerPrevIdRef.current = resolvedAppId;
           setSelectedAppId(resolvedAppId);
         }
-        syncPreviewFromWorkspaceApp(resolvedAppId);
-        const session = readListingOptimizerSession();
+
+        // 3. Resolve app identity: workspace app row is the primary source of truth;
+        //    fall back to hydration data when the row hasn't loaded yet (e.g. "Salt Sugar").
+        const appRowFromList = appsList.find((a) => a.id === resolvedAppId);
         const hyd = hydrationByApp[resolvedAppId];
-        const restoredFeatures =
+        const session = readListingOptimizerSession();
+
+        // App Name — always overwrite from the authoritative source.
+        const resolvedAppName =
+          appRowFromList?.name?.trim() ||
+          hyd?.appName?.trim() ||
+          "";
+        setAppName(resolvedAppName);
+
+        // Preview icon — from the app row (or hydration metadata).
+        if (appRowFromList) {
+          const appRowMeta = readAppListingMeta(appRowFromList.metadata, appRowFromList.icon_url);
+          const previewIcon = resolveListingPreviewIconUrl({
+            iconUrlColumn: appRowFromList.icon_url,
+            metadata: appRowFromList.metadata,
+          });
+          // Overwrite short-desc and icon unconditionally — injection context wins.
+          setPreviewShortDesc(appRowMeta.shortDescription);
+          setPreviewIconUrl(previewIcon);
+        } else {
+          // App row not yet loaded; sync via helper (may be no-op) and clear stale icon.
+          syncPreviewFromWorkspaceApp(resolvedAppId);
+          setPreviewShortDesc("");
+          setPreviewIconUrl("");
+        }
+
+        // 4. Overwrite features, category, and tone from session/hydration — always
+        //    replace rather than leaving stale values from a different app in place.
+        const resolvedFeatures =
           session?.appId === resolvedAppId && session.features.trim()
             ? session.features
             : hyd?.appFeatures?.trim() ?? "";
-        const restoredCategory =
+        const resolvedCategory =
           session?.appId === resolvedAppId && session.category.trim()
             ? session.category
-            : hyd?.category?.trim() ?? "";
-        const restoredTone =
-          session?.appId === resolvedAppId
+            : appRowFromList
+              ? readAppListingMeta(appRowFromList.metadata, appRowFromList.icon_url).category
+              : hyd?.category?.trim() ?? "";
+        const resolvedTone: ToneStyle =
+          (session?.appId === resolvedAppId
             ? (session.toneStyle as ToneStyle)
-            : hyd?.toneStyle;
-        if (restoredFeatures) {
-          setFeatures((prev) => (prev.trim() ? prev : restoredFeatures));
-        }
-        if (restoredCategory) {
-          setCategory((prev) => (prev.trim() ? prev : restoredCategory));
-        }
-        if (restoredTone) {
-          setToneStyle(restoredTone);
-        }
+            : hyd?.toneStyle) ?? "professional";
+
+        setFeatures(resolvedFeatures);
+        setCategory(resolvedCategory);
+        setToneStyle(resolvedTone);
       }
+      // ────────────────────────────────────────────────────────────────────────
     } else {
       setKeywords((prev) => {
         const merged = mergeOptimizerKeywordText(prev, [
@@ -659,7 +754,6 @@ export function ListingOptimizer({
     const session = readListingOptimizerSession();
     if (!session) return;
     optimizerSessionRestoredRef.current = true;
-    suppressListingHydrationRef.current = true;
 
     if (appsList.length > 0 && appsList.some((a) => a.id === session.appId)) {
       if (selectedAppId !== session.appId) {
@@ -674,7 +768,14 @@ export function ListingOptimizer({
     setToneStyle(session.toneStyle as ToneStyle);
     setPreviewShortDesc(session.previewShortDesc);
     setPreviewIconUrl(session.previewIconUrl);
-    clearOptimizerGeneratedOutputs();
+    // Do NOT suppress hydration or clear generated output here.
+    // Session restore only repopulates form inputs (keywords, features, etc.)
+    // from the user's last edit session. The DB hydration effect
+    // (/api/listings/latest) runs independently and will restore the result
+    // panel — suppressing it here would block that restore on every page load
+    // and bounce-back, wiping the ASO score and listing.
+    // suppressListingHydrationRef is only set by keyword injection (Competitor Spy
+    // → Optimizer flow), which has its own clearOptimizerGeneratedOutputs() call.
   }, [
     appsBusy,
     appsQuery.isError,
@@ -689,7 +790,7 @@ export function ListingOptimizer({
     writeListingOptimizerSession({
       appId: aid,
       keywords,
-      appName,
+      appName: displayAppName || appName,
       category,
       features,
       toneStyle,
@@ -713,21 +814,23 @@ export function ListingOptimizer({
     return (
       Boolean(workspaceId) &&
       appGateOk &&
-      appName.trim().length > 0 &&
+      displayAppName.length > 0 &&
       category.trim().length > 0 &&
       keywords.trim().length > 0 &&
       features.trim().length > 0 &&
-      !loading
+      !loading &&
+      !isProcessingCredits
     );
   }, [
     workspaceId,
     appsList.length,
     selectedAppId,
-    appName,
+    displayAppName,
     category,
     keywords,
     features,
     loading,
+    isProcessingCredits,
   ]);
 
   const planLabelForLimits = limits.data
@@ -784,21 +887,27 @@ export function ListingOptimizer({
           hyd.createdAt,
           hyd.generationId,
         );
-        writeCachedListingGeneration(id, {
-          output: hyd.output,
-          savedAt: hyd.createdAt,
-          generationId: hyd.generationId,
-        });
+        writeFinalListingCache(
+          id,
+          listingOutputToFinalListingCache(
+            hyd.output,
+            hyd.createdAt,
+            hyd.generationId,
+          ),
+        );
       } else if (!suppressHydration) {
-        const cached = readCachedListingGeneration(id);
-        if (cached?.output && !purgedAwaitingGenerateRef.current) {
-          applyCachedOrHydratedListingOutput(
-            id,
-            cached.output,
-            cached.savedAt,
-            cached.generationId,
-          );
-        } else {
+        if (!purgedAwaitingGenerateRef.current) {
+          const cacheRestored = tryApplyFinalListingCache(id);
+          if (!cacheRestored && !resultRef.current) {
+            setWizardStep(0);
+            setWizardPanelPeek({});
+            setResult(null);
+            setEditedTitle("");
+            setEditedShort("");
+            setEditedLong("");
+          }
+        }
+        if (purgedAwaitingGenerateRef.current && !resultRef.current) {
           setWizardStep(0);
           setWizardPanelPeek({});
           setResult(null);
@@ -807,10 +916,10 @@ export function ListingOptimizer({
           setEditedLong("");
         }
       }
-      if (switchingApps || !previewShortDesc.trim()) {
+      if (!suppressHydration && (switchingApps || !previewShortDesc.trim())) {
         setPreviewShortDesc(appRowMeta.shortDescription);
       }
-      if (switchingApps || !previewIconUrl.trim()) {
+      if (!suppressHydration && (switchingApps || !previewIconUrl.trim())) {
         setPreviewIconUrl(previewIcon);
       }
       setPickAppGate(false);
@@ -826,13 +935,13 @@ export function ListingOptimizer({
     if (switchingApps || !appName.trim()) {
       setAppName(displayName);
     }
-    if (switchingApps || !category.trim()) {
+    if (!suppressHydration && (switchingApps || !category.trim())) {
       setCategory(appRowMeta.category);
     }
-    if (switchingApps || !previewShortDesc.trim()) {
+    if (!suppressHydration && (switchingApps || !previewShortDesc.trim())) {
       setPreviewShortDesc(appRowMeta.shortDescription);
     }
-    if (switchingApps || !previewIconUrl.trim()) {
+    if (!suppressHydration && (switchingApps || !previewIconUrl.trim())) {
       setPreviewIconUrl(previewIcon);
     }
     if (switchingApps) {
@@ -896,7 +1005,6 @@ export function ListingOptimizer({
     const ws = workspaceId?.trim();
     const aid = selectedAppId.trim();
     if (!ws || !aid) return;
-    if (appsBusy || appsQuery.isError) return;
 
     const ac = new AbortController();
 
@@ -940,32 +1048,27 @@ export function ListingOptimizer({
             delete next[aid];
             return next;
           });
-          const cached =
-            !purgedAwaitingGenerateRef.current
-              ? readCachedListingGeneration(aid)
-              : null;
           if (row) {
+            const suppressNoHyd = suppressListingHydrationRef.current;
             setAppName(displayName);
-            setCategory((prev) => prev.trim() || appRowMeta.category);
-            setPreviewShortDesc(appRowMeta.shortDescription);
-            setPreviewIconUrl(appRowMeta.iconUrl);
-            if (cached?.output) {
-              applyCachedOrHydratedListingOutput(
-                aid,
-                cached.output,
-                cached.savedAt,
-                cached.generationId,
-              );
-            } else if (!purgedAwaitingGenerateRef.current) {
-              setListingGenerationId(undefined);
-              setLastGeneratedAtIso(null);
-              setMeta(undefined);
-              setWizardStep(0);
-              setWizardPanelPeek({});
-              setResult(null);
-              setEditedTitle("");
-              setEditedShort("");
-              setEditedLong("");
+            if (!suppressNoHyd) {
+              setCategory((prev) => prev.trim() || appRowMeta.category);
+              setPreviewShortDesc(appRowMeta.shortDescription);
+              setPreviewIconUrl(appRowMeta.iconUrl);
+            }
+            if (!purgedAwaitingGenerateRef.current && !suppressNoHyd) {
+              const cacheRestored = tryApplyFinalListingCache(aid);
+              if (!cacheRestored && !resultRef.current) {
+                setListingGenerationId(undefined);
+                setLastGeneratedAtIso(null);
+                setMeta(undefined);
+                setWizardStep(0);
+                setWizardPanelPeek({});
+                setResult(null);
+                setEditedTitle("");
+                setEditedShort("");
+                setEditedLong("");
+              }
             }
           }
           setPickAppGate(false);
@@ -974,38 +1077,55 @@ export function ListingOptimizer({
 
         setHydrationByApp((prev) => ({ ...prev, [aid]: hyd }));
 
+        const suppressHydrationAsync = suppressListingHydrationRef.current;
         setAppName(displayName);
-        setCategory(hyd.category.trim() || appRowMeta.category);
-        if (!suppressListingHydrationRef.current) {
+        if (!suppressHydrationAsync) {
+          setCategory(hyd.category.trim() || appRowMeta.category);
           setKeywords(hyd.keywordsText);
           setFeatures(hyd.appFeatures);
+          setToneStyle(hyd.toneStyle);
+          setListingGenerationId(hyd.generationId);
+          setLastGeneratedAtIso(hyd.createdAt);
         }
-        setToneStyle(hyd.toneStyle);
-        setListingGenerationId(hyd.generationId);
-        setLastGeneratedAtIso(hyd.createdAt);
         setMeta(undefined);
-        if (hyd.output) {
+        if (hyd.output && !suppressHydrationAsync) {
           applyCachedOrHydratedListingOutput(
             aid,
             hyd.output,
             hyd.createdAt,
             hyd.generationId,
           );
-          writeCachedListingGeneration(aid, {
-            output: hyd.output,
-            savedAt: hyd.createdAt,
-            generationId: hyd.generationId,
-          });
-        } else {
-          const cached = readCachedListingGeneration(aid);
-          if (cached?.output && !purgedAwaitingGenerateRef.current) {
-            applyCachedOrHydratedListingOutput(
-              aid,
-              cached.output,
-              cached.savedAt,
-              cached.generationId,
-            );
-          } else {
+          writeFinalListingCache(
+            aid,
+            listingOutputToFinalListingCache(
+              hyd.output,
+              hyd.createdAt,
+              hyd.generationId,
+            ),
+          );
+        } else if (!suppressHydrationAsync) {
+          // hyd.output is null — the DB returned an inputs-only row (e.g. from autofill).
+          // Only clear result if:
+          //   (a) there is no live result currently in state (resultRef), AND
+          //   (b) localStorage has nothing to restore.
+          // Never wipe a live result — doing so causes the ASO score to vanish on
+          // refresh / page bounce when router.refresh() re-triggers this effect
+          // before the DB two-pass query can find the prior generation row.
+          if (!purgedAwaitingGenerateRef.current) {
+            const cacheRestored = tryApplyFinalListingCache(aid);
+            if (!cacheRestored && !resultRef.current) {
+              setWizardStep(0);
+              setWizardPanelPeek({});
+              setResult(null);
+              setEditedTitle("");
+              setEditedShort("");
+              setEditedLong("");
+            }
+          }
+          // purgedAwaitingGenerate is set by keyword injection — in that case we do
+          // want to stay on the "awaiting generate" empty canvas, but only if there
+          // really is no result already showing.
+          if (purgedAwaitingGenerateRef.current && !resultRef.current) {
             setWizardStep(0);
             setWizardPanelPeek({});
             setResult(null);
@@ -1014,8 +1134,10 @@ export function ListingOptimizer({
             setEditedLong("");
           }
         }
-        setPreviewShortDesc(appRowMeta.shortDescription);
-        setPreviewIconUrl(appRowMeta.iconUrl);
+        if (!suppressHydrationAsync) {
+          setPreviewShortDesc(appRowMeta.shortDescription);
+          setPreviewIconUrl(appRowMeta.iconUrl);
+        }
         setPickAppGate(false);
       } catch {
         /* aborted or network */
@@ -1023,9 +1145,33 @@ export function ListingOptimizer({
     })();
 
     return () => ac.abort();
-    // Intentionally omit appsList from deps — refetch only when workspace or selected app changes.
+    // Intentionally omit appsList, appsBusy, appsQuery.isError from deps:
+    // – appsList: causes refetch on every background apps-query update
+    // – appsBusy / appsQuery.isError: cause refetch on every router.refresh() (e.g.
+    //   after autofill), which races the just-written inputs-only DB row and can
+    //   return hyd.output=null, wiping the live result.
+    // The effect only needs to re-run when the workspace or the selected app changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, selectedAppId, appsBusy, appsQuery.isError, applyCachedOrHydratedListingOutput]);
+  }, [workspaceId, selectedAppId, applyCachedOrHydratedListingOutput]);
+
+  /**
+   * Final-listing hydration guard — fires synchronously when `selectedAppId`
+   * resolves so F5 refresh shows results before /api/listings/latest returns.
+   *
+   * Hydration order (output blocks): playstore_final_listing_{id} (with one-time
+   * legacy read of playstore_last_generated_ / playstore_saved_listing_), then
+   * async DB via /api/listings/latest. Skipped when injection suppresses hydration
+   * or purgedAwaitingGenerate is true.
+   */
+  useEffect(() => {
+    const aid = selectedAppId.trim();
+    if (!aid || aid === "undefined") return;
+    if (suppressListingHydrationRef.current) return;
+    if (result) return;
+    if (purgedAwaitingGenerateRef.current) return;
+    tryApplyFinalListingCache(aid);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAppId, tryApplyFinalListingCache]);
 
   function tryOpenAddApp() {
     if (!workspaceId) return;
@@ -1083,7 +1229,7 @@ export function ListingOptimizer({
       }
       return;
     }
-    const nameOk = appName.trim().length > 0;
+    const nameOk = displayAppName.length > 0;
     const catOk = category.trim().length > 0;
     if (!nameOk || !catOk) {
       setAutofillGate({
@@ -1108,6 +1254,9 @@ export function ListingOptimizer({
       setUpgradeOpen(true);
       return;
     }
+    // Hard debounce: block re-entry before React flushes setAutofillBusy.
+    if (isProcessingCredits) return;
+    setIsProcessingCredits(true);
     setAutofillGate({});
     setAutofillBusy(field);
     setError(null);
@@ -1122,7 +1271,7 @@ export function ListingOptimizer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           workspaceId,
-          appName: appName.trim(),
+          appName: displayAppName,
           category: category.trim(),
           field,
           language: locale,
@@ -1183,7 +1332,7 @@ export function ListingOptimizer({
           [sid]: {
             generationId: gid,
             createdAt: savedAtIso,
-            appName: appName.trim(),
+            appName: displayAppName,
             category: category.trim(),
             keywordsText: nextKeywords.trim(),
             appFeatures: nextFeatures.trim(),
@@ -1217,6 +1366,7 @@ export function ListingOptimizer({
     } finally {
       toast.dismiss(autofillToastId);
       setAutofillBusy(null);
+      setIsProcessingCredits(false);
     }
   }
 
@@ -1266,7 +1416,7 @@ export function ListingOptimizer({
       version: 1,
       exportedAt: new Date().toISOString(),
       locale,
-      appName: appName.trim(),
+      appName: displayAppName,
       category: category.trim(),
       title: data.title,
       shortDescription: data.shortDescription,
@@ -1340,7 +1490,7 @@ export function ListingOptimizer({
       return;
     }
     if (
-      appName.trim().length === 0 ||
+      displayAppName.length === 0 ||
       category.trim().length === 0 ||
       keywords.trim().length === 0 ||
       features.trim().length === 0
@@ -1348,6 +1498,9 @@ export function ListingOptimizer({
       return;
     }
     if (loading) return;
+    // Hard debounce: block re-entry even before React flushes the `loading` state update.
+    if (isProcessingCredits && !opts._listingGenRetry) return;
+    if (!opts._listingGenRetry) setIsProcessingCredits(true);
 
     setError(null);
     if (opts.mode === "fresh") {
@@ -1383,7 +1536,7 @@ export function ListingOptimizer({
         body: JSON.stringify({
           workspaceId,
           ...(selectedAppId.trim() ? { appId: selectedAppId.trim() } : {}),
-          appName: appName.trim(),
+          appName: displayAppName,
           category: category.trim(),
           targetKeywords: keywords.trim(),
           appFeatures: features.trim(),
@@ -1433,6 +1586,13 @@ export function ListingOptimizer({
         return;
       }
       const d = json.data;
+      // ── Explicit error clear-down on every successful payload delivery ──────
+      // Wipes any stale error string (e.g. a previous duplicate_request 429,
+      // refining notice, or network warning) that may have accumulated before
+      // this generation succeeded — including on the automatic retry path where
+      // the top-of-function setError(null) guard was bypassed.
+      setError(null);
+      // ─────────────────────────────────────────────────────────────────────────
       suppressListingHydrationRef.current = false;
       setPurgedAwaitingGenerate(false);
       setResult(d);
@@ -1450,11 +1610,10 @@ export function ListingOptimizer({
       setLastGeneratedAtIso(savedIso);
       const sid = selectedAppId.trim();
       if (sid) {
-        writeCachedListingGeneration(sid, {
-          output: d,
-          savedAt: savedIso,
-          generationId: generationIdFromApi,
-        });
+        writeFinalListingCache(
+          sid,
+          listingOutputToFinalListingCache(d, savedIso, generationIdFromApi),
+        );
       }
       if (generationIdFromApi && sid) {
         const gid = generationIdFromApi;
@@ -1463,7 +1622,7 @@ export function ListingOptimizer({
           [sid]: {
             generationId: gid,
             createdAt: savedIso,
-            appName: appName.trim(),
+            appName: displayAppName,
             category: category.trim(),
             keywordsText: keywords.trim(),
             appFeatures: features.trim(),
@@ -1487,6 +1646,8 @@ export function ListingOptimizer({
       setError(t("form.networkError"));
     } finally {
       setLoading(false);
+      // Always release the debounce lock so the user can retry after an error.
+      if (!opts._listingGenRetry) setIsProcessingCredits(false);
     }
   }
 
@@ -1644,7 +1805,7 @@ export function ListingOptimizer({
       ? keywords.trim().slice(0, 72) + (keywords.trim().length > 72 ? "…" : "")
       : t("workflow.discoverySummaryEmpty");
   const identitySummary =
-    (appName.trim() || "—") + " · " + (category.trim() || "—");
+    (displayAppName || "—") + " · " + (category.trim() || "—");
   const toneLabel =
     toneStyle === "professional"
       ? t("form.toneProfessional")
@@ -1678,7 +1839,12 @@ export function ListingOptimizer({
         credits={creditConfirmCredits}
         isRtl={isRtl}
         onConfirm={handleCreditConfirm}
+        showSpyTip={creditConfirmPending?.kind === "autofill"}
+        autofillField={creditConfirmPending?.kind === "autofill" ? creditConfirmPending.field : undefined}
+        spyHref={workspaceId ? `/app/${workspaceId}/competitors` : undefined}
+        onGoToSpy={() => setCreditConfirmPending(null)}
       />
+
       <UpgradeModal
         open={upgradeOpen}
         onOpenChange={setUpgradeOpen}
@@ -1725,7 +1891,7 @@ export function ListingOptimizer({
           onOpenChange={setLogoGenOpen}
           workspaceId={workspaceId}
           appId={selectedAppId}
-          appName={appName.trim()}
+          appName={displayAppName}
           category={category.trim()}
           shortDescription={previewShortDesc}
           creditsRemaining={aiCreditsRemaining}
@@ -1977,7 +2143,7 @@ export function ListingOptimizer({
       >
         <div className="flex min-h-0 min-w-0 flex-col gap-8 overflow-hidden p-6 pb-24 sm:p-8 md:overflow-visible md:border-e md:border-zinc-800/80 md:pb-8">
           <section dir={isRtl ? "rtl" : "ltr"}>
-            <form className="space-y-8" onSubmit={onSubmit}>
+            <form id="listing-optimizer-form" className="space-y-8" onSubmit={onSubmit}>
               <div className="divide-y divide-zinc-800/80">
                 <OptimizerWizardStepShell
                   title={t("workflow.step1")}
@@ -2004,7 +2170,7 @@ export function ListingOptimizer({
                             ? "border-red-400/45 focus-visible:border-red-400/55"
                             : "",
                         )}
-                        value={appName}
+                        value={displayAppName}
                         onChange={(e) => {
                           setAppName(e.target.value);
                           clearAutofillGate("appName");
@@ -2044,7 +2210,7 @@ export function ListingOptimizer({
                     </div>
                   </div>
                   {wizardStep === 0 ? (
-                    <div className="mt-6 flex justify-end">
+                    <div className={cn("mt-6 flex", isRtl ? "justify-start" : "justify-end")}>
                       <button
                         type="button"
                         onClick={() => advanceWizard()}
@@ -2070,44 +2236,64 @@ export function ListingOptimizer({
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
                       {t("workflow.discoveryCardTitle")}
                     </p>
-                    <OptimizerSparkleTextarea
-                      id="lo-keywords"
-                      label={t("form.keywords")}
-                      labelTitle={t("form.keywordsFieldTitle")}
-                      value={keywords}
-                      onChange={setKeywords}
-                      placeholder={t("form.keywordsPlaceholder")}
-                      rows={4}
-                      minHeightClass="min-h-[92px]"
-                      disabled={Boolean(autofillBusy) || !workspaceId}
-                      busy={autofillBusy === "keywords"}
-                      onAutofill={() => void runAutofill("keywords")}
-                      onBeforeAutofill={() => requestAutofill("keywords")}
-                      sparkleAriaLabel={t("form.autofill.sparkleAriaKeywords")}
-                      sparkleTooltip={t("form.autofill.aiAssistTooltip")}
-                      creditsNote={t("form.autofill.usesCredits", {
-                        credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
-                      })}
-                    />
-                    <OptimizerSparkleTextarea
-                      id="lo-features"
-                      label={t("form.features")}
-                      labelTitle={t("form.featuresFieldTitle")}
-                      value={features}
-                      onChange={setFeatures}
-                      placeholder={t("form.featuresPlaceholder")}
-                      rows={5}
-                      minHeightClass="min-h-[144px]"
-                      disabled={Boolean(autofillBusy) || !workspaceId}
-                      busy={autofillBusy === "features"}
-                      onAutofill={() => void runAutofill("features")}
-                      onBeforeAutofill={() => requestAutofill("features")}
-                      sparkleAriaLabel={t("form.autofill.sparkleAriaFeatures")}
-                      sparkleTooltip={t("form.autofill.aiAssistTooltip")}
-                      creditsNote={t("form.autofill.usesCredits", {
-                        credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
-                      })}
-                    />
+                    <div className="space-y-1.5">
+                      <OptimizerSparkleTextarea
+                        id="lo-keywords"
+                        label={t("form.keywords")}
+                        labelTitle={t("form.keywordsFieldTitle")}
+                        value={keywords}
+                        onChange={setKeywords}
+                        placeholder={t("form.keywordsPlaceholder")}
+                        rows={4}
+                        minHeightClass="min-h-[92px]"
+                        disabled={Boolean(autofillBusy) || isProcessingCredits || !workspaceId}
+                        busy={autofillBusy === "keywords"}
+                        onAutofill={() => void runAutofill("keywords")}
+                        onBeforeAutofill={() => requestAutofill("keywords")}
+                        sparkleAriaLabel={t("form.autofill.sparkleAriaKeywords")}
+                        sparkleTooltip={t("form.autofill.aiAssistTooltip")}
+                        creditsNote={t("form.autofill.usesCredits", {
+                          credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
+                        })}
+                      />
+                      {keywords.trim().length === 0 ? (
+                        <p className={cn(
+                          "text-[11px] leading-relaxed text-zinc-500",
+                          isRtl && "font-arabic",
+                        )}>
+                          {t("smartWorkflow.keywordsHelper")}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="space-y-1.5">
+                      <OptimizerSparkleTextarea
+                        id="lo-features"
+                        label={t("form.features")}
+                        labelTitle={t("form.featuresFieldTitle")}
+                        value={features}
+                        onChange={setFeatures}
+                        placeholder={t("form.featuresPlaceholder")}
+                        rows={5}
+                        minHeightClass="min-h-[144px]"
+                        disabled={Boolean(autofillBusy) || isProcessingCredits || !workspaceId}
+                        busy={autofillBusy === "features"}
+                        onAutofill={() => void runAutofill("features")}
+                        onBeforeAutofill={() => requestAutofill("features")}
+                        sparkleAriaLabel={t("form.autofill.sparkleAriaFeatures")}
+                        sparkleTooltip={t("form.autofill.aiAssistTooltip")}
+                        creditsNote={t("form.autofill.usesCredits", {
+                          credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
+                        })}
+                      />
+                      {features.trim().length === 0 ? (
+                        <p className={cn(
+                          "text-[11px] leading-relaxed text-zinc-500",
+                          isRtl && "font-arabic",
+                        )}>
+                          {t("smartWorkflow.featuresHelper")}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
                   {wizardStep === 1 ? (
                     <div className="mt-6 flex flex-wrap justify-between gap-2">
@@ -2159,7 +2345,7 @@ export function ListingOptimizer({
                       </select>
                     </div>
 
-                    {error ? (
+                    {error && !result ? (
                       <div
                         className="rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white/80"
                         role="alert"
@@ -2174,7 +2360,7 @@ export function ListingOptimizer({
                       <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
                         <button
                           type="submit"
-                          disabled={!canSubmit}
+                          disabled={!canSubmit || isProcessingCredits}
                           aria-busy={loading ? true : undefined}
                           className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
                         >
@@ -2201,7 +2387,7 @@ export function ListingOptimizer({
                     </div>
                   </div>
                   {wizardStep === 2 ? (
-                    <div className="mt-6 flex justify-start">
+                    <div className={cn("mt-6 flex", isRtl ? "justify-end" : "justify-start")}>
                       <button
                         type="button"
                         onClick={() => goWizardStep(1)}
@@ -2304,11 +2490,12 @@ export function ListingOptimizer({
               canSaveToTracker={canSaveKeywordsToTracker}
             />
             </motion.div>
-          ) : loading || purgedAwaitingGenerate ? (
+          ) : loading ? (
+            // ── Active generation in flight: show full shimmer skeleton ────────
             <motion.section
               key="optimizer-loading"
               className="pt-4 sm:pt-6"
-              aria-busy={loading ? true : undefined}
+              aria-busy
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -2316,7 +2503,36 @@ export function ListingOptimizer({
             >
               <OptimizerResultsGeneratingView isRtl={isRtl} />
             </motion.section>
+          ) : purgedAwaitingGenerate ? (
+            // ── Post-injection ready state: keywords loaded, no generation yet ──
+            // Do NOT render the spinning skeleton — the user needs to explicitly
+            // trigger a generation. Show a clean, actionable CTA instead.
+            <motion.section
+              key="optimizer-run-scan"
+              dir={isRtl ? "rtl" : "ltr"}
+              className={cn(
+                "flex flex-col items-center gap-5 border-t border-dashed border-zinc-800/80 px-4 py-14 text-center sm:py-16",
+                isRtl && "font-arabic",
+              )}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: "easeOut" }}
+            >
+              <p className="max-w-md text-sm leading-relaxed text-white/55">
+                {t("empty.runScanHint")}
+              </p>
+              <button
+                type="submit"
+                form="listing-optimizer-form"
+                disabled={!canSubmit || isProcessingCredits}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-7 py-3.5 text-sm font-bold text-white shadow-[0_8px_24px_-8px_rgba(34,197,94,0.5)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0"
+              >
+                {t("empty.runScanCta")}
+              </button>
+            </motion.section>
           ) : (
+            // ── Default empty state: no injection, no generation ───────────────
             <motion.section
               key="optimizer-empty"
               className="border-t border-dashed border-zinc-800/80 px-2 py-10 text-center text-sm leading-relaxed text-white/52 sm:py-12"

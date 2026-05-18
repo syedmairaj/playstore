@@ -18,6 +18,12 @@ type Props = {
   credits: number;
   isRtl: boolean;
   onConfirm: () => void;
+  /** Override the rendered title string. When omitted, uses the default creditsConfirm.title key. */
+  titleOverride?: string;
+  /** Override the rendered body string. When omitted, uses the default creditsConfirm.body key. */
+  bodyOverride?: string;
+  /** Override the rendered confirm button label. When omitted, uses creditsConfirm.confirmContinue. */
+  confirmOverride?: string;
 };
 
 export function CompetitorSpyCreditsConfirmDialog({
@@ -26,8 +32,15 @@ export function CompetitorSpyCreditsConfirmDialog({
   credits,
   isRtl,
   onConfirm,
+  titleOverride,
+  bodyOverride,
+  confirmOverride,
 }: Props) {
   const t = useTranslations("competitorSpy.creditsConfirm");
+
+  const title = titleOverride ?? t("title");
+  const body = bodyOverride ?? t("body", { credits });
+  const confirmLabel = confirmOverride ?? t("confirmContinue");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -41,9 +54,9 @@ export function CompetitorSpyCreditsConfirmDialog({
         closeButtonSrText={t("cancel")}
       >
         <DialogHeader className={cn(isRtl ? "text-end sm:text-end" : "text-start sm:text-start")}>
-          <DialogTitle className="text-lg font-semibold text-white">{t("title")}</DialogTitle>
+          <DialogTitle className="text-lg font-semibold text-white">{title}</DialogTitle>
           <DialogDescription className="text-sm leading-relaxed text-white/60">
-            {t("body", { credits })}
+            {body}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter
@@ -68,7 +81,7 @@ export function CompetitorSpyCreditsConfirmDialog({
               onOpenChange(false);
             }}
           >
-            {t("confirmContinue")}
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
