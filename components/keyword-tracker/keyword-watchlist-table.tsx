@@ -48,6 +48,7 @@ function NotInTopRankWithHint({
           }
           side="top"
           className="max-w-[280px] border border-white/[0.12] bg-[#0a0d12] px-3 py-2 text-xs leading-relaxed text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.04]"
+          asChild
         >
           <button
             type="button"

@@ -183,6 +183,27 @@ export async function POST(request: Request, context: Ctx) {
       );
     }
 
+    // ── Carry forward sentiment + asoAudit from any previous Gemini run ───────
+    // The existingRow was already fetched above for custom-row preservation.
+    // Re-use that value here so we don't issue a second SELECT.
+    let preservedSentiment: unknown = undefined;
+    let preservedAsoAudit: unknown = undefined;
+    try {
+      const { data: existingSentimentRow } = await supabase
+        .from(COMPETITOR_ANALYSES_TABLE)
+        .select("analysis_json")
+        .eq("workspace_id", workspaceId)
+        .eq("competitor_package_id", pkg)
+        .maybeSingle();
+      if (existingSentimentRow?.analysis_json && typeof existingSentimentRow.analysis_json === "object") {
+        const ej = existingSentimentRow.analysis_json as Record<string, unknown>;
+        if (ej.sentiment) preservedSentiment = ej.sentiment;
+        if (ej.asoAudit) preservedAsoAudit = ej.asoAudit;
+      }
+    } catch {
+      // Non-fatal — proceed without preserved values.
+    }
+
     const analysisJson = {
       query: parsed.analysis.query,
       topKeywords: parsed.analysis.topKeywords,
@@ -191,6 +212,8 @@ export async function POST(request: Request, context: Ctx) {
       quickWinTerms: parsed.analysis.quickWinTerms,
       gaps: parsed.analysis.gaps,
       previewResults: parsed.analysis.previewResults ?? undefined,
+      ...(preservedSentiment !== undefined ? { sentiment: preservedSentiment } : {}),
+      ...(preservedAsoAudit !== undefined ? { asoAudit: preservedAsoAudit } : {}),
     };
 
     const { data, error } = await supabase

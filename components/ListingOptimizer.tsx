@@ -28,6 +28,8 @@ import {
   type OptimizerWizardStep,
 } from "@/components/listing/optimizer/optimizer-stepper";
 import { OptimizerCreditsConfirmDialog } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
+import { Info } from "lucide-react";
+import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
 import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog";
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
@@ -44,6 +46,7 @@ import {
 import {
   consumeInjectedOptimizerKeywords,
   consumePlaystoreKeywordContext,
+  consumePlaystoreCompetitorVulnerabilities,
   hasPlaystoreInjectedKeywordContext,
   LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE,
   mergeOptimizerKeywordText,
@@ -294,6 +297,28 @@ export function ListingOptimizer({
       : null,
   );
 
+  // ── Localization expansion state ──────────────────────────────────────────
+  type LocalizeMarket = "ae" | "in" | "mx";
+  type LocalizedMarketResult = {
+    market: LocalizeMarket;
+    label: string;
+    rtl: boolean;
+    title: string;
+    shortDescription: string;
+    longDescription: string;
+    keywords: string[];
+  };
+  const [localizeMarkets, setLocalizeMarkets] = useState<Set<LocalizeMarket>>(new Set());
+  const [localizeConfirmOpen, setLocalizeConfirmOpen] = useState(false);
+  const [localizeBusy, setLocalizeBusy] = useState(false);
+  const [localizeResults, setLocalizeResults] = useState<LocalizedMarketResult[]>([]);
+  const [localizeCopied, setLocalizeCopied] = useState<string | null>(null);
+  const [localizeError, setLocalizeError] = useState<string | null>(null);
+
+  const localizeCreditCost = AI_CREDIT_COSTS.localization;
+  // localizeTotalCredits, toggleLocalizeMarket, runLocalize, copyLocalizeText
+  // are defined after clampedListing (below) to avoid temporal dead zone.
+
   /** Last workspace-app id applied by the picker; used to detect real row changes vs refetch-only. */
   const workspacePickerPrevIdRef = useRef<string>("");
   /** One-time auto-select first workspace app so the picker is not left blank on first load. */
@@ -305,6 +330,12 @@ export function ListingOptimizer({
   /** Consumes localStorage/session injection queues once per route navigation. */
   const injectionNavKeyRef = useRef("");
   const injectionConsumedForNavRef = useRef(false);
+  /**
+   * Competitor pain-point phrases injected from the Exploit bridge.
+   * Consumed once on the first generation run as an inversion directive —
+   * never surfaced as raw search keywords in the Target Keywords field.
+   */
+  const competitorVulnerabilitiesRef = useRef<string[]>([]);
   const optimizerSessionRestoredRef = useRef(false);
   const [pickAppGate, setPickAppGate] = useState(false);
   const [wizardStep, setWizardStep] = useState<OptimizerWizardStep>(0);
@@ -590,6 +621,12 @@ export function ListingOptimizer({
       injectionConsumedForNavRef.current = true;
       injectedReplace = consumePlaystoreKeywordContext();
       injectedSession = consumeInjectedOptimizerKeywords();
+      // Consume competitor vulnerabilities alongside keyword injection so they
+      // arrive atomically. Stored in a ref — used once on the next generation run.
+      const vulns = consumePlaystoreCompetitorVulnerabilities();
+      if (vulns.length) {
+        competitorVulnerabilitiesRef.current = vulns;
+      }
     }
 
     if (!legacy && injectedReplace.length === 0 && injectedSession.length === 0) return;
@@ -1530,6 +1567,21 @@ export function ListingOptimizer({
     );
     setLoading(true);
     try {
+      // ── Competitor inversion directive ────────────────────────────────────
+      // If the Exploit bridge injected competitor pain-points, prepend a
+      // one-time system instruction that inverts them into positive positioning
+      // angles. Consumed here and cleared so it never leaks into a re-generate.
+      const vulns = competitorVulnerabilitiesRef.current;
+      competitorVulnerabilitiesRef.current = [];
+      const inversionDirective =
+        vulns.length > 0
+          ? `The competitor has the following active user complaints: ${vulns.join("; ")}. DO NOT mention these issues literally. Instead, aggressively highlight how our app solves these problems by emphasising stability, accuracy, seamless synchronisation, and a clean ad-free experience. Keep all target keywords positive and optimised for high-volume Play Store indexing.`
+          : "";
+      const effectiveInstruction = [inversionDirective, opts.userInstruction]
+        .map((s) => s?.trim())
+        .filter(Boolean)
+        .join("\n\n");
+
       const res = await fetch("/api/listings/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1542,8 +1594,8 @@ export function ListingOptimizer({
           appFeatures: features.trim(),
           toneStyle,
           targetArabic: opts.targetArabicOverride ?? locale === "ar",
-          ...(opts.userInstruction
-            ? { userInstruction: opts.userInstruction }
+          ...(effectiveInstruction
+            ? { userInstruction: effectiveInstruction }
             : {}),
         }),
       });
@@ -1777,6 +1829,71 @@ export function ListingOptimizer({
     () => clampListingTexts(editedTitle, editedShort, editedLong),
     [editedTitle, editedShort, editedLong],
   );
+
+  // ── Localization handlers (after clampedListing to avoid TDZ) ────────────
+  const localizeTotalCredits = localizeMarkets.size * localizeCreditCost;
+
+  function toggleLocalizeMarket(market: LocalizeMarket) {
+    setLocalizeMarkets((prev) => {
+      const next = new Set(prev);
+      if (next.has(market)) next.delete(market);
+      else next.add(market);
+      return next;
+    });
+  }
+
+  async function runLocalize() {
+    if (!workspaceId || localizeMarkets.size === 0 || localizeBusy) return;
+    setLocalizeBusy(true);
+    setLocalizeError(null);
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/listings/localize`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: clampedListing.title,
+            shortDescription: clampedListing.shortDescription,
+            longDescription: clampedListing.fullDescription ?? undefined,
+            keywords: result?.keywordSuggestions ?? [],
+            markets: Array.from(localizeMarkets),
+          }),
+        },
+      );
+      const data = (await res.json()) as
+        | { ok: true; results: LocalizedMarketResult[]; creditsUsed: number }
+        | { ok: false; error: { code: string; message: string } };
+
+      if (!data.ok) {
+        const errCode = (data as { ok: false; error: { code: string } }).error.code;
+        setLocalizeError(
+          errCode === "insufficient_credits"
+            ? t("results.localize.errorInsufficient")
+            : t("results.localize.errorGeneral"),
+        );
+        return;
+      }
+      const okData = data as { ok: true; results: LocalizedMarketResult[]; creditsUsed: number };
+      setLocalizeResults(okData.results);
+      if (typeof okData.creditsUsed === "number") {
+        setAiCreditsRemaining((prev) =>
+          prev !== null ? prev - okData.creditsUsed : null,
+        );
+      }
+    } catch {
+      setLocalizeError(t("results.localize.errorGeneral"));
+    } finally {
+      setLocalizeBusy(false);
+    }
+  }
+
+  function copyLocalizeText(text: string, key: string) {
+    void navigator.clipboard.writeText(text).then(() => {
+      setLocalizeCopied(key);
+      setTimeout(() => setLocalizeCopied(null), 1800);
+    });
+  }
 
   function goWizardStep(next: OptimizerWizardStep) {
     setWizardStep(next);
@@ -2489,6 +2606,281 @@ export function ListingOptimizer({
               showGenerateSuccess={generateJustSucceeded}
               canSaveToTracker={canSaveKeywordsToTracker}
             />
+
+            {/* ── Global Localization Expansion Grid ─────────────────────── */}
+            <section
+              dir={isRtl ? "rtl" : "ltr"}
+              className={cn(
+                "mt-6 rounded-2xl border border-white/[0.07] bg-[#0c1018] px-5 py-6 sm:px-7 sm:py-7",
+                isRtl && "font-arabic",
+              )}
+            >
+              {/* Header */}
+              <div className="mb-1 flex items-center gap-2.5">
+                <span className="text-base font-bold text-white/90">
+                  🌍 {t("results.localize.sectionTitle")}
+                </span>
+                <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300 ring-1 ring-emerald-500/25">
+                  Premium
+                </span>
+                <TooltipProvider>
+                  <Tooltip
+                    content={t("results.localize.headerTooltip")}
+                    side="top"
+                    className="max-w-[300px]"
+                    asChild
+                  >
+                    <button
+                      type="button"
+                      className="cursor-help rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+                      aria-label={t("results.localize.headerTooltip")}
+                    >
+                      <Info className="size-4 text-zinc-500 hover:text-zinc-300 transition-colors" aria-hidden />
+                    </button>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <p className="mb-5 text-sm leading-relaxed text-zinc-400">
+                {t("results.localize.sectionSubtitle")}
+              </p>
+
+              {/* Market selection chips */}
+              <div className="mb-5 flex flex-wrap gap-3">
+                {(
+                  [
+                    { code: "ae" as const, flag: "🇦🇪", name: t("results.localize.marketAe"), lang: t("results.localize.marketAeLanguage") },
+                    { code: "in" as const, flag: "🇮🇳", name: t("results.localize.marketIn"), lang: t("results.localize.marketInLanguage") },
+                    { code: "mx" as const, flag: "🇲🇽", name: t("results.localize.marketMx"), lang: t("results.localize.marketMxLanguage") },
+                  ] satisfies { code: LocalizeMarket; flag: string; name: string; lang: string }[]
+                ).map(({ code, flag, name, lang }) => {
+                  const selected = localizeMarkets.has(code);
+                  return (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => toggleLocalizeMarket(code)}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-xl border px-4 py-2.5 text-sm transition-all",
+                        selected
+                          ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-500/30"
+                          : "border-white/[0.08] bg-white/[0.03] text-zinc-300 hover:border-white/[0.15] hover:bg-white/[0.06]",
+                      )}
+                    >
+                      <span className="text-base leading-none" aria-hidden>{flag}</span>
+                      <span className="flex flex-col items-start gap-0.5 leading-tight">
+                        <span className="font-semibold">{name}</span>
+                        <span className={cn("text-[10px]", selected ? "text-emerald-400/70" : "text-zinc-500")}>
+                          {lang}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          "ms-1 flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-bold transition-all",
+                          selected
+                            ? "border-emerald-400 bg-emerald-500 text-white"
+                            : "border-zinc-600 bg-transparent text-transparent",
+                        )}
+                        aria-hidden
+                      >
+                        ✓
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Credits note */}
+              {localizeMarkets.size > 0 ? (
+                <p className="mb-4 text-xs text-zinc-500">
+                  {t("results.localize.creditsNote", {
+                    total: localizeTotalCredits,
+                    count: localizeMarkets.size,
+                  })}
+                </p>
+              ) : (
+                <p className="mb-4 text-xs text-zinc-600">
+                  {t("results.localize.selectHint")}
+                </p>
+              )}
+
+              {/* Error state */}
+              {localizeError ? (
+                <p className="mb-4 rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300">
+                  {localizeError}
+                </p>
+              ) : null}
+
+              {/* CTA */}
+              <button
+                type="button"
+                disabled={localizeMarkets.size === 0 || localizeBusy}
+                onClick={() => setLocalizeConfirmOpen(true)}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all",
+                  localizeMarkets.size > 0 && !localizeBusy
+                    ? "bg-emerald-500 text-white shadow-[0_6px_20px_-6px_rgba(34,197,94,0.5)] ring-2 ring-emerald-500/30 hover:bg-emerald-400"
+                    : "cursor-not-allowed bg-white/10 text-white/30",
+                )}
+              >
+                {localizeBusy ? (
+                  <>
+                    <svg className="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    {t("results.localize.ctaBusy")}
+                  </>
+                ) : localizeMarkets.size === 0 ? (
+                  t("results.localize.ctaSelectMarket")
+                ) : (
+                  t("results.localize.ctaDynamic", { credits: localizeTotalCredits })
+                )}
+              </button>
+
+              {/* Localized results */}
+              {localizeResults.length > 0 ? (
+                <div className="mt-6 space-y-4">
+                  <h3 className="text-sm font-semibold text-zinc-300">
+                    {t("results.localize.resultTitle")}
+                  </h3>
+                  {localizeResults.map((r) => (
+                    <div
+                      key={r.market}
+                      dir={r.rtl ? "rtl" : "ltr"}
+                      className={cn(
+                        "rounded-xl border border-white/[0.07] bg-[#080c12] p-4",
+                        r.rtl && "font-arabic",
+                      )}
+                    >
+                      <div className="mb-3 flex items-center gap-2">
+                        <span className="text-base" aria-hidden>
+                          {r.market === "ae" ? "🇦🇪" : r.market === "in" ? "🇮🇳" : "🇲🇽"}
+                        </span>
+                        <span className="font-semibold text-white/90">{r.label}</span>
+                        {r.rtl ? (
+                          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/20">
+                            RTL
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {/* Title */}
+                      <div className="mb-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                            {t("results.titleBlock")}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyLocalizeText(r.title, `${r.market}-title`)}
+                            className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
+                          >
+                            {localizeCopied === `${r.market}-title`
+                              ? t("results.localize.resultCopied")
+                              : t("results.localize.resultCopyTitle")}
+                          </button>
+                        </div>
+                        <p className="mt-1 text-sm text-zinc-100">{r.title}</p>
+                        <p className="mt-0.5 text-[10px] text-zinc-600">
+                          {r.title.length} / 30
+                        </p>
+                      </div>
+
+                      {/* Short description */}
+                      <div className="mb-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                            {t("results.shortBlock")}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyLocalizeText(r.shortDescription, `${r.market}-short`)}
+                            className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
+                          >
+                            {localizeCopied === `${r.market}-short`
+                              ? t("results.localize.resultCopied")
+                              : t("results.localize.resultCopyShort")}
+                          </button>
+                        </div>
+                        <p className="mt-1 text-sm text-zinc-300">{r.shortDescription}</p>
+                        <p className="mt-0.5 text-[10px] text-zinc-600">
+                          {r.shortDescription.length} / 80
+                        </p>
+                      </div>
+
+                      {/* Long description */}
+                      {r.longDescription ? (
+                        <div className="mb-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                              {t("results.longBlock")}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => copyLocalizeText(r.longDescription, `${r.market}-long`)}
+                              className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
+                            >
+                              {localizeCopied === `${r.market}-long`
+                                ? t("results.localize.resultCopied")
+                                : t("results.localize.resultCopyLong")}
+                            </button>
+                          </div>
+                          <p className="mt-1 max-h-40 overflow-y-auto text-sm leading-relaxed text-zinc-300 [scrollbar-width:thin]">
+                            {r.longDescription}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-zinc-600">
+                            {r.longDescription.length} / 4000
+                          </p>
+                        </div>
+                      ) : null}
+
+                      {/* Keywords */}
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                            {t("results.localize.keywordsLabel")}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyLocalizeText(r.keywords.join(", "), `${r.market}-kw`)}
+                            className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
+                          >
+                            {localizeCopied === `${r.market}-kw`
+                              ? t("results.localize.resultCopied")
+                              : t("results.localize.resultCopyKeywords")}
+                          </button>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {r.keywords.map((kw) => (
+                            <span
+                              key={kw}
+                              className="rounded-full bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300"
+                            >
+                              {kw}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+
+            {/* Localization credits confirm dialog */}
+            <OptimizerCreditsConfirmDialog
+              open={localizeConfirmOpen}
+              onOpenChange={(open) => {
+                setLocalizeConfirmOpen(open);
+              }}
+              credits={localizeTotalCredits}
+              isRtl={isRtl}
+              onConfirm={() => {
+                setLocalizeConfirmOpen(false);
+                void runLocalize();
+              }}
+            />
+
             </motion.div>
           ) : loading ? (
             // ── Active generation in flight: show full shimmer skeleton ────────

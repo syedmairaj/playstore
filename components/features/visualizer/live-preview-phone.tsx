@@ -424,9 +424,9 @@ export function LivePreviewPhone({
                           .map((s) => s.trim())
                           .filter(Boolean)
                           .slice(0, 8)
-                          .map((k) => (
+                          .map((k, i) => (
                             <span
-                              key={k}
+                              key={`kw-${i}-${k}`}
                               className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium leading-none text-white/58"
                             >
                               {k}

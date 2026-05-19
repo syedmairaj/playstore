@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { RankDisplay } from "@/components/keywords/rank-display";
 import { CompetitorSpyOpenPlayButton } from "@/components/competitor-spy/competitor-spy-open-play-button";
 import type { RankDisplayLabels } from "@/lib/keywords/format-rank-display";
@@ -195,16 +196,25 @@ export function CompetitorSpySnapshotCard({
                   variant="outline"
                   className="w-full border-emerald-500/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15 sm:flex-1"
                 />
-                <Button
-                  type="button"
-                  className="w-full bg-emerald-600 text-white hover:bg-emerald-500 sm:flex-1"
-                  onClick={onSendToOptimizer}
-                >
-                  <span className="inline-flex items-center justify-center gap-2">
-                    <Sparkles className="size-4 shrink-0 opacity-90" aria-hidden />
-                    {t("sendOptimizer")}
-                  </span>
-                </Button>
+                <TooltipProvider>
+                  <Tooltip
+                    content={t("sendOptimizerTooltip")}
+                    side="top"
+                    className="max-w-[280px]"
+                    asChild
+                  >
+                    <Button
+                      type="button"
+                      className="w-full bg-emerald-600 text-white hover:bg-emerald-500 sm:flex-1"
+                      onClick={onSendToOptimizer}
+                    >
+                      <span className="inline-flex items-center justify-center gap-2">
+                        <Sparkles className="size-4 shrink-0 opacity-90" aria-hidden />
+                        {t("sendOptimizer")}
+                      </span>
+                    </Button>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             </div>
           </div>

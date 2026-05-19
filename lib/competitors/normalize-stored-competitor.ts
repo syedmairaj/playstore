@@ -1,6 +1,18 @@
 import type { CompetitorSpyQuickWinPlan } from "@/lib/keywords/build-competitor-spy-from-serper-preview";
 import { isPlaceholderPlayStorePackageId } from "@/lib/keywords/play-store-details-url";
 
+export type StoredSentimentResult = {
+  topPraiseKeywords: string[];
+  reportedBugsKeywords: string[];
+  featureRequestsKeywords: string[];
+};
+
+export type StoredAsoAudit = {
+  domainAuthority: number;
+  hasVideoTrailer: boolean;
+  localizedMarketsCount: number;
+};
+
 export type StoredCompetitorSharedRow = {
   keyword: string;
   yourRank: number | null;
@@ -22,6 +34,10 @@ export type StoredCompetitor = {
   quickWinPlans?: CompetitorSpyQuickWinPlan[];
   quickWinTerms: string[];
   gaps: { keyword: string; opportunity: "high" | "medium" }[];
+  /** Persisted sentiment analysis — present after first Gemini run. */
+  sentiment?: StoredSentimentResult;
+  /** Persisted ASO off-page audit metrics — present after first Gemini run. */
+  asoAudit?: StoredAsoAudit;
 };
 
 function normalizeQuickWinPlan(raw: unknown): CompetitorSpyQuickWinPlan | null {
@@ -123,5 +139,34 @@ export function normalizeStoredCompetitorFromAnalysisJson(
           );
         })
       : [],
+    sentiment: (() => {
+      const s = o.sentiment;
+      if (!s || typeof s !== "object") return undefined;
+      const sr = s as Record<string, unknown>;
+      const arr = (k: string): string[] =>
+        Array.isArray(sr[k])
+          ? (sr[k] as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+      return {
+        topPraiseKeywords: arr("topPraiseKeywords"),
+        reportedBugsKeywords: arr("reportedBugsKeywords"),
+        featureRequestsKeywords: arr("featureRequestsKeywords"),
+      };
+    })(),
+    asoAudit: (() => {
+      const a = o.asoAudit;
+      if (!a || typeof a !== "object") return undefined;
+      const ar = a as Record<string, unknown>;
+      if (
+        typeof ar.domainAuthority !== "number" ||
+        typeof ar.hasVideoTrailer !== "boolean" ||
+        typeof ar.localizedMarketsCount !== "number"
+      ) return undefined;
+      return {
+        domainAuthority: ar.domainAuthority,
+        hasVideoTrailer: ar.hasVideoTrailer,
+        localizedMarketsCount: ar.localizedMarketsCount,
+      };
+    })(),
   };
 }

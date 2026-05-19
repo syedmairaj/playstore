@@ -17,6 +17,15 @@ export const PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE = "playstore_injected_ke
 /** Same-tab signal: Listing Optimizer should re-consume injection queues. */
 export const OPTIMIZER_KEYWORDS_INJECTED_EVENT = "playstore:optimizer-keywords-injected";
 
+/**
+ * Competitor Spy → Listing Optimizer bridge (localStorage): JSON string[].
+ * Carries competitor pain-point phrases that should be inverted into positive
+ * positioning angles — never passed as raw keywords.
+ * Read once on optimizer mount as a `userInstruction` addendum, then removed.
+ */
+export const PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE =
+  "playstore_injected_competitor_vulnerabilities";
+
 /** Restores wizard inputs on remount when no fresh keyword injection is queued. */
 export const LISTING_OPTIMIZER_SESSION_STORAGE = "playstore:optimizer:session";
 
@@ -210,6 +219,7 @@ export function clearOptimizerKeywordInjectionQueues(): void {
     sessionStorage.removeItem(SEO_OPTIMIZER_INJECTED_KEYWORDS_STORAGE);
     sessionStorage.removeItem(LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE);
     localStorage.removeItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE);
+    localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
   } catch {
     /* quota / private mode */
   }
@@ -293,6 +303,37 @@ export function buildListingOptimizerNavigationHref(
   return pathname;
 }
 
+/** Persist competitor pain-point phrases for inversion-angle generation. */
+export function setPlaystoreInjectedCompetitorVulnerabilities(terms: string[]): void {
+  if (typeof window === "undefined") return;
+  const clean = terms.map((t) => t.trim()).filter(Boolean);
+  if (!clean.length) {
+    try { localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE); } catch { /* */ }
+    return;
+  }
+  try {
+    localStorage.setItem(
+      PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE,
+      JSON.stringify(clean),
+    );
+  } catch { /* quota / private mode */ }
+}
+
+/** Read and clear the competitor vulnerabilities injection. Returns empty array if nothing stored. */
+export function consumePlaystoreCompetitorVulnerabilities(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
+    localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
 type IntlRouterPush = {
   push: (href: ListingOptimizerNavigationHref | string) => void;
 };
@@ -302,10 +343,14 @@ export function navigateToListingOptimizer(
   workspaceId: string,
   keywordsText = "",
   appId?: string,
+  competitorVulnerabilities?: string[],
 ): boolean {
   const trimmed = keywordsText.trim();
   if (trimmed) {
     setPlaystoreInjectedKeywordContext(trimmed);
+  }
+  if (competitorVulnerabilities?.length) {
+    setPlaystoreInjectedCompetitorVulnerabilities(competitorVulnerabilities);
   }
   const pathname = listingOptimizerPathname(workspaceId);
   if (!pathname) return false;
