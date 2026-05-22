@@ -19,6 +19,12 @@ export type FlatKeywordRow = {
    * null means no snapshot data for this country yet.
    */
   yourRank: number | null;
+  /**
+   * ISO timestamp of the most recent rank snapshot for this keyword × country.
+   * null means the keyword has never been fetched (Brand New state).
+   * Used to derive freshness: stale when > RANK_STALE_DAYS old.
+   */
+  capturedAt: string | null;
 };
 
 /**
@@ -48,6 +54,7 @@ export function flattenKeywordsToRows(
           source: kw,
           country: entry.country,
           yourRank: typeof entry.rank === "number" ? entry.rank : null,
+          capturedAt: entry.captured_at ?? null,
         });
       }
     } else {
@@ -62,11 +69,50 @@ export function flattenKeywordsToRows(
         source: kw,
         country: fallbackCountry,
         yourRank: kw.latest?.rank ?? null,
+        capturedAt: kw.latest?.captured_at ?? null,
       });
     }
   }
 
   return out;
+}
+
+/** Number of days after which a rank snapshot is considered stale. */
+export const RANK_STALE_DAYS = 7;
+
+/**
+ * Three-state freshness descriptor for a keyword row's rank data.
+ *
+ * - `"new"`   — no snapshot ever taken (capturedAt is null)
+ * - `"fresh"` — snapshot exists and is < RANK_STALE_DAYS old
+ * - `"stale"` — snapshot exists but is ≥ RANK_STALE_DAYS old
+ */
+export type RankFreshness = "new" | "fresh" | "stale";
+
+/**
+ * Returns the freshness state of a flat keyword row.
+ * Pure function — no side effects, safe to call in render.
+ */
+export function getRankFreshness(capturedAt: string | null): RankFreshness {
+  if (!capturedAt) return "new";
+  const ageMs = Date.now() - new Date(capturedAt).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  return ageDays >= RANK_STALE_DAYS ? "stale" : "fresh";
+}
+
+/**
+ * Returns a human-readable relative age string for display in the "Updated X ago" label.
+ * e.g. "2h ago", "3d ago", "just now"
+ */
+export function formatCapturedAgo(capturedAt: string): string {
+  const ageMs = Date.now() - new Date(capturedAt).getTime();
+  const mins = Math.floor(ageMs / (1000 * 60));
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
 /**

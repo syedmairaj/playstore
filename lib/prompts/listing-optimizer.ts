@@ -32,7 +32,7 @@ Primary Keywords: ${keywords.join(", ")}
 
 Rules:
 - Title: at most 30 characters (hard limit; never exceed).
-- Short description: at most 80 characters (hard limit; never exceed) — one sharp conversion hook; prioritize conversion; shorten aggressively if needed.
+- Short description: CRITICAL CHARACTER LIMIT — strictly under 75 characters (hard cap; never exceed). One sharp conversion hook; count every character before outputting.
 - Long description: at most 4000 characters — Feature → Benefit structure with bullet points and sections.
 - Naturally integrate keywords without stuffing.
 - Tone: ${tone}. Professional but approachable. No generic marketing fluff.
@@ -77,7 +77,7 @@ function listingOptimizerStrategyBlock(
     "",
     "Rules (Google Play HARD limits — counts every character including spaces and punctuation):",
     "- Title: at most 30 characters (never 31+). Include primary keyword naturally.",
-    "- Short description: at most 80 characters (never 81+). One powerful conversion hook; shorten wording if needed to stay ≤80.",
+    "- Short description: CRITICAL CHARACTER LIMIT — You MUST keep the generated Short Description strictly under 75 characters. Do not write marketing phrases that require truncation or post-processing clamping loops. Count every character before outputting. Never exceed 74 characters.",
     "- Long description: fewer than 4000 characters in practice — stay at or under 4000. Feature → Benefit structure, bullets/sections where helpful.",
     "- Naturally integrate keywords without stuffing.",
     `- Tone: ${tone}. Professional but approachable. No generic marketing fluff.`,
@@ -105,7 +105,7 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
     "In ONE response (no tool calls), execute this workflow internally: (1) Draft listing copy from the inputs. (2) Self-audit against the primary keywords and Google Play ASO best practices (honest claims, no keyword stuffing, strong hooks, scannable structure). (3) Rewrite weaker sections until the listing is cohesive. (4) Score the final listing with the rubric below and output a single JSON object only.",
     "Return a single JSON object only (no markdown, no code fences, no prose before or after) with exactly these keys:",
     "title: string — Google Play title, at most 30 characters (hard cap 30, never 31+); include primary keyword naturally.",
-    "shortDescription: string — at most 80 characters (hard cap 80, never 81+). One sharp hook; shorten aggressively if needed.",
+    "shortDescription: string — CRITICAL: at most 74 characters (hard cap 74, never 75+). One sharp hook; count every character before outputting; do NOT write marketing phrases that require post-processing truncation.",
     "longDescription: string — at most 4000 characters (stay ≤4000). Feature → Benefit structure, sections, bullets where helpful; weave keywords naturally, no stuffing. (Synonym: you may instead send fullDescription with the same content; prefer longDescription.)",
     "keywordSuggestions: array of 8-20 concise keyword phrases for ASO.",
     "ctaSuggestions: array of 3-8 short conversion-focused CTAs or button-style lines.",
@@ -137,16 +137,34 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
         ].join("\n")
       : "";
 
+  const exploitBlock =
+    Array.isArray(input.exploitTargets) && input.exploitTargets.length > 0
+      ? [
+          "",
+          "🔥 CRITICAL INSTRUCTIONS — STRATEGIC DISPLACEMENT CAMPAIGN:",
+          `The user has staged specific competitive loop-holes and user pain points they intend to exploit: [${input.exploitTargets.join(", ")}].`,
+          "For each staged target, apply the matching displacement strategy when writing title, shortDescription, and longDescription:",
+          "- If a target relates to stability or performance flaws (e.g., 'Bug / Crash', 'Crashes', 'Freezes'), position this app as an ultra-stable, battle-tested alternative. Use language like 'zero crashes', 'rock-solid performance', or 'built to last'.",
+          "- If a target relates to monetization friction (e.g., 'Ads too intrusive', 'Too many ads', 'Paywalled features'), highlight a smooth premium experience, fair pricing, or ad-light design.",
+          "- If a target relates to missing features or limited functionality (e.g., 'Missing feature', 'Limited', 'Basic'), showcase this app's depth and comprehensive feature set.",
+          "- If a target relates to poor UX or confusing navigation (e.g., 'Hard to use', 'Confusing UI', 'Poor UX'), emphasize intuitive design, ease of use, and fast onboarding.",
+          "- If a target relates to negative sentiment or general dissatisfaction (e.g., 'Disappointing', 'Overpriced', 'Not worth it'), craft copy that directly addresses value, trust, and user satisfaction.",
+          "- For any other target not matched above, infer the most relevant displacement angle (reliability, value, features, UX) and apply it assertively.",
+          "Seamlessly blend these competitive marketing angles into the storefront metadata copy without breaking character limits. Do not reference competitor names directly. The displacement must read as natural feature positioning, not attack advertising.",
+        ].join("\n")
+      : "";
+
   const user = [
     strategy,
     "",
     "Using the rules above, produce the JSON object described in the system message (including aso_score, score_breakdown, and improvement_tips).",
     "",
-    "REMINDER — hard limits on your JSON strings (count every character): title ≤30, shortDescription ≤80, longDescription ≤4000. Prioritize conversion; shorten shortDescription if needed so it never exceeds 80.",
+    "REMINDER — hard limits on your JSON strings (count every character): title ≤30, shortDescription ≤74 (CRITICAL: never exceed 74 characters — do not write marketing phrases that need truncation or clamping), longDescription ≤4000. Prioritize conversion; shorten shortDescription aggressively if needed.",
     "",
     "App features / value props:",
     input.appFeatures,
     refinement,
+    exploitBlock,
   ].join("\n");
 
   return { system, user };

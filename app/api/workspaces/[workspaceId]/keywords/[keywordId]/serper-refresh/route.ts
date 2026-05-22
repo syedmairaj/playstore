@@ -17,11 +17,71 @@ import {
   serperCountriesForKeywordRefresh,
 } from "@/lib/keywords/serper-snapshot-rank";
 import {
+  normPkgForSerperSnapshot,
+  effectiveSerperPreviewItemPackage,
+} from "@/lib/keywords/serper-snapshot-rank-resolve";
+import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
+import {
   SerperNotConfiguredError,
   isSerperConfigured,
   searchPlayStore,
+  type SerperPlayStoreCountryResult,
 } from "@/lib/serper";
+import { logAdminAiTransaction } from "@/lib/admin/log-ai-transaction";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dual-competitor rank resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolves the best organic Play Store rank for `competitorPkg` in country `cc`
+ * from the Serper results array.
+ *
+ * Returns:
+ *   - A numeric string e.g. `"7"` when the app appears in the first 100 results.
+ *   - `"100+"` when the package is NOT found in the top 100 (clean UI badge).
+ *   - `null`   when `competitorPkg` is empty / null (slot is unused — writes NULL).
+ */
+function resolveCompetitorRankString(
+  results: SerperPlayStoreCountryResult[],
+  competitorPkg: string | null | undefined,
+  cc: string,
+): string | null {
+  const want = normPkgForSerperSnapshot(competitorPkg);
+  if (!want) return null; // slot empty → sparse NULL
+
+  const country = String(cc ?? "").trim().toLowerCase();
+  const block = results.find(
+    (r) => String(r.country ?? "").trim().toLowerCase() === country,
+  );
+  if (!block || block.error) return "100+";
+
+  let best: number | undefined;
+  for (const item of block.items) {
+    const ep = effectiveSerperPreviewItemPackage({
+      packageId: item.packageId,
+      link: item.link,
+    });
+    if (!ep) continue;
+    const isMatch =
+      ep === want ||
+      ep.startsWith(`${want}.`) ||
+      want.startsWith(`${ep}.`);
+    if (!isMatch) continue;
+    const pos =
+      typeof item.position === "number" && Number.isFinite(item.position)
+        ? item.position
+        : typeof item.position === "string"
+          ? Number.parseInt(item.position, 10)
+          : NaN;
+    if (!Number.isFinite(pos)) continue;
+    if (best === undefined || pos < best) best = pos;
+  }
+
+  if (best === undefined) return "100+";
+  return best >= SERPER_RANK_NOT_IN_FIRST_PAGE ? "100+" : String(best);
+}
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/keywords/[keywordId]/serper-refresh";
 
@@ -191,6 +251,22 @@ export async function POST(_request: Request, context: Ctx) {
 
   const ledgerId = debit.ledgerId;
 
+  // ── Query the workspace's 2 active competitor slots ────────────────────────
+  // Pulled BEFORE the credit debit so the snapshot rows include competitor ranks
+  // without any additional billing cost. Ordered by analyzed_at desc so the most
+  // recently analysed competitor occupies slot 1.
+  const { data: competitorRows } = await supabase
+    .from("workspace_competitor_analyses")
+    .select("competitor_package_id,competitor_name")
+    .eq("workspace_id", workspaceId)
+    .order("analyzed_at", { ascending: false })
+    .limit(2);
+
+  const comp1Pkg: string | null =
+    (competitorRows?.[0]?.competitor_package_id as string | undefined) ?? null;
+  const comp2Pkg: string | null =
+    (competitorRows?.[1]?.competitor_package_id as string | undefined) ?? null;
+
   try {
     const snapshotAt = new Date().toISOString();
     // Live Serper only (searchPlayStore uses cache: "no-store"). Deep organic slice for refresh;
@@ -211,13 +287,21 @@ export async function POST(_request: Request, context: Ctx) {
     const prevRank =
       prevRows && prevRows.length > 0 ? (prevRows[0].rank as number | null) : null;
 
-    // Ranks match apps.package_name (pkg) to Serper item packageId / ?id= from Play URLs — never app display title.
+    // Build one snapshot row per country.
+    // competitor_1_rank / competitor_2_rank: numeric string ("7") or "100+" when not
+    // found; null when the competitor slot is empty (keeps the column sparse / NULL).
     const rows = countries.map((cc) => ({
       keyword_id: keywordId,
       rank: resolveRankInCountryForSerperSnapshot(results, pkg, cc),
       source: "serper" as const,
       country_code: cc,
       snapshot_at: snapshotAt,
+      // Competitor slot 1
+      competitor_1_package: comp1Pkg ?? null,
+      competitor_1_rank: resolveCompetitorRankString(results, comp1Pkg, cc),
+      // Competitor slot 2
+      competitor_2_package: comp2Pkg ?? null,
+      competitor_2_rank: resolveCompetitorRankString(results, comp2Pkg, cc),
     }));
 
     const primaryRank = resolveRankInCountryForSerperSnapshot(results, pkg, mkt);
@@ -225,7 +309,7 @@ export async function POST(_request: Request, context: Ctx) {
     const { data: snaps, error: snapErr } = await supabase
       .from("keyword_rank_snapshots")
       .insert(rows)
-      .select("id,rank,snapshot_at,best_rank,source,country_code");
+      .select("id,rank,snapshot_at,best_rank,source,country_code,competitor_1_package,competitor_1_rank,competitor_2_package,competitor_2_rank");
 
     if (snapErr || !snaps?.length) {
       throw new Error(snapErr?.message ?? "snapshot_insert_failed");
@@ -258,12 +342,35 @@ export async function POST(_request: Request, context: Ctx) {
       newPrimaryRank: primaryRank,
     });
 
+    void logAdminAiTransaction({
+      providerService: "serper",
+      userId: user.id,
+      workspaceId,
+      featureSlug: "serper_keyword_refresh",
+      totalQueriesRun: countries.length,
+      creditsCharged: creditCost,
+    });
+
     return NextResponse.json({
       ok: true,
       rank: primarySnap.rank,
       snapshotAt: primarySnap.snapshot_at,
       creditsCharged: creditCost,
       countries,
+      // Surface competitor ranks to the client so the optimistic table patch
+      // can immediately display fresh competitor badges without a re-fetch.
+      competitor1: comp1Pkg
+        ? {
+            packageId: comp1Pkg,
+            rank: primarySnap.competitor_1_rank as string | null ?? null,
+          }
+        : null,
+      competitor2: comp2Pkg
+        ? {
+            packageId: comp2Pkg,
+            rank: primarySnap.competitor_2_rank as string | null ?? null,
+          }
+        : null,
     });
   } catch (e) {
     const refund = await refundWorkspaceAiCredits(supabase, {

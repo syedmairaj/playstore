@@ -22,6 +22,7 @@ import {
 } from "@/components/competitor-spy/competitor-spy-keyword-gap-table";
 import { RankDisplay } from "@/components/keywords/rank-display";
 import { OptimizerShimmerBar } from "@/components/listing/optimizer/optimizer-shimmer-bar";
+import { OptimizerWorkspace } from "@/components/optimizer/OptimizerWorkspace";
 import { CompetitorSpySnapshotCard } from "@/components/competitor-spy/competitor-spy-snapshot-card";
 import {
   readPersistedActiveCountry,
@@ -1975,10 +1976,34 @@ export function CompetitorSpyClient({
                 />
               ) : null}
 
+              {/* ── Max-competitors warning ───────────────────────────────── */}
+              {competitors.length >= 2 ? (
+                <div
+                  className={cn(
+                    "flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200",
+                    isRtl && "flex-row-reverse text-end",
+                  )}
+                  role="alert"
+                >
+                  <span className="mt-0.5 shrink-0 text-base leading-none" aria-hidden>⚠️</span>
+                  <div className="space-y-1">
+                    <p className="font-semibold">Maximum of 2 tracked competitors reached</p>
+                    <p className="text-xs leading-relaxed text-amber-200/70">
+                      Remove an existing competitor via <button
+                        type="button"
+                        className="underline underline-offset-2 hover:text-amber-100 transition-colors"
+                        onClick={() => setManageOpen(true)}
+                      >Manage Competitors</button> to add a new one.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               <form
                 className={cn(
                   "flex w-full flex-col gap-4 md:items-start md:justify-between",
                   isRtl ? "md:flex-row-reverse" : "md:flex-row",
+                  competitors.length >= 2 && "pointer-events-none opacity-50",
                 )}
                 onSubmit={onAnalyzeRequest}
               >
@@ -1986,8 +2011,12 @@ export function CompetitorSpyClient({
                   <Input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder={t("add.placeholder")}
-                    disabled={blockingError}
+                    placeholder={
+                      competitors.length >= 2
+                        ? "Slot limit reached (2/2). Delete a competitor below to add a new one."
+                        : t("add.placeholder")
+                    }
+                    disabled={blockingError || competitors.length >= 2}
                     className="h-11 border-white/[0.1] bg-[#070a0f] text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-emerald-500/40"
                   />
                   <div className="space-y-1.5 text-sm text-zinc-400">
@@ -2018,7 +2047,8 @@ export function CompetitorSpyClient({
                           analyzePending ||
                           query.trim().length < 2 ||
                           blockingError ||
-                          selectedCountries.length === 0
+                          selectedCountries.length === 0 ||
+                          competitors.length >= 2
                         }
                         className="h-11 w-full bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"
                       >
@@ -2778,7 +2808,8 @@ export function CompetitorSpyClient({
 
                       {/* Exploit with AI Optimizer CTA */}
                       {exploitTerms.length > 0 ? (
-                        <div className="flex flex-col gap-2">
+                        <OptimizerWorkspace workspaceId={workspaceId}>
+                          <div className="flex flex-col gap-2">
                           <p className="inline-flex items-center gap-1.5 self-start rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-300/80 ring-1 ring-amber-500/20">
                             {t("reviewSentiment.exploitBadge")}
                           </p>
@@ -2806,7 +2837,8 @@ export function CompetitorSpyClient({
                               </Tooltip>
                             </TooltipProvider>
                           </div>
-                        </div>
+                          </div>
+                        </OptimizerWorkspace>
                       ) : null}
 
                       {/* Disclaimer */}
@@ -2828,6 +2860,83 @@ export function CompetitorSpyClient({
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-col lg:border-s lg:border-white/[0.06] lg:ps-10">
+
+          {/* ── Dual Competitor Switcher (when 2 tracked) ─────────────── */}
+          {competitors.length >= 2 ? (
+            <div
+              dir={isRtl ? "rtl" : "ltr"}
+              className={cn(
+                "mb-4 overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0c1018]",
+                isRtl && "font-arabic",
+              )}
+            >
+              <div className="border-b border-white/[0.06] px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                  Tracked Competitors
+                </p>
+              </div>
+              <div className="divide-y divide-white/[0.05]">
+                {competitors.slice(0, 2).map((comp) => {
+                  const isActive = comp.id === selectedCompetitorId;
+                  const compMinRank = minTheirRankFromShared(comp);
+                  return (
+                    <button
+                      key={comp.id}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center gap-3 px-4 py-3 text-start transition-colors",
+                        isRtl && "flex-row-reverse text-end",
+                        isActive
+                          ? "bg-emerald-500/10 text-white"
+                          : "text-zinc-300 hover:bg-white/[0.03]",
+                      )}
+                      onClick={() => selectCompetitor(comp.id)}
+                      aria-pressed={isActive}
+                    >
+                      {/* Initial avatar */}
+                      <div
+                        className={cn(
+                          "flex size-8 shrink-0 items-center justify-center rounded-xl text-sm font-bold",
+                          isActive
+                            ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40"
+                            : "bg-zinc-800 text-zinc-400 ring-1 ring-white/[0.06]",
+                        )}
+                        aria-hidden
+                      >
+                        {(comp.displayName[0] ?? "?").toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <p className="truncate text-sm font-semibold leading-tight">
+                          {comp.displayName}
+                        </p>
+                        <p className="truncate font-mono text-[10px] text-zinc-500">
+                          {comp.packageId}
+                        </p>
+                      </div>
+                      {compMinRank != null && compMinRank < 101 ? (
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ring-1",
+                            isActive
+                              ? "bg-emerald-500/15 text-emerald-200 ring-emerald-500/30"
+                              : "bg-zinc-800 text-zinc-400 ring-zinc-700/50",
+                          )}
+                        >
+                          #{compMinRank}
+                        </span>
+                      ) : null}
+                      {isActive ? (
+                        <span className="ms-1 shrink-0 text-emerald-400 text-xs" aria-label="Selected">
+                          ●
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           {activeCompetitor ? (
             <CompetitorSpySnapshotCard
               isRtl={isRtl}

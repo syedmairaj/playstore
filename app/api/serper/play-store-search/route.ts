@@ -18,6 +18,7 @@ import {
   isSerperConfigured,
   searchPlayStore,
 } from "@/lib/serper";
+import { logAdminAiTransaction } from "@/lib/admin/log-ai-transaction";
 import { serperSearchBodySchema } from "@/lib/validation/serper-search-body";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 
@@ -159,6 +160,19 @@ export async function POST(request: Request) {
     const results = await searchPlayStore(parsed.keyword, parsed.countries, {
       restrictToPlayStore: parsed.restrictToPlayStore ?? false,
     });
+
+    const isCompetitorSpy = parsed.pricingProfile === "competitor_spy";
+    void logAdminAiTransaction({
+      providerService: "serper",
+      userId: user.id,
+      workspaceId: parsed.workspaceId,
+      featureSlug: isCompetitorSpy
+        ? "serper_competitor_spy"
+        : "serper_play_store_preview",
+      totalQueriesRun: parsed.countries.length,
+      creditsCharged: creditCost,
+    });
+
     return NextResponse.json({
       ok: true,
       results,

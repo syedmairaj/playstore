@@ -1,51 +1,28 @@
 # Settings Page
 
-## Tabs Structure
-- Workspace.
-- Team.
-- Billing.
-- Integrations.
-- Notifications.
-- Account.
+## Tabs Structure (3 tabs)
+- **Workspace & Apps** — workspace name, apps list, team roster + invites, danger zone.
+- **Billing & Credit Usage** — AI credits + keyword usage cards, plan, credit consumption ledger.
+- **Integrations & Alerts** — notification switches, alert threshold, account profile + sign out.
 
-## Workspace Tab
+## Workspace & Apps Tab
 - Workspace name.
-- Apps list.
-- Usage overview.
-- Plan limits.
-- Delete workspace.
+- Apps list (icon, name, package, active/inactive, actions).
+- Team members + invite.
+- Delete workspace (owner).
 
-## Team Tab
-- Team members list.
-- Invite new member.
-- Role assignment (admin, member).
-- Remove member.
+## Billing & Credit Usage Tab
+- Usage summary cards (AI credits, tracked keywords).
+- Current plan + upgrade link.
+- Credit consumption ledger table (`credits_ledger`).
 
-## Billing Tab
-- Current plan.
-- Upgrade/downgrade.
-- Payment method.
-- Invoice history.
-- Usage breakdown.
-
-## Integrations Tab
-- Google Play Connect (future).
-- Slack notifications (future).
-- Zapier (future).
-
-## Notifications Tab
-- Email preferences.
-- Alert thresholds.
-- Weekly summary toggle.
-
-## Account Tab
-- Profile info.
-- Password change.
-- Delete account.
-- Logout.
+## Integrations & Alerts Tab
+- Email alerts, weekly summary (switches).
+- Rank drop threshold.
+- Display name, sign out.
+- No non-functional integration placeholders.
 
 ## UX Rules
-- Make destructive actions clear.
-- Use confirmation modals.
-- Keep forms simple.
-- Show current state clearly.
+- Dark premium zinc/emerald dashboard styling.
+- RTL-aware tab navigation (`dir` on container).
+- Destructive actions require confirmation.

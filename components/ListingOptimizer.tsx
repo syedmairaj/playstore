@@ -63,6 +63,18 @@ import {
   parseLogoGeneratorMetadata,
   resolveListingPreviewIconUrl,
 } from "@/lib/apps/logo-generator-metadata";
+import { ActiveOptimizationQueuePanel } from "@/components/optimizer/ActiveOptimizationQueuePanel";
+import { LocalizedResults } from "@/components/optimizer/LocalizedResults";
+import {
+  LOCALIZE_MARKETS,
+  type LocalizeMarketCode,
+  type LocalizedMarketRecord,
+} from "@/lib/listing/localized-markets";
+import {
+  buildListingImprovementsGenerateDirective,
+  fetchUnutilizedListingImprovements,
+  type ListingImprovementItem,
+} from "@/components/reviews/review-improvements-queue";
 import { cn } from "@/lib/utils";
 
 type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
@@ -137,6 +149,48 @@ const REGENERATE_MODEL_INSTRUCTIONS = {
 
 function metaString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function mergeLocalizedMarkets(
+  prev: LocalizedMarketRecord[],
+  incoming: LocalizedMarketRecord[],
+): LocalizedMarketRecord[] {
+  const map = new Map(prev.map((m) => [m.market, m]));
+  for (const row of incoming) map.set(row.market, row);
+  return LOCALIZE_MARKETS.filter((code) => map.has(code)).map(
+    (code) => map.get(code)!,
+  );
+}
+
+function defaultActiveLocalizeMarket(
+  markets: LocalizedMarketRecord[],
+): LocalizeMarketCode {
+  if (markets.some((m) => m.market === "ae")) return "ae";
+  return markets[0]?.market ?? "ae";
+}
+
+function buildLocalizedExportTxt(record: LocalizedMarketRecord): string {
+  return [
+    `Title: ${record.title}`,
+    "",
+    `Short Description: ${record.shortDescription}`,
+    "",
+    `Long Description: ${record.longDescription}`,
+    "",
+    `Keywords: ${record.keywords.join(", ")}`,
+  ].join("\n");
+}
+
+function downloadLocalizedMarketTxt(record: LocalizedMarketRecord) {
+  const blob = new Blob([buildLocalizedExportTxt(record)], {
+    type: "text/plain;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `play-listing-${record.market}.txt`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 /** Avoids `RangeError: Invalid time value` when `Intl` formats a bad timestamp. */
@@ -222,6 +276,7 @@ export function ListingOptimizer({
   initialApps?: {
     id: string;
     name: string;
+    package_name?: string | null;
     metadata?: Record<string, unknown> | null;
     icon_url?: string | null;
   }[];
@@ -298,20 +353,18 @@ export function ListingOptimizer({
   );
 
   // ── Localization expansion state ──────────────────────────────────────────
-  type LocalizeMarket = "ae" | "in" | "mx";
-  type LocalizedMarketResult = {
-    market: LocalizeMarket;
-    label: string;
-    rtl: boolean;
-    title: string;
-    shortDescription: string;
-    longDescription: string;
-    keywords: string[];
-  };
+  type LocalizeMarket = LocalizeMarketCode;
   const [localizeMarkets, setLocalizeMarkets] = useState<Set<LocalizeMarket>>(new Set());
   const [localizeConfirmOpen, setLocalizeConfirmOpen] = useState(false);
+  const [localizeRegenerateConfirmOpen, setLocalizeRegenerateConfirmOpen] = useState(false);
+  const [localizeRegenerateMarket, setLocalizeRegenerateMarket] =
+    useState<LocalizeMarketCode | null>(null);
+  const [localizeInputExpanded, setLocalizeInputExpanded] = useState(false);
   const [localizeBusy, setLocalizeBusy] = useState(false);
-  const [localizeResults, setLocalizeResults] = useState<LocalizedMarketResult[]>([]);
+  const [localizeRegeneratingMarket, setLocalizeRegeneratingMarket] =
+    useState<LocalizeMarketCode | null>(null);
+  const [localizedMarkets, setLocalizedMarkets] = useState<LocalizedMarketRecord[]>([]);
+  const [activeMarket, setActiveMarket] = useState<LocalizeMarketCode>("ae");
   const [localizeCopied, setLocalizeCopied] = useState<string | null>(null);
   const [localizeError, setLocalizeError] = useState<string | null>(null);
 
@@ -336,6 +389,8 @@ export function ListingOptimizer({
    * never surfaced as raw search keywords in the Target Keywords field.
    */
   const competitorVulnerabilitiesRef = useRef<string[]>([]);
+  const [queuedImprovements, setQueuedImprovements] = useState<ListingImprovementItem[]>([]);
+  const [queuedImprovementsLoading, setQueuedImprovementsLoading] = useState(false);
   const optimizerSessionRestoredRef = useRef(false);
   const [pickAppGate, setPickAppGate] = useState(false);
   const [wizardStep, setWizardStep] = useState<OptimizerWizardStep>(0);
@@ -419,6 +474,7 @@ export function ListingOptimizer({
         apps?: {
           id: string;
           name: string;
+          package_name?: string | null;
           metadata?: Record<string, unknown> | null;
           icon_url?: string | null;
         }[];
@@ -434,6 +490,11 @@ export function ListingOptimizer({
       return rows.map((a) => ({
         id: String((a as { id?: unknown }).id ?? ""),
         name: String((a as { name?: unknown }).name ?? ""),
+        package_name:
+          typeof (a as { package_name?: unknown }).package_name === "string" &&
+          (a as { package_name: string }).package_name.trim()
+            ? (a as { package_name: string }).package_name.trim()
+            : null,
         metadata:
           (a as { metadata?: Record<string, unknown> | null }).metadata ?? null,
         icon_url:
@@ -770,6 +831,99 @@ export function ListingOptimizer({
     applyOptimizerKeywordInjection();
   }, [applyOptimizerKeywordInjection]);
 
+  const refreshQueuedImprovements = useCallback(() => {
+    if (!workspaceId) {
+      setQueuedImprovements([]);
+      setQueuedImprovementsLoading(false);
+      return;
+    }
+    setQueuedImprovementsLoading(true);
+    void fetchUnutilizedListingImprovements(workspaceId).then((rows) => {
+      setQueuedImprovements(rows);
+      setQueuedImprovementsLoading(false);
+    });
+  }, [workspaceId]);
+
+  useEffect(() => {
+    refreshQueuedImprovements();
+  }, [refreshQueuedImprovements]);
+
+  // ── Queue item deletion ───────────────────────────────────────────────────
+  const handleRemoveQueueItem = useCallback(
+    (itemId: string) => {
+      // Optimistic: remove from local state immediately
+      setQueuedImprovements((prev) => prev.filter((item) => item.id !== itemId));
+      // Skip API call for synthetic url-inject stubs (no DB row)
+      if (itemId.startsWith("url-exploit-")) return;
+      if (!workspaceId) return;
+      void fetch(
+        `/api/workspaces/${workspaceId}/listing-improvements/${itemId}`,
+        { method: "DELETE", credentials: "same-origin" },
+      ).then((res) => {
+        if (!res.ok) {
+          // Re-fetch if the server rejected the deletion
+          refreshQueuedImprovements();
+        }
+      }).catch(() => {
+        refreshQueuedImprovements();
+      });
+    },
+    [workspaceId, refreshQueuedImprovements],
+  );
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── exploit_targets URL param → queue injection ──────────────────────────
+  // When the user navigates here from Competitor Spy with ?exploit_targets=…,
+  // synthesise stub ListingImprovementItem entries from the encoded labels,
+  // merge them into queuedImprovements, show a toast, then clear the param.
+  useEffect(() => {
+    const raw = searchParams.get("exploit_targets");
+    if (!raw?.trim()) return;
+
+    let decoded = raw.trim();
+    try { decoded = decodeURIComponent(decoded); } catch { /* keep raw */ }
+
+    const labels = decoded
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!labels.length) return;
+
+    const stubs: ListingImprovementItem[] = labels.map((label, i) => ({
+      id: `url-exploit-${i}-${label.replace(/\s+/g, "-").toLowerCase()}`,
+      reviewId: `url-exploit-${i}`,
+      reviewText: label,
+      userName: "",
+      score: 0,
+      sentimentTag: label,
+      appId: null,
+      packageName: null,
+      isUtilized: false,
+      createdAt: new Date().toISOString(),
+    }));
+
+    setQueuedImprovements((prev) => {
+      const existingIds = new Set(prev.map((p) => p.id));
+      const fresh = stubs.filter((s) => !existingIds.has(s.id));
+      return fresh.length ? [...prev, ...fresh] : prev;
+    });
+
+    toast.success(t("activeQueue.exploitTargetsToast"), {
+      description: t("activeQueue.exploitTargetsToastDescription"),
+      duration: 6000,
+    });
+
+    // Clear the param from the URL so it doesn't re-fire on re-render
+    try {
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.delete("exploit_targets");
+      const qs = sp.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname);
+    } catch { /* */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  // ─────────────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     function onInjected() {
       keywordsPrefillAppliedRef.current = false;
@@ -844,6 +998,39 @@ export function ListingOptimizer({
     previewShortDesc,
     previewIconUrl,
   ]);
+
+  useEffect(() => {
+    const appId = selectedAppId.trim();
+    if (!workspaceId || !appId) {
+      setLocalizedMarkets([]);
+      setLocalizeInputExpanded(true);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/workspaces/${workspaceId}/listings/localize?appId=${encodeURIComponent(appId)}`,
+        );
+        const data = (await res.json()) as
+          | { ok: true; markets: LocalizedMarketRecord[] }
+          | { ok: false };
+        if (cancelled || !data.ok) return;
+        setLocalizedMarkets(data.markets);
+        setLocalizeInputExpanded(data.markets.length === 0);
+        setActiveMarket((prev) =>
+          data.markets.some((m) => m.market === prev)
+            ? prev
+            : defaultActiveLocalizeMarket(data.markets),
+        );
+      } catch {
+        /* non-blocking */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, selectedAppId]);
 
   const canSubmit = useMemo(() => {
     const appGateOk =
@@ -1577,7 +1764,14 @@ export function ListingOptimizer({
         vulns.length > 0
           ? `The competitor has the following active user complaints: ${vulns.join("; ")}. DO NOT mention these issues literally. Instead, aggressively highlight how our app solves these problems by emphasising stability, accuracy, seamless synchronisation, and a clean ad-free experience. Keep all target keywords positive and optimised for high-volume Play Store indexing.`
           : "";
-      const effectiveInstruction = [inversionDirective, opts.userInstruction]
+      const improvementsDirective = buildListingImprovementsGenerateDirective(
+        queuedImprovements,
+      );
+      const effectiveInstruction = [
+        inversionDirective,
+        improvementsDirective,
+        opts.userInstruction,
+      ]
         .map((s) => s?.trim())
         .filter(Boolean)
         .join("\n\n");
@@ -1648,6 +1842,28 @@ export function ListingOptimizer({
       suppressListingHydrationRef.current = false;
       setPurgedAwaitingGenerate(false);
       setResult(d);
+      // Derive the fresh AI-generated keywords and features from the response
+      // object — NOT from the closed-over state variables (keywords / features),
+      // which still hold the pre-generation user input at this point in the
+      // render cycle. Using the closed-over variables here would stamp stale
+      // values into hydrationByApp, causing the async /api/listings/latest
+      // effect to overwrite the AI copy back to the old text on the next render.
+      const freshKeywordsText = d.keywordSuggestions?.length
+        ? d.keywordSuggestions.join(", ")
+        : keywords.trim();
+      const freshFeatures = d.fullDescription?.trim() || features.trim();
+
+      // Back-fill form inputs with AI-suggested content so the user sees
+      // what drove the generation and can iterate from it.
+      if (d.keywordSuggestions?.length) {
+        setKeywords(freshKeywordsText);
+      }
+      if (freshFeatures && freshFeatures !== features.trim()) {
+        setFeatures(freshFeatures);
+      }
+      // Clear the staging queue — provides clean confirmation state now that
+      // the AI has consumed all queued improvements.
+      setQueuedImprovements([]);
       setGenerateJustSucceeded(true);
       setWizardStep(2);
       setWizardPanelPeek({});
@@ -1667,6 +1883,26 @@ export function ListingOptimizer({
           listingOutputToFinalListingCache(d, savedIso, generationIdFromApi),
         );
       }
+      // Back-patch the listing_generations row with AI-derived values so that a
+      // hard page reload hydrates the AI copy rather than the pre-generation
+      // user input. Best-effort: fire-and-forget, never blocks the UI.
+      if (generationIdFromApi) {
+        const kws = d.keywordSuggestions?.length
+          ? d.keywordSuggestions
+          : keywords.trim().split(/\s*,\s*/).filter(Boolean);
+        void fetch("/api/listings/generate", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            generationId: generationIdFromApi,
+            appFeatures: freshFeatures,
+            targetKeywords: kws,
+          }),
+        }).catch(() => {
+          // Best-effort — swallow silently
+        });
+      }
       if (generationIdFromApi && sid) {
         const gid = generationIdFromApi;
         setHydrationByApp((prev) => ({
@@ -1676,8 +1912,12 @@ export function ListingOptimizer({
             createdAt: savedIso,
             appName: displayAppName,
             category: category.trim(),
-            keywordsText: keywords.trim(),
-            appFeatures: features.trim(),
+            // Use the fresh AI-derived values so the in-memory hydration
+            // snapshot matches what was just written to localStorage and DB.
+            // This prevents the async /api/listings/latest refetch from
+            // overwriting these fields back to the pre-generation text.
+            keywordsText: freshKeywordsText,
+            appFeatures: freshFeatures,
             toneStyle,
             output: d,
           },
@@ -1830,8 +2070,67 @@ export function ListingOptimizer({
     [editedTitle, editedShort, editedLong],
   );
 
+  const activeLocalized = useMemo(
+    () => localizedMarkets.find((m) => m.market === activeMarket),
+    [localizedMarkets, activeMarket],
+  );
+
+  const hasLocalizedAssets = localizedMarkets.length > 0;
+  const showLocalizeMarketPicker =
+    !hasLocalizedAssets || localizeInputExpanded;
+
+  const previewFieldsForPhone = useMemo(() => {
+    const showLocalizedPhone =
+      hasLocalizedAssets &&
+      activeLocalized &&
+      !(showLocalizeMarketPicker && localizeMarkets.size > 0);
+
+    if (showLocalizedPhone && activeLocalized) {
+      return {
+        title: activeLocalized.title,
+        shortDescription: activeLocalized.shortDescription,
+        fullDescription: activeLocalized.longDescription,
+      };
+    }
+    return clampedListing;
+  }, [
+    activeLocalized,
+    clampedListing,
+    hasLocalizedAssets,
+    showLocalizeMarketPicker,
+    localizeMarkets.size,
+  ]);
+
+  const previewShortForPhone =
+    hasLocalizedAssets &&
+    activeLocalized &&
+    !(showLocalizeMarketPicker && localizeMarkets.size > 0)
+      ? activeLocalized.shortDescription
+      : previewShortDesc;
+
+  const phonePreviewDir: "ltr" | "rtl" =
+    hasLocalizedAssets &&
+    activeLocalized &&
+    !(showLocalizeMarketPicker && localizeMarkets.size > 0)
+      ? activeLocalized.rtl
+        ? "rtl"
+        : "ltr"
+      : isRtl
+        ? "rtl"
+        : "ltr";
+
+  const savedMarketCodes = useMemo(
+    () => new Set(localizedMarkets.map((m) => m.market)),
+    [localizedMarkets],
+  );
+  const pendingLocalizeMarkets = useMemo(
+    () =>
+      Array.from(localizeMarkets).filter((code) => !savedMarketCodes.has(code)),
+    [localizeMarkets, savedMarketCodes],
+  );
+
   // ── Localization handlers (after clampedListing to avoid TDZ) ────────────
-  const localizeTotalCredits = localizeMarkets.size * localizeCreditCost;
+  const localizeTotalCredits = pendingLocalizeMarkets.length * localizeCreditCost;
 
   function toggleLocalizeMarket(market: LocalizeMarket) {
     setLocalizeMarkets((prev) => {
@@ -1842,8 +2141,13 @@ export function ListingOptimizer({
     });
   }
 
-  async function runLocalize() {
-    if (!workspaceId || localizeMarkets.size === 0 || localizeBusy) return;
+  async function runLocalizeForMarkets(
+    markets: LocalizeMarket[],
+    options?: { isReGeneration?: boolean },
+  ) {
+    if (!workspaceId || !selectedAppId.trim() || markets.length === 0 || localizeBusy) {
+      return;
+    }
     setLocalizeBusy(true);
     setLocalizeError(null);
     try {
@@ -1853,16 +2157,23 @@ export function ListingOptimizer({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            appId: selectedAppId.trim(),
             title: clampedListing.title,
             shortDescription: clampedListing.shortDescription,
             longDescription: clampedListing.fullDescription ?? undefined,
-            keywords: result?.keywordSuggestions ?? [],
-            markets: Array.from(localizeMarkets),
+            keywords: result?.keywordSuggestions ?? keywords.split(/[,;\n]+/).map((k) => k.trim()).filter(Boolean),
+            markets,
+            isReGeneration: options?.isReGeneration === true,
           }),
         },
       );
       const data = (await res.json()) as
-        | { ok: true; results: LocalizedMarketResult[]; creditsUsed: number }
+        | {
+            ok: true;
+            results: LocalizedMarketRecord[];
+            creditsUsed: number;
+            failures?: Array<{ market: LocalizeMarket; code: string; message: string }>;
+          }
         | { ok: false; error: { code: string; message: string } };
 
       if (!data.ok) {
@@ -1874,18 +2185,111 @@ export function ListingOptimizer({
         );
         return;
       }
-      const okData = data as { ok: true; results: LocalizedMarketResult[]; creditsUsed: number };
-      setLocalizeResults(okData.results);
+      const okData = data as {
+        ok: true;
+        results: LocalizedMarketRecord[];
+        creditsUsed: number;
+        failures?: Array<{ market: LocalizeMarket; code: string; message: string }>;
+      };
+      setLocalizedMarkets((prev) => {
+        const merged = mergeLocalizedMarkets(prev, okData.results);
+        setActiveMarket((activePrev) =>
+          okData.results.some((m) => m.market === activePrev)
+            ? activePrev
+            : defaultActiveLocalizeMarket(merged),
+        );
+        return merged;
+      });
+      if (okData.failures?.length) {
+        const failedLabels = okData.failures
+          .map((f) => {
+            if (f.market === "ae") return t("results.localize.marketAe");
+            if (f.market === "in") return t("results.localize.marketIn");
+            return t("results.localize.marketMx");
+          })
+          .join(", ");
+        setLocalizeError(
+          t("results.localize.errorPartial", { markets: failedLabels }),
+        );
+      }
       if (typeof okData.creditsUsed === "number") {
         setAiCreditsRemaining((prev) =>
           prev !== null ? prev - okData.creditsUsed : null,
         );
+      }
+      setLocalizeMarkets((prev) => {
+        const next = new Set(prev);
+        for (const row of okData.results) next.delete(row.market);
+        return next;
+      });
+      if (okData.results.length > 0) {
+        setLocalizeInputExpanded(false);
       }
     } catch {
       setLocalizeError(t("results.localize.errorGeneral"));
     } finally {
       setLocalizeBusy(false);
     }
+  }
+
+  async function runLocalize() {
+    await runLocalizeForMarkets(pendingLocalizeMarkets);
+  }
+
+  async function regenerateLocalizedMarket(market: LocalizeMarketCode) {
+    setLocalizeRegeneratingMarket(market);
+    try {
+      await runLocalizeForMarkets([market], { isReGeneration: true });
+    } finally {
+      setLocalizeRegeneratingMarket(null);
+    }
+  }
+
+  async function deleteLocalizedMarket(market: LocalizeMarketCode) {
+    if (!workspaceId || !selectedAppId.trim() || localizeBusy) return;
+    setLocalizeBusy(true);
+    setLocalizeError(null);
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/listings/localize?appId=${encodeURIComponent(selectedAppId.trim())}&market=${encodeURIComponent(market)}`,
+        { method: "DELETE" },
+      );
+      const data = (await res.json()) as { ok: boolean };
+      if (!data.ok) {
+        setLocalizeError(t("results.localize.errorDelete"));
+        return;
+      }
+      setLocalizedMarkets((prev) => {
+        const next = prev.filter((m) => m.market !== market);
+        setActiveMarket((activePrev) =>
+          next.some((m) => m.market === activePrev)
+            ? activePrev
+            : defaultActiveLocalizeMarket(next),
+        );
+        if (next.length === 0) setLocalizeInputExpanded(true);
+        return next;
+      });
+      setLocalizeMarkets((prev) => {
+        const next = new Set(prev);
+        next.delete(market);
+        return next;
+      });
+    } catch {
+      setLocalizeError(t("results.localize.errorDelete"));
+    } finally {
+      setLocalizeBusy(false);
+    }
+  }
+
+  function exportLocalizedMarket(market: LocalizeMarketCode) {
+    const record = localizedMarkets.find((m) => m.market === market);
+    if (!record) return;
+    downloadLocalizedMarketTxt(record);
+  }
+
+  function requestRegenerateLocalizedMarket(market: LocalizeMarketCode) {
+    setLocalizeRegenerateMarket(market);
+    setLocalizeRegenerateConfirmOpen(true);
   }
 
   function copyLocalizeText(text: string, key: string) {
@@ -2440,6 +2844,18 @@ export function ListingOptimizer({
                   disabledToggle={wizardStep === 2}
                 >
                   <div className="space-y-5 border-t border-zinc-800/60 pt-5 sm:pt-6">
+                    {workspaceId ? (
+                      <ActiveOptimizationQueuePanel
+                        items={queuedImprovements}
+                        loading={queuedImprovementsLoading}
+                        className="mb-0"
+                        isRtl={isRtl}
+                        credits={AI_CREDIT_COSTS.listing_generation}
+                        onGenerate={() => void runListingGeneration({ mode: "fresh" })}
+                        onRemoveItem={handleRemoveQueueItem}
+                        ownPackageName={selectedAppRow?.package_name ?? null}
+                      />
+                    ) : null}
                     <p className="text-xs leading-relaxed text-white/45">
                       {t("form.sectionVoiceHelper", {
                         credits: AI_CREDIT_COSTS.listing_generation,
@@ -2520,7 +2936,7 @@ export function ListingOptimizer({
           </section>
 
           <AnimatePresence mode="wait">
-          {result ? (
+          {result || localizedMarkets.length > 0 ? (
             <motion.div
               key="optimizer-results"
               initial={{ opacity: 0 }}
@@ -2528,6 +2944,7 @@ export function ListingOptimizer({
               exit={{ opacity: 0 }}
               transition={{ duration: 0.5, ease: "easeOut" }}
             >
+            {result ? (
             <OptimizerResultsPanel
               result={result}
               meta={meta}
@@ -2606,6 +3023,7 @@ export function ListingOptimizer({
               showGenerateSuccess={generateJustSucceeded}
               canSaveToTracker={canSaveKeywordsToTracker}
             />
+            ) : null}
 
             {/* ── Global Localization Expansion Grid ─────────────────────── */}
             <section
@@ -2640,11 +3058,27 @@ export function ListingOptimizer({
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <p className="mb-5 text-sm leading-relaxed text-zinc-400">
+              <p
+                className={cn(
+                  "text-sm leading-relaxed text-zinc-400",
+                  hasLocalizedAssets ? "mb-3" : "mb-5",
+                )}
+              >
                 {t("results.localize.sectionSubtitle")}
               </p>
 
-              {/* Market selection chips */}
+              {hasLocalizedAssets && !showLocalizeMarketPicker ? (
+                <button
+                  type="button"
+                  onClick={() => setLocalizeInputExpanded(true)}
+                  className="mb-5 text-sm font-medium text-emerald-400/90 hover:text-emerald-300"
+                >
+                  {t("results.localize.addAnotherMarket")}
+                </button>
+              ) : null}
+
+              {showLocalizeMarketPicker ? (
+              <>
               <div className="mb-5 flex flex-wrap gap-3">
                 {(
                   [
@@ -2653,15 +3087,19 @@ export function ListingOptimizer({
                     { code: "mx" as const, flag: "🇲🇽", name: t("results.localize.marketMx"), lang: t("results.localize.marketMxLanguage") },
                   ] satisfies { code: LocalizeMarket; flag: string; name: string; lang: string }[]
                 ).map(({ code, flag, name, lang }) => {
+                  const alreadySaved = savedMarketCodes.has(code);
                   const selected = localizeMarkets.has(code);
                   return (
                     <button
                       key={code}
                       type="button"
+                      disabled={alreadySaved || localizeBusy}
                       onClick={() => toggleLocalizeMarket(code)}
                       className={cn(
                         "flex items-center gap-2.5 rounded-xl border px-4 py-2.5 text-sm transition-all",
-                        selected
+                        alreadySaved
+                          ? "cursor-not-allowed border-white/[0.06] bg-white/[0.02] text-zinc-600 opacity-60"
+                          : selected
                           ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-500/30"
                           : "border-white/[0.08] bg-white/[0.03] text-zinc-300 hover:border-white/[0.15] hover:bg-white/[0.06]",
                       )}
@@ -2689,12 +3127,11 @@ export function ListingOptimizer({
                 })}
               </div>
 
-              {/* Credits note */}
-              {localizeMarkets.size > 0 ? (
+              {pendingLocalizeMarkets.length > 0 ? (
                 <p className="mb-4 text-xs text-zinc-500">
                   {t("results.localize.creditsNote", {
                     total: localizeTotalCredits,
-                    count: localizeMarkets.size,
+                    count: pendingLocalizeMarkets.length,
                   })}
                 </p>
               ) : (
@@ -2703,21 +3140,17 @@ export function ListingOptimizer({
                 </p>
               )}
 
-              {/* Error state */}
-              {localizeError ? (
-                <p className="mb-4 rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300">
-                  {localizeError}
-                </p>
-              ) : null}
-
-              {/* CTA */}
               <button
                 type="button"
-                disabled={localizeMarkets.size === 0 || localizeBusy}
+                disabled={
+                  pendingLocalizeMarkets.length === 0 ||
+                  localizeBusy ||
+                  !selectedAppId.trim()
+                }
                 onClick={() => setLocalizeConfirmOpen(true)}
                 className={cn(
                   "inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all",
-                  localizeMarkets.size > 0 && !localizeBusy
+                  pendingLocalizeMarkets.length > 0 && !localizeBusy
                     ? "bg-emerald-500 text-white shadow-[0_6px_20px_-6px_rgba(34,197,94,0.5)] ring-2 ring-emerald-500/30 hover:bg-emerald-400"
                     : "cursor-not-allowed bg-white/10 text-white/30",
                 )}
@@ -2730,140 +3163,52 @@ export function ListingOptimizer({
                     </svg>
                     {t("results.localize.ctaBusy")}
                   </>
-                ) : localizeMarkets.size === 0 ? (
+                ) : pendingLocalizeMarkets.length === 0 ? (
                   t("results.localize.ctaSelectMarket")
                 ) : (
                   t("results.localize.ctaDynamic", { credits: localizeTotalCredits })
                 )}
               </button>
 
-              {/* Localized results */}
-              {localizeResults.length > 0 ? (
-                <div className="mt-6 space-y-4">
-                  <h3 className="text-sm font-semibold text-zinc-300">
-                    {t("results.localize.resultTitle")}
-                  </h3>
-                  {localizeResults.map((r) => (
-                    <div
-                      key={r.market}
-                      dir={r.rtl ? "rtl" : "ltr"}
-                      className={cn(
-                        "rounded-xl border border-white/[0.07] bg-[#080c12] p-4",
-                        r.rtl && "font-arabic",
-                      )}
-                    >
-                      <div className="mb-3 flex items-center gap-2">
-                        <span className="text-base" aria-hidden>
-                          {r.market === "ae" ? "🇦🇪" : r.market === "in" ? "🇮🇳" : "🇲🇽"}
-                        </span>
-                        <span className="font-semibold text-white/90">{r.label}</span>
-                        {r.rtl ? (
-                          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/20">
-                            RTL
-                          </span>
-                        ) : null}
-                      </div>
+              {hasLocalizedAssets ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocalizeInputExpanded(false);
+                    setLocalizeMarkets(new Set());
+                  }}
+                  className="ms-3 text-xs text-zinc-500 hover:text-zinc-300"
+                >
+                  {t("results.localize.hideMarketPicker")}
+                </button>
+              ) : null}
+              </>
+              ) : null}
 
-                      {/* Title */}
-                      <div className="mb-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                            {t("results.titleBlock")}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => copyLocalizeText(r.title, `${r.market}-title`)}
-                            className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
-                          >
-                            {localizeCopied === `${r.market}-title`
-                              ? t("results.localize.resultCopied")
-                              : t("results.localize.resultCopyTitle")}
-                          </button>
-                        </div>
-                        <p className="mt-1 text-sm text-zinc-100">{r.title}</p>
-                        <p className="mt-0.5 text-[10px] text-zinc-600">
-                          {r.title.length} / 30
-                        </p>
-                      </div>
+              {localizeError ? (
+                <p
+                  className={cn(
+                    "rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300",
+                    hasLocalizedAssets && !showLocalizeMarketPicker ? "mt-4" : "mb-4",
+                  )}
+                >
+                  {localizeError}
+                </p>
+              ) : null}
 
-                      {/* Short description */}
-                      <div className="mb-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                            {t("results.shortBlock")}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => copyLocalizeText(r.shortDescription, `${r.market}-short`)}
-                            className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
-                          >
-                            {localizeCopied === `${r.market}-short`
-                              ? t("results.localize.resultCopied")
-                              : t("results.localize.resultCopyShort")}
-                          </button>
-                        </div>
-                        <p className="mt-1 text-sm text-zinc-300">{r.shortDescription}</p>
-                        <p className="mt-0.5 text-[10px] text-zinc-600">
-                          {r.shortDescription.length} / 80
-                        </p>
-                      </div>
-
-                      {/* Long description */}
-                      {r.longDescription ? (
-                        <div className="mb-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                              {t("results.longBlock")}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => copyLocalizeText(r.longDescription, `${r.market}-long`)}
-                              className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
-                            >
-                              {localizeCopied === `${r.market}-long`
-                                ? t("results.localize.resultCopied")
-                                : t("results.localize.resultCopyLong")}
-                            </button>
-                          </div>
-                          <p className="mt-1 max-h-40 overflow-y-auto text-sm leading-relaxed text-zinc-300 [scrollbar-width:thin]">
-                            {r.longDescription}
-                          </p>
-                          <p className="mt-0.5 text-[10px] text-zinc-600">
-                            {r.longDescription.length} / 4000
-                          </p>
-                        </div>
-                      ) : null}
-
-                      {/* Keywords */}
-                      <div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                            {t("results.localize.keywordsLabel")}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => copyLocalizeText(r.keywords.join(", "), `${r.market}-kw`)}
-                            className="text-[11px] text-emerald-400/80 hover:text-emerald-300"
-                          >
-                            {localizeCopied === `${r.market}-kw`
-                              ? t("results.localize.resultCopied")
-                              : t("results.localize.resultCopyKeywords")}
-                          </button>
-                        </div>
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          {r.keywords.map((kw) => (
-                            <span
-                              key={kw}
-                              className="rounded-full bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300"
-                            >
-                              {kw}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              {localizedMarkets.length > 0 ? (
+                <LocalizedResults
+                  markets={localizedMarkets}
+                  activeMarket={activeMarket}
+                  onActiveMarketChange={setActiveMarket}
+                  copiedKey={localizeCopied}
+                  onCopy={copyLocalizeText}
+                  marketActionBusy={localizeBusy}
+                  regeneratingMarket={localizeRegeneratingMarket}
+                  onRegenerateMarket={requestRegenerateLocalizedMarket}
+                  onExportMarket={exportLocalizedMarket}
+                  onDeleteMarket={(market) => void deleteLocalizedMarket(market)}
+                />
               ) : null}
             </section>
 
@@ -2878,6 +3223,21 @@ export function ListingOptimizer({
               onConfirm={() => {
                 setLocalizeConfirmOpen(false);
                 void runLocalize();
+              }}
+            />
+            <OptimizerCreditsConfirmDialog
+              open={localizeRegenerateConfirmOpen}
+              onOpenChange={(open) => {
+                setLocalizeRegenerateConfirmOpen(open);
+                if (!open) setLocalizeRegenerateMarket(null);
+              }}
+              credits={localizeCreditCost}
+              isRtl={isRtl}
+              onConfirm={() => {
+                const market = localizeRegenerateMarket;
+                setLocalizeRegenerateConfirmOpen(false);
+                setLocalizeRegenerateMarket(null);
+                if (market) void regenerateLocalizedMarket(market);
               }}
             />
 
@@ -2947,11 +3307,12 @@ export function ListingOptimizer({
           onOpenLogoGen={() => setLogoGenOpen(true)}
           appName={previewAppName}
           category={category}
-          keywords={keywords}
+          keywords={result ? keywords : ""}
           features={features}
-          previewShortDesc={previewShortDesc}
+          previewShortDesc={previewShortForPhone}
           livePreviewIconUrl={livePreviewIconUrl}
-          clampedListing={clampedListing}
+          clampedListing={previewFieldsForPhone}
+          previewDir={phonePreviewDir}
           result={result}
           loading={loading}
           isGenerating={loading && !result}

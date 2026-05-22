@@ -23,6 +23,10 @@ export const AI_CREDIT_COSTS = {
   localization: 2,
   /** Live Serper Google preview per market (Keyword Tracker / Competitor Spy); 1 credit × country count. */
   serper_preview_per_country: 1,
+  /** AI draft reply for a single Play Store review (Reviews dashboard). */
+  reviews_ai_reply: 1,
+  /** On-demand marketplace ecosystem scan: re-crawls tracked keywords + competitor listings and writes fresh alerts. */
+  marketplace_scan: 1,
 } as const;
 
 /** First N tracked keywords from a given listing generation are free (AI credits). */

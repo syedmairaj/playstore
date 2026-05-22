@@ -249,12 +249,21 @@ export function consumeAllOptimizerKeywordInjections(): string[] {
   const parts: string[] = [];
   const seen = new Set<string>();
   for (const term of [...fromContext, ...fromSession]) {
+    if (!isValidAsoKeywordTerm(term)) continue;
     const key = term.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     parts.push(term);
   }
   return parts;
+}
+
+/** ASO chip terms only — excludes review snippets accidentally queued as keywords. */
+export function isValidAsoKeywordTerm(term: string): boolean {
+  const t = term.trim();
+  if (t.length < 1 || t.length > 48) return false;
+  if (/\s/.test(t) && t.length > 32) return false;
+  return true;
 }
 
 /** Merge comma/newline-separated keyword text with additional unique terms (max 2000 chars). */
@@ -265,7 +274,7 @@ export function mergeOptimizerKeywordText(existing: string, additions: string[])
   for (const chunk of sources) {
     for (const term of chunk.split(/[,;\n]+/u)) {
       const t = term.trim();
-      if (t.length < 1) continue;
+      if (!isValidAsoKeywordTerm(t)) continue;
       const key = t.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);

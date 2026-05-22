@@ -1,7 +1,7 @@
 "use client";
 
 import type { RefObject } from "react";
-import { ImagePlus, Minimize2 } from "lucide-react";
+import { Minimize2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { LivePreviewPhone } from "@/components/features/visualizer/live-preview-phone";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
@@ -40,6 +40,8 @@ export type OptimizerPreviewInnerProps = {
   showHeader?: boolean;
   /** Attached to the scaled phone wrapper for sticky viewport checks. */
   phoneMeasureRef?: RefObject<HTMLDivElement | null>;
+  /** Overrides in-phone text direction (e.g. localized Arabic market tab). */
+  previewDir?: "ltr" | "rtl";
 };
 
 export function OptimizerPreviewInner({
@@ -66,37 +68,34 @@ export function OptimizerPreviewInner({
   compact = false,
   showHeader = true,
   phoneMeasureRef,
+  previewDir: previewDirProp,
 }: OptimizerPreviewInnerProps) {
   const t = useTranslations("optimizer");
+  const previewDir = previewDirProp ?? (isRtl ? "rtl" : "ltr");
 
   return (
     <div className="relative mx-auto flex w-full max-w-[340px] flex-col items-center gap-4">
-      {showHeader ? (
+      {showHeader && showMinimize && onMinimize ? (
         <div
           className={cn(
-            "flex w-full items-center justify-between gap-3",
-            isRtl && "flex-row-reverse",
+            "flex w-full",
+            isRtl ? "flex-row-reverse justify-start" : "justify-end",
           )}
         >
-          <p className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-400/85">
-            {t("preview.label")}
-          </p>
-          {showMinimize && onMinimize ? (
-            <button
-              type="button"
-              onClick={onMinimize}
-              aria-label={t("preview.minimizeAria")}
-              title={t("preview.minimizePreview")}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-900/80 px-2.5 py-1.5 text-[11px] font-medium whitespace-nowrap text-white/70",
-                "transition-[color,background-color,border-color] duration-200 hover:border-zinc-600 hover:bg-zinc-800 hover:text-white/90",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#34A853]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080f0d]",
-              )}
-            >
-              <Minimize2 className="size-3.5 opacity-80" aria-hidden />
-              <span className="hidden sm:inline">{t("preview.minimizePreview")}</span>
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={onMinimize}
+            aria-label={t("preview.minimizeAria")}
+            title={t("preview.minimizePreview")}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-900/80 px-2.5 py-1.5 text-[11px] font-medium whitespace-nowrap text-white/70",
+              "transition-[color,background-color,border-color] duration-200 hover:border-zinc-600 hover:bg-zinc-800 hover:text-white/90",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#34A853]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080f0d]",
+            )}
+          >
+            <Minimize2 className="size-3.5 opacity-80" aria-hidden />
+            <span className="hidden sm:inline">{t("preview.minimizePreview")}</span>
+          </button>
         </div>
       ) : null}
 
@@ -107,21 +106,6 @@ export function OptimizerPreviewInner({
           "max-lg:scale-[0.9] max-xl:scale-95",
         )}
       >
-        {showChangeLogoBtn ? (
-          <button
-            type="button"
-            onClick={onOpenLogoGen}
-            aria-label={t("preview.clickToChangeLogo")}
-            title={t("preview.clickToChangeLogo")}
-            className={cn(
-              "absolute end-2 top-2 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-[#22C55E]/38 bg-[#22C55E]/14 text-[#d1fae5] shadow-[0_4px_14px_-6px_rgba(34,197,94,0.35)] backdrop-blur-sm",
-              "transition-[transform,box-shadow,border-color,background-color] duration-200 motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#22C55E]/55 motion-safe:hover:bg-[#22C55E]/22 motion-safe:hover:shadow-[0_8px_22px_-8px_rgba(34,197,94,0.45)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080f0d]",
-            )}
-          >
-            <ImagePlus className="size-3.5 shrink-0 opacity-95" aria-hidden />
-          </button>
-        ) : null}
         <div
           className={cn(
             "w-full rounded-2xl border bg-gradient-to-b from-[#0a1210]/96 via-[#080f0d] to-[#050807] backdrop-blur-md transition-[box-shadow,border-color,ring-color] duration-300",
@@ -140,7 +124,7 @@ export function OptimizerPreviewInner({
           <LivePreviewPhone
             appName={appName}
             category={category}
-            keywords={keywords}
+            keywords={result ? keywords : ""}
             featuresDraft={features}
             draftShortDescription={previewShortDesc}
             iconUrl={livePreviewIconUrl}
@@ -149,7 +133,7 @@ export function OptimizerPreviewInner({
             loading={loading}
             isGenerating={isGenerating}
             scanActive={scanActive}
-            previewDir={isRtl ? "rtl" : "ltr"}
+            previewDir={previewDir}
             showEmptyIconAsoHint={showEmptyIconAsoHint}
             onLogoSquircleClick={
               !logoGenTriggerDisabled ? onOpenLogoGen : undefined

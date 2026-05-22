@@ -29,6 +29,61 @@
     "asoRankImprovement": {
       "title": "Listing optimization payoff",
       "body": "Congrats! Your keyword \"{keyword}\" improved from #{from} to #{to} after your recent AI listing optimization."
+    },
+    "page": {
+      "title": "Alerts",
+      "subtitle": "Real-time ASO intelligence — keyword shifts, competitor moves, and review anomalies.",
+      "markAllRead": "Mark all read",
+      "updating": "Updating…",
+      "unread": "{count} unread",
+      "noAlerts": "No alerts yet. When a keyword rank slips, a competitor updates their listing, or a review anomaly is detected, it will appear here.",
+      "filters": {
+        "all": "All Alerts",
+        "keyword": "Keyword Changes",
+        "competitor": "Competitor Spying",
+        "sentiment": "Sentiment Drops"
+      },
+      "demo": {
+        "eyebrow": "Live feed preview",
+        "note": "These are example alerts. Live signals activate once keyword tracking is running."
+      },
+      "scan": {
+        "cta": "Scan Now",
+        "ctaRunning": "Scanning…",
+        "creditCost": "1 credit",
+        "confirmTitle": "Run Marketplace Scan?",
+        "confirmBody": "This will re-crawl your tracked keywords and competitor listings for fresh rank data, writing new alerts for any drops detected. Costs 1 AI credit.",
+        "confirmCta": "Run Scan — 1 Credit",
+        "cancel": "Cancel",
+        "successToast": "Marketplace scan complete — {count} new alert(s) detected. Competitor metadata, review sentiments, and app health checks have been updated.",
+        "noNewAlerts": "Marketplace scan complete. Competitor metadata, review sentiments, and app health checks are fully up to date.",
+        "errorRefunded": "Scan failed. Your credit has been refunded.",
+        "insufficientCredits": "You need at least 1 credit to run an on-demand scan."
+      },
+      "emptyFilter": {
+        "all": "No alerts yet. Live signals will appear here once keyword tracking is active.",
+        "keyword": "No keyword shift alerts yet. We monitor every tracked keyword daily — any rank drop of 3+ positions triggers an alert here.",
+        "competitor": "No competitor alerts yet. When a rival updates their title, short description, or adds new keywords, you'll see it here instantly.",
+        "sentiment": "No sentiment alerts yet. We surface anomalies when 2+ consecutive low-star reviews appear within a short window — protecting your conversion rate."
+      },
+      "card1": {
+        "tag": "High Priority · Keyword Alert",
+        "title": "Keyword Position Drop (−7)",
+        "body": "Your core tracked search asset 'sugar tracker' dropped from position #3 to #10 in the United States marketplace.",
+        "cta": "Optimize Listing Now"
+      },
+      "card2": {
+        "tag": "Competitive Intelligence",
+        "title": "Competitor Meta Change: MyFitnessPal",
+        "body": "MyFitnessPal: Calorie Counter updated its storefront short description, adding the target phrase 'sodium tracking controls'.",
+        "cta": "View Variant Changes"
+      },
+      "card3": {
+        "tag": "Conversion Risk",
+        "title": "Review Sentiment Anomaly",
+        "body": "An unusual spike of three consecutive 1-star reviews was recorded within the last 3 hours complaining about 'Google Play Sign-In Timeout'.",
+        "cta": "Draft AI Replies"
+      }
     }
   },
   "hero": {
@@ -318,6 +373,106 @@
       }
     }
   },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Workspace, billing, alerts, and your account in one place.",
+    "tabs": {
+      "workspace": "Workspace & Apps",
+      "billing": "Billing & Credit Usage",
+      "integrations": "Integrations & Alerts"
+    },
+    "errors": {
+      "generic": "Something went wrong. Try again.",
+      "limitsCheck": "Could not verify app limits. Refresh and try again."
+    },
+    "workspace": {
+      "nameTitle": "Workspace name",
+      "save": "Save",
+      "appsTitle": "Apps",
+      "appsHint": "Apps linked to this workspace for ASO and tracking.",
+      "addApp": "Add app",
+      "noApps": "No apps yet. Add your first Google Play app.",
+      "noPackage": "No package ID",
+      "statusActive": "Active",
+      "statusInactive": "Inactive",
+      "appActions": "App actions",
+      "openOptimizer": "Open listing optimizer",
+      "openKeywords": "Open keyword tracker",
+      "teamTitle": "Team",
+      "teamHint": "Members with access to this workspace.",
+      "inviteMember": "Invite member",
+      "inviteHint": "Pending invite — they join when they sign up with the same email.",
+      "invitePlaceholder": "colleague@company.com",
+      "roleMember": "Member",
+      "roleAdmin": "Admin",
+      "pendingInvites": "Pending invites",
+      "dangerTitle": "Danger zone",
+      "dangerHint": "Permanently delete this workspace and all related data.",
+      "deleteWorkspace": "Delete workspace",
+      "deleteConfirm": "Delete this workspace and all data? This cannot be undone.",
+      "upgradeApps": "Upgrade your plan to add more apps.",
+      "appSlots": "{count} / {limit} app slots used",
+      "unlimited": "unlimited"
+    },
+    "billing": {
+      "aiCredits": "AI credits",
+      "aiCreditsHint": "Remaining balance vs monthly allocation.",
+      "creditsRemaining": "{pct}% of allocation remaining",
+      "trackedKeywords": "Tracked keywords",
+      "keywordsHint": "Keywords in this workspace on {plan}.",
+      "currentPlan": "Current plan",
+      "viewPlans": "View plans & upgrade",
+      "upgradeManagePlan": "Upgrade / Manage plan",
+      "exportLedger": "Export Ledger (.csv)",
+      "timeRange": {
+        "label": "Time range",
+        "7days": "Last 7 Days",
+        "30days": "Last 30 Days",
+        "thisMonth": "This Month",
+        "lastMonth": "Last Month"
+      },
+      "changePlanOwner": "Change plan (owner testing)",
+      "ledgerTitle": "Credit consumption ledger",
+      "ledgerHint": "Recent credit movements from your workspace wallet.",
+      "ledgerEmpty": "No credit activity yet.",
+      "creditUnit": "Credits",
+      "columns": {
+        "date": "Date",
+        "feature": "Feature",
+        "target": "Target identity",
+        "credits": "Credits charged"
+      },
+      "ledger": {
+        "features": {
+          "serper": "Live rank preview",
+          "localize": "Listing localization",
+          "sentiment": "Review sentiment",
+          "listing": "AI listing generation"
+        }
+      },
+      "ledgerPagination": {
+        "showingRange": "Showing {from}–{to} of {total}",
+        "rowsPerPage": "Rows per page",
+        "prevPage": "Previous",
+        "nextPage": "Next",
+        "pageOf": "Page {page} of {total}"
+      }
+    },
+    "integrations": {
+      "alertsTitle": "Notifications",
+      "alertsHint": "Email and ranking alert preferences.",
+      "emailAlerts": "Email alerts",
+      "weeklySummary": "Weekly summary",
+      "alertThreshold": "Rank drop alert threshold (positions)",
+      "alertThresholdHint": "Notify when a tracked keyword drops by this many positions.",
+      "saveAlerts": "Save alert preferences",
+      "accountTitle": "Your account",
+      "accountHint": "Profile and session for your login.",
+      "displayName": "Display name",
+      "saveProfile": "Save profile",
+      "passwordHint": "Password changes use Supabase Auth — sign out and use Forgot password on the login screen."
+    }
+  },
   "keywordTracker": {
     "title": "Keyword Tracker",
     "subheadline": "Track terms for Google Play. Rank snapshots build history and light alerts when movement matters.",
@@ -405,6 +560,7 @@
       "market": "Market",
       "currentRank": "Current rank",
       "competitorRank": "Competitor rank",
+      "competitors": "Competitors",
       "bestRank": "Your rank",
       "trend": "Trend (7d)",
       "lastUpdated": "Last updated",
@@ -753,7 +909,6 @@
     "subheadline": "Turn real user reviews into actionable insights and rating alerts.",
     "loading": "Loading…",
     "retry": "Try again",
-    "disclaimer": "Real review pulling coming soon.",
     "overview": {
       "srTitle": "Review overview",
       "avgRating": "Average rating",
@@ -767,10 +922,76 @@
       "sparkHint": "Daily average rating — illustrative until live sync.",
       "trendUpSr": "Trending up"
     },
+    "filters": {
+      "stars": {
+        "label": "Star rating",
+        "all": "All stars",
+        "star5": "5 stars",
+        "star4": "4 stars",
+        "star3": "3 stars",
+        "star2": "2 stars",
+        "star1": "1 star"
+      },
+      "locale": {
+        "label": "Country / locale",
+        "all": "All locales",
+        "usEn": "US · English",
+        "aeAr": "UAE · Arabic",
+        "inHi": "India · Hindi"
+      },
+      "classification": {
+        "label": "Classification",
+        "all": "All types",
+        "bugCrash": "Bug / crash",
+        "featureRequest": "Feature request",
+        "pricing": "Pricing",
+        "praise": "Praise"
+      },
+      "searchPlaceholder": "🔍 Search reviews…",
+      "searchAria": "Search reviews",
+      "noResults": "No reviews match your filters."
+    },
+    "classification": {
+      "bug_crash": "Bug / crash",
+      "feature_request": "Feature request",
+      "pricing": "Pricing",
+      "praise": "Praise"
+    },
+    "row": {
+      "draftAiReply": "Draft AI Reply ({credits} credit)",
+      "drafting": "Drafting…",
+      "draftLabel": "AI reply draft",
+      "copyReply": "Copy to clipboard",
+      "copySuccess": "Reply copied to clipboard.",
+      "copyError": "Could not copy. Try selecting the text manually.",
+      "draftError": "Could not generate a reply. Try again.",
+      "insufficientCredits": "Need {required} credit(s); you have {remaining}.",
+      "insufficientCreditsShort": "Not enough AI credits for this draft.",
+      "draftReadyHint": "Edit in Play Console before publishing.",
+      "draftCachedHint": "Draft saved — open again without using another credit.",
+      "addToListing": "Add to listing improvements",
+      "addedToQueue": "✓ Added to AI Optimizer Queue",
+      "addedToQueueToast": "Review insights queued for AI Listing Optimizer.",
+      "addToQueueError": "Could not queue this review. Try again.",
+      "closeReply": "Close",
+      "exploitLoophole": "⚔️ Stage Competitor Exploit",
+      "addedToCompetitorQueue": "✓ Staged in Exploit Queue",
+      "competitorQueueToast": "Competitor weakness staged in your AI Optimizer Queue."
+    },
+    "appSelector": {
+      "sectionLabel": "Review source",
+      "myApp": "🛡️ My App",
+      "myAppSubtitle": "Defensive — improve your own metadata",
+      "competitorPrefix": "⚔️",
+      "competitorSubtitle": "Offensive — exploit their weaknesses",
+      "loadingCompetitors": "Loading competitors…",
+      "noCompetitors": "No tracked competitors yet",
+      "noCompetitorsHint": "Add competitors in Competitor Spy to unlock this filter."
+    },
     "recent": {
       "kicker": "Inbox",
       "title": "Recent reviews",
-      "subtitle": "Latest shopper voices with sentiment tags — act on what moves ratings.",
+      "subtitle": "Latest shopper voices with classification tags — act on what moves ratings.",
       "readMore": "Read more",
       "readLess": "Read less",
       "columns": {
@@ -779,7 +1000,11 @@
         "date": "Date",
         "sentiment": "Sentiment",
         "actions": "Actions"
-      }
+      },
+      "noOwnReviewsTitle": "📈 Monitoring Setup Active",
+      "noOwnReviewsBody": "Your app does not have live storefront reviews yet. Once your product is published on the Play Store, your user feedback and automated sentiment analysis tracking loops will stream here automatically.",
+      "competitorFeedTitle": "⚔️ Competitor Intelligence Feed",
+      "competitorFeedSubtitle": "Sample complaints and pain points from this competitor's Play Store listing — stage them as exploit targets to position your app against their weaknesses."
     },
     "sentiment": {
       "positive": "Positive",
@@ -896,8 +1121,8 @@
   },
   "pricingModal": {
     "close": "Close",
-    "title": "Choose Your Plan",
-    "subtitle": "Upgrade or switch plans to unlock more AI credits and workspace limits.",
+    "title": "Choose Your Plan (Stripe)",
+    "subtitle": "Upgrade or manage your subscription via Stripe checkout to unlock more AI credits and workspace limits.",
     "mostPopular": "Most popular",
     "currentBadge": "Current plan",
     "perMo": "/mo",
@@ -1125,6 +1350,58 @@
         "aiAssistTooltip": "AI Assist (uses credits)"
       }
     },
+    "workspace": {
+      "queueTitle": "📥 Target Vulnerabilities Queue",
+      "queueSubtext": "The following user feedback themes and specific complaints will be used by Gemini to generate high-converting, defensive app store copy:",
+      "queueEmpty": "No specific feedback themes added yet. AI will generate standard strategic updates based on metadata defaults.",
+      "queueLoading": "Loading queued feedback…"
+    },
+    "activeQueue": {
+      "title": "📥 Active Optimization Queue",
+      "subtext": "Themes and reviews below will be auto-exploited by the AI to build high-converting storefront metadata copy:",
+      "empty": "No review themes queued yet. Add items from Reviews or Competitor Spy to steer the next generation.",
+      "loading": "Loading optimization queue…",
+      "ctaGenerate": "✨ Generate Optimized Metadata Copy Using These Insights",
+      "exploitTargetsToast": "✨ Review insights loaded! Your next optimization run will counter these issues in the generated copy.",
+      "exploitTargetsToastDescription": "Themes are now staged in the Active Optimization Queue below.",
+      "pillTooltipReviewer": "Reviewer Insight",
+      "pillRemoveAriaLabel": "Remove from queue",
+      "infoTooltip": {
+        "ariaLabel": "Learn how the Optimization Queue works",
+        "heading": "💡 How the Optimization Queue Works",
+        "whatItIsLabel": "🤔 WHAT IT IS:",
+        "whatItIsBody": "A unified staging workspace that aggregates critical user complaints, feature requests, and bugs flagged across both YOUR app store reviews and your tracked COMPETITORS' listings.",
+        "strategyLabel": "⚡ DEFENSIVE VS. OFFENSIVE MARKETING:",
+        "strategyOwnLabel": "From Your App:",
+        "strategyOwnBody": "Fixes real user pain points in your metadata copy to salvage your conversion ratings and reassure new downloaders.",
+        "strategyCompetitorLabel": "From Competitors:",
+        "strategyCompetitorBody": "Identifies functional gaps or system crashes in rival products so you can rewrite your storefront copy to steal their frustrated users.",
+        "expectedResultLabel": "🚀 EXPECTED RESULT:",
+        "expectedResultBody": "Clicking 'Generate Optimized Metadata Copy' feeds these targeted issues straight into the AI Listing Optimizer. The engine will intelligently output high-converting store titles, subtitles, and search keyword metrics crafted to address these exact customer demands.",
+        "pillDefensive": "🛡️ Defensive Optimization (Your App Review)",
+        "pillOffensive": "⚔️ Offensive Conquest (Competitor Review)"
+      },
+      "removeSuccess": "Insight removed from queue.",
+      "removeError": "Failed to remove insight. Please try again.",
+      "confirmModal": {
+        "title": "Launch AI Competitor Exploit Run",
+        "whatHappensNext": "What happens next?",
+        "step1Label": "CONTEXT LOAD",
+        "step1Body": "The AI imports your active queue issues into its working memory.",
+        "step2Label": "COPYWRITING",
+        "step2Body": "It opens your AI Listing Optimizer and drafts an optimized Title, Short Description, and App Store Keywords.",
+        "step3Label": "POSITIONING",
+        "step3Body": "The output copy will explicitly highlight your app's stability to capture users abandoning your buggy competitors.",
+        "step4Label": "PRIMED WORKSPACE",
+        "step4Body": "The generated assets load directly into your Translation and Localization tabs for immediate app store deployment!",
+        "creditLine": "💳 Cost: {credits} Workspace Credits",
+        "stagedLabel": "Staged queue ({count} insights):",
+        "cancel": "Cancel",
+        "confirm": "Deduct {credits} Credits & Run Campaign"
+      },
+      "ctaNavigate": "→ Open AI Optimizer to Run This Campaign",
+      "ctaNavigateHint": "You're not on the Optimizer page. Click to go there with these insights pre-loaded."
+    },
     "guidance": {
       "selectApp": "Select app",
       "fillDetails": "Fill details",
@@ -1296,11 +1573,30 @@
         "resultCopied": "Copied!",
         "errorInsufficient": "Not enough AI credits to localize. Visit Pricing to add more.",
         "errorGeneral": "Localization failed. Please try again.",
+        "errorPartial": "Localization failed for: {markets}. Other markets succeeded — see results below.",
         "keywordsLabel": "Keywords",
         "headerTooltip": "Automated Multi-Market Localization Engine. Tailors app metadata natively based on regional search habits and dialect intents while strictly enforcing store character limitations automatically.",
         "ctaSelectMarket": "Select a Market Above",
         "ctaDynamic": "Localize Listing ({credits} Credits)",
-        "resultCopyLong": "Copy Long Description"
+        "resultCopyLong": "Copy Long Description",
+        "resultTabsAria": "Localized market results",
+        "tabPillAe": "🇦🇪 UAE (Arabic)",
+        "tabPillIn": "🇮🇳 India (Hindi)",
+        "tabPillMx": "🇲🇽 Latin America (Spanish)",
+        "addAnotherMarket": "+ Add another market",
+        "hideMarketPicker": "Cancel",
+        "optionsLabel": "Options",
+        "optionsMenuAria": "Localized market actions",
+        "optionRegenerate": "🔄 Re-Regenerate Copy ({credits} Credits)",
+        "resultRegenerating": "Regenerating copy…",
+        "optionExportTxt": "📥 Export to Text File (.txt)",
+        "optionDelete": "🗑️ Delete Market Asset",
+        "errorDelete": "Could not delete this market. Please try again.",
+        "fieldTabsAria": "Localized listing fields",
+        "fieldPillTitle": "Title",
+        "fieldPillShort": "Short",
+        "fieldPillLong": "Long",
+        "fieldPillKeywords": "Keywords"
       },
       "longBlock": "Long Description"
     },
@@ -1491,7 +1787,37 @@
       "forbiddenSqlSnippet": "update public.profiles set is_admin = true, role = 'admin' where id = '<uuid from auth.users>';",
       "forbiddenBulletAuthUid": "The RPC uses `auth.uid()` — you must update the row where `profiles.id` matches the signed-in user.",
       "forbiddenBulletGrantExecute": "If you still see permission errors (not this JSON `forbidden`), ensure `GRANT EXECUTE ON FUNCTION public.admin_financial_snapshot(date, date) TO authenticated` is applied (see migrations).",
-      "forbiddenDocRef": "Full steps:"
+      "forbiddenDocRef": "Full steps:",
+      "colActions": "Owner actions",
+      "accountActionsLabel": "Moderate",
+      "actionFlagForReview": "Flag for Review",
+      "actionSuspendAccess": "Suspend User Access",
+      "actionRestoreAccess": "Restore Access",
+      "statusActive": "Active",
+      "statusFlagged": "Flagged",
+      "statusSuspended": "Suspended",
+      "accountActionError": "Could not update account status."
+    },
+    "analytics": {
+      "featureLeaderboardTitle": "Feature leaderboard",
+      "featureLeaderboardSubtitle": "Aggregates from `admin_ai_transaction_logs` — runs, credits charged, and raw COGS (Gemini + Serper).",
+      "planMarginTitle": "Plan margin checker",
+      "planMarginSubtitle": "Assumed monthly subscription revenue (`PLAN_META`) minus logged API COGS per workspace tier.",
+      "loading": "Loading analytics…",
+      "loadError": "Could not load analytics.",
+      "empty": "No AI transaction logs yet.",
+      "colFeature": "Feature",
+      "colRuns": "Runs",
+      "colCredits": "Credits",
+      "colApiUsd": "API COGS",
+      "colCostSplit": "Cost split",
+      "colTotalCogs": "Total COGS",
+      "costSplitGemini": "Gemini: {usd}",
+      "costSplitSerper": "Serper: {usd}",
+      "colPlan": "Plan",
+      "colWorkspaces": "Workspaces",
+      "colRevenue": "Assumed MRR",
+      "colMargin": "Margin (est.)"
     }
   },
   "countrySelector": {

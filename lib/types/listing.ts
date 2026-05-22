@@ -12,6 +12,12 @@ export type ListingOptimizerInput = {
   targetArabic?: boolean;
   /** Optional refinement appended to the user prompt (e.g. regenerate with a new angle). */
   userInstruction?: string;
+  /**
+   * Competitor pain-point targets staged from the Active Optimization Queue.
+   * When present the prompt builder injects a strategic displacement campaign block
+   * that positions the app against each identified competitor weakness.
+   */
+  exploitTargets?: string[];
 };
 
 /** Gemini listing JSON shape (includes optional Certified ASO Score metadata). */

@@ -1,6 +1,9 @@
 import { Link } from "@/i18n/navigation";
 import LinkNext from "next/link";
 import { AccountsRevenueCostsChart } from "@/components/admin/accounts-revenue-costs-chart";
+import { FeatureLeaderboardPanel } from "@/components/admin/feature-leaderboard-panel";
+import { PlanMarginCheckerPanel } from "@/components/admin/plan-margin-checker-panel";
+import { WorkspaceAccountActions } from "@/components/admin/workspace-account-actions";
 import {
   chartRowsFromDaily,
   computeFinancialHealth,
@@ -154,6 +157,11 @@ export default async function AdminAccountsPage() {
         </div>
       </div>
 
+      <div className="grid gap-6 lg:grid-cols-2">
+        <FeatureLeaderboardPanel />
+        <PlanMarginCheckerPanel />
+      </div>
+
       <div className="flex flex-wrap gap-3">
         <LinkNext
           className="inline-flex items-center rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
@@ -199,6 +207,7 @@ export default async function AdminAccountsPage() {
                 <th className="px-4 py-3 font-medium text-right">{t("colCredits")}</th>
                 <th className="px-4 py-3 font-medium text-right">{t("colSpent")}</th>
                 <th className="px-4 py-3 font-medium text-right">{t("colEstCost")}</th>
+                <th className="px-4 py-3 font-medium text-right">{t("colActions")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
@@ -217,6 +226,9 @@ export default async function AdminAccountsPage() {
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-amber-200/90">
                     ~{fmtUsd(estimateWorkspaceSystemCostUsd(w))}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <WorkspaceAccountActions ownerId={w.owner_id} />
                   </td>
                 </tr>
               ))}

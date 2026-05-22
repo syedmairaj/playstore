@@ -147,3 +147,35 @@ export async function upsertOptimizerInputsAfterAutofill(
 
   return insertInputsOnly();
 }
+
+/**
+ * Back-fills `app_features` and `target_keywords` on a listing_generations row
+ * with the AI-generated values so that a page refresh hydrates the correct copy
+ * instead of the pre-generation user input.
+ *
+ * Only updates rows owned by `userId` (RLS double-check). Returns silently on
+ * any error — this is a best-effort background patch; it must never fail the
+ * generation response path.
+ */
+export async function patchListingGenerationInputs(
+  supabase: SupabaseClient,
+  params: {
+    generationId: string;
+    userId: string;
+    appFeatures: string;
+    targetKeywords: string[];
+  },
+): Promise<void> {
+  try {
+    await supabase
+      .from("listing_generations")
+      .update({
+        app_features: params.appFeatures,
+        target_keywords: params.targetKeywords,
+      })
+      .eq("id", params.generationId)
+      .eq("user_id", params.userId);
+  } catch {
+    // Best-effort — never throw
+  }
+}

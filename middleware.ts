@@ -1,4 +1,9 @@
 import { formatAdminGateDebugLine, resolveAdminAccess } from "@/lib/admin/gate";
+import {
+  fetchProfileAccountStatus,
+  isProfileAccessBlocked,
+  suspendedAccountJsonResponse,
+} from "@/lib/auth/profile-access";
 import { createServerClient } from "@supabase/ssr";
 import createIntlMiddleware from "next-intl/middleware";
 import { type NextRequest, NextResponse } from "next/server";
@@ -12,8 +17,62 @@ function forwardCookies(from: NextResponse, to: NextResponse) {
   });
 }
 
+function createSupabaseMiddlewareClient(
+  request: NextRequest,
+  response: NextResponse,
+) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anon) return null;
+
+  return createServerClient(url, anon, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(
+        cookiesToSet: {
+          name: string;
+          value: string;
+          options?: Record<string, unknown>;
+        }[],
+      ) {
+        cookiesToSet.forEach(({ name, value }) => {
+          request.cookies.set(name, value);
+        });
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options as never);
+        });
+      },
+    },
+  });
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  const isPublicApi =
+    pathname.startsWith("/api/feature-flags") ||
+    pathname.startsWith("/api/auth");
+
+  if (pathname.startsWith("/api") && !isPublicApi) {
+    const apiResponse = NextResponse.next({ request });
+    const supabase = createSupabaseMiddlewareClient(request, apiResponse);
+    if (supabase) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const status = await fetchProfileAccountStatus(supabase, user.id);
+        if (isProfileAccessBlocked(status)) {
+          return NextResponse.json(suspendedAccountJsonResponse(), {
+            status: 403,
+          });
+        }
+      }
+    }
+    return apiResponse;
+  }
 
   if (
     pathname.startsWith("/auth") ||
@@ -43,27 +102,10 @@ export async function middleware(request: NextRequest) {
       ? NextResponse.next({ request })
       : intlResponse;
 
-  const supabase = createServerClient(url, anon, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(
-        cookiesToSet: {
-          name: string;
-          value: string;
-          options?: Record<string, unknown>;
-        }[],
-      ) {
-        cookiesToSet.forEach(({ name, value }) => {
-          request.cookies.set(name, value);
-        });
-        cookiesToSet.forEach(({ name, value, options }) => {
-          response.cookies.set(name, value, options as never);
-        });
-      },
-    },
-  });
+  const supabase = createSupabaseMiddlewareClient(request, response);
+  if (!supabase) {
+    return response;
+  }
 
   const {
     data: { user },
@@ -73,6 +115,23 @@ export async function middleware(request: NextRequest) {
 
   const pathWithoutLocale = pathname.replace(/^\/(en|ar)(?=\/|$)/, "") || "/";
   const locale = pathname.match(/^\/(en|ar)/)?.[1] ?? routing.defaultLocale;
+
+  if (user) {
+    const accountStatus = await fetchProfileAccountStatus(supabase, user.id);
+    if (isProfileAccessBlocked(accountStatus)) {
+      const blockedApp =
+        pathWithoutLocale.startsWith("/app") ||
+        pathWithoutLocale === "/onboarding" ||
+        pathWithoutLocale.startsWith("/admin");
+      if (blockedApp) {
+        const loginUrl = new URL(`/${locale}/login`, request.url);
+        loginUrl.searchParams.set("frozen", "1");
+        const toLogin = NextResponse.redirect(loginUrl);
+        forwardCookies(response, toLogin);
+        return toLogin;
+      }
+    }
+  }
 
   // `/admin/*`: signed-in + (`ADMIN_EMAILS` match OR `profiles.role = 'admin'` OR `profiles.is_admin`); see `.env.example`.
   // Server layout re-checks with the same rules (RLS-safe user client).

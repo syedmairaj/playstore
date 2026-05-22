@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ZodError, z } from "zod";
 import { getClientIp } from "@/lib/client-ip";
-import { insertListingGeneration } from "@/lib/db/listing-generations";
+import {
+  insertListingGeneration,
+  patchListingGenerationInputs,
+} from "@/lib/db/listing-generations";
 import { linkListingGenerationToTrackedKeywords } from "@/lib/keywords/link-listing-generation-to-keywords";
 import { generateListingWithGemini } from "@/lib/gemini/generate-listing";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
@@ -430,4 +433,68 @@ export async function POST(request: NextRequest) {
       { status },
     );
   }
+}
+
+/**
+ * PATCH /api/listings/generate
+ *
+ * Back-fills `app_features` and `target_keywords` on a generation row with the
+ * AI-generated values. Called client-side immediately after a successful POST so
+ * that a page refresh hydrates the AI copy rather than the pre-generation input.
+ *
+ * Body: { generationId: string; appFeatures: string; targetKeywords: string[] }
+ */
+export async function PATCH(request: NextRequest) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json(
+      { ok: false, error: { code: "unauthorized", message: "Sign in required." } },
+      { status: 401 },
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: { code: "bad_request", message: "Invalid JSON body" } },
+      { status: 400 },
+    );
+  }
+
+  const patchSchema = z.object({
+    generationId: z.string().uuid(),
+    appFeatures: z.string().max(10_000),
+    targetKeywords: z.array(z.string().max(200)).max(100),
+  });
+
+  let input: z.infer<typeof patchSchema>;
+  try {
+    input = patchSchema.parse(body);
+  } catch (e) {
+    if (e instanceof ZodError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: { code: "validation_error", message: "Invalid input", details: e.flatten() },
+        },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
+
+  await patchListingGenerationInputs(supabase, {
+    generationId: input.generationId,
+    userId: user.id,
+    appFeatures: input.appFeatures,
+    targetKeywords: input.targetKeywords,
+  });
+
+  return NextResponse.json({ ok: true });
 }

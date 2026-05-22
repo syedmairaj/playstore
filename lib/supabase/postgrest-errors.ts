@@ -16,3 +16,28 @@ export function isPostgrestTableMissing(
       msg.includes("does not exist"))
   );
 }
+
+/** Column missing on an existing table (migration not applied / schema drift). */
+export function isPostgrestColumnMissing(
+  error: { code?: string; message?: string } | null | undefined,
+  tableName: string,
+): boolean {
+  if (!error) return false;
+  const msg = (error.message ?? "").toLowerCase();
+  const table = tableName.toLowerCase();
+  return (
+    msg.includes(table) &&
+    msg.includes("column") &&
+    msg.includes("does not exist")
+  );
+}
+
+export function isPostgrestSchemaUnavailable(
+  error: { code?: string; message?: string } | null | undefined,
+  tableName: string,
+): boolean {
+  return (
+    isPostgrestTableMissing(error, tableName) ||
+    isPostgrestColumnMissing(error, tableName)
+  );
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Camera } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
@@ -385,12 +386,25 @@ export function LivePreviewPhone({
                         title={t("preview.clickToChangeLogo")}
                         aria-label={t("preview.clickToChangeLogo")}
                         className={cn(
-                          "flex shrink-0 flex-col items-center self-start rounded-2xl p-0.5 outline-none transition",
+                          "group relative flex shrink-0 flex-col items-center self-start rounded-2xl p-0.5 outline-none transition",
                           "hover:bg-[#22C55E]/[0.07] active:scale-[0.98]",
                           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0E14]",
                         )}
                       >
-                        <PreviewSquircleMark iconSrc={iconSrc} size="listing" />
+                        <div className="relative">
+                          <PreviewSquircleMark iconSrc={iconSrc} size="listing" />
+                          {/* Persistent camera edit badge — always visible so user knows the icon is tappable */}
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "absolute -bottom-1 -end-1 flex size-[18px] items-center justify-center rounded-full",
+                              "border border-[#0B0E14] bg-[#22C55E] shadow-[0_2px_6px_rgba(0,0,0,0.4)]",
+                              "transition-transform duration-150 group-hover:scale-110",
+                            )}
+                          >
+                            <Camera className="size-2.5 text-black" strokeWidth={2.5} />
+                          </span>
+                        </div>
                         {showEmptyIconAsoHint && !iconSrc ? (
                           <p className="mt-1.5 max-w-[4.75rem] text-balance text-center text-[9px] font-medium leading-snug text-[#86efac]/70">
                             {t("preview.addLogoHint")}
@@ -418,21 +432,23 @@ export function LivePreviewPhone({
                       <p className="mt-1 text-[11px] font-medium leading-snug text-[#86efac]/90">
                         {category || "App"}
                       </p>
-                      <div className="mt-2.5 flex flex-wrap gap-1.5">
-                        {keywords
-                          .split(/[,;\n]+/)
-                          .map((s) => s.trim())
-                          .filter(Boolean)
-                          .slice(0, 8)
-                          .map((k, i) => (
-                            <span
-                              key={`kw-${i}-${k}`}
-                              className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium leading-none text-white/58"
-                            >
-                              {k}
-                            </span>
-                          ))}
-                      </div>
+                      {result ? (
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {keywords
+                            .split(/[,;\n]+/)
+                            .map((s) => s.trim())
+                            .filter((term) => term.length > 0 && term.length <= 48)
+                            .slice(0, 8)
+                            .map((k, i) => (
+                              <span
+                                key={`kw-${i}-${k}`}
+                                className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium leading-none text-white/58"
+                              >
+                                {k}
+                              </span>
+                            ))}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 

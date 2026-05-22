@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Loader2, Sparkles, TrendingUp } from "lucide-react";
+import { AlertTriangle, Loader2, ScanLine, Sparkles, TrendingUp } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
@@ -101,7 +101,15 @@ export function KeywordTrackerClient({
   const [saveSerperPending, setSaveSerperPending] = useState(false);
   const [saveKeywordModalOpen, setSaveKeywordModalOpen] = useState(false);
   const [serperRowRefreshId, setSerperRowRefreshId] = useState<string | null>(null);
-  const [competitorRankByTerm, setCompetitorRankByTerm] = useState<ReadonlyMap<string, number> | undefined>(undefined);
+  /** Row pending credit-confirm modal: holds { id, term } until user confirms or cancels. */
+  const [pendingRefreshRow, setPendingRefreshRow] = useState<{ id: string; term: string } | null>(null);
+  type CompetitorSlot = {
+    name: string;
+    packageId: string;
+    iconUrl?: string | null;
+    rankByTerm: ReadonlyMap<string, number>;
+  };
+  const [competitorSlots, setCompetitorSlots] = useState<[CompetitorSlot | null, CompetitorSlot | null]>([null, null]);
   // Live Play Store preview state. Default to the Arabic-first market when the
   const isRtl = locale === "ar";
   // user's locale is Arabic so previews feel relevant out of the box.
@@ -310,34 +318,44 @@ export function KeywordTrackerClient({
     };
   }, [workspaceId]);
 
-  // Fetch first competitor's shared rows to populate Competitor Rank column
+  // Fetch up to two competitors' shared rows to populate dual Competitor Rank column
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/competitors`, {
-          credentials: "include",
-        });
+        const res = await fetch(`/api/workspaces/${workspaceId}/competitors`, { credentials: "include" });
         if (!res.ok || cancelled) return;
         const json = (await res.json()) as {
           ok?: boolean;
-          competitors?: { shared?: { keyword: string; theirRank: number }[] }[];
+          competitors?: {
+            displayName?: string;
+            packageId?: string;
+            iconUrl?: string | null;
+            shared?: { keyword: string; theirRank: number }[];
+          }[];
         };
         if (cancelled || !json.ok || !Array.isArray(json.competitors) || json.competitors.length === 0) return;
-        const first = json.competitors[0];
-        if (!first?.shared) return;
-        const map = new Map<string, number>();
-        for (const row of first.shared) {
-          if (typeof row.keyword === "string" && typeof row.theirRank === "number") {
-            const key = row.keyword.trim().toLowerCase();
-            // Keep the best (lowest) rank if the same term appears multiple times
-            const existing = map.get(key);
-            if (existing == null || row.theirRank < existing) {
-              map.set(key, row.theirRank);
+
+        const slots: [CompetitorSlot | null, CompetitorSlot | null] = [null, null];
+        for (let i = 0; i < 2; i++) {
+          const comp = json.competitors[i];
+          if (!comp?.shared || !comp.packageId) continue;
+          const map = new Map<string, number>();
+          for (const row of comp.shared) {
+            if (typeof row.keyword === "string" && typeof row.theirRank === "number") {
+              const key = row.keyword.trim().toLowerCase();
+              const existing = map.get(key);
+              if (existing == null || row.theirRank < existing) map.set(key, row.theirRank);
             }
           }
+          slots[i as 0 | 1] = {
+            name: comp.displayName ?? comp.packageId,
+            packageId: comp.packageId,
+            iconUrl: typeof comp.iconUrl === "string" && comp.iconUrl.length > 0 ? comp.iconUrl : null,
+            rankByTerm: map,
+          };
         }
-        if (!cancelled) setCompetitorRankByTerm(map.size > 0 ? map : undefined);
+        if (!cancelled) setCompetitorSlots(slots);
       } catch {
         /* ignore — competitor rank column is best-effort */
       }
@@ -912,7 +930,14 @@ export function KeywordTrackerClient({
         );
         const json = (await res.json()) as {
           ok?: boolean;
+          rank?: number | null;
+          snapshotAt?: string | null;
           creditsCharged?: number;
+          countries?: string[];
+          /** Competitor slot 1 resolved at refresh time (primary market). */
+          competitor1?: { packageId: string; rank: string | null } | null;
+          /** Competitor slot 2 resolved at refresh time (primary market). */
+          competitor2?: { packageId: string; rank: string | null } | null;
           error?: { code?: string; message?: string; required?: number; remaining?: number };
         };
         if (!res.ok || !json.ok) {
@@ -936,6 +961,91 @@ export function KeywordTrackerClient({
           }
           return;
         }
+
+        // ── Optimistic local state patch ─────────────────────────────────────
+        // The serper-refresh route returns the primary-market rank + snapshotAt.
+        // Merge them directly into the matching row so isKeywordRankSyncPending()
+        // immediately returns false and the "Syncing…" rank placeholder clears
+        // without waiting for the full router.refresh() re-render cycle to land.
+        const freshRank = json.rank;
+        const freshAt = json.snapshotAt;
+        if (typeof freshAt === "string" && freshAt.length > 0) {
+          // Evict the row from the gave-up set so the poll loop can resume if
+          // needed (handles the edge case where max-attempts was hit earlier).
+          syncGaveUpRef.current.delete(keywordId);
+
+          setRows((prev) =>
+            prev.map((row) => {
+              if (row.id !== keywordId) return row;
+              const snapshotRow = {
+                rank: typeof freshRank === "number" ? freshRank : null,
+                captured_at: freshAt,
+              };
+              // Build a minimal latestPerCountry entry for the primary market so
+              // flattenKeywordsToRows picks it up and capturedAt / yourRank are set.
+              const market = String(row.market ?? "us").trim().toLowerCase();
+              const patchedPerCountry: typeof row.latestPerCountry = [
+                ...(row.latestPerCountry?.filter((e) => e.country !== market) ?? []),
+                ...(typeof freshRank === "number"
+                  ? [{ country: market as import("@/lib/countries").SupportedCountryCode, rank: freshRank, captured_at: freshAt }]
+                  : []),
+              ];
+              return {
+                ...row,
+                latest: snapshotRow,
+                latestPerCountry: patchedPerCountry.length > 0 ? patchedPerCountry : row.latestPerCountry,
+                lastSyncedAt: freshAt,
+                // Inject a minimal synthetic rank history entry so ranks[] is
+                // non-empty, which also clears isKeywordRankSyncPending.
+                ranks: [
+                  ...row.ranks,
+                  { rank: typeof freshRank === "number" ? freshRank : null, captured_at: freshAt },
+                ],
+              };
+            }),
+          );
+        }
+
+        // ── Patch competitorSlots with freshly-resolved ranks ────────────────
+        // The route now returns competitor1/competitor2 with the live rank string
+        // ("7", "100+", or null).  Merge into the in-memory rankByTerm maps so
+        // the COMPETITORS column updates instantly for this keyword's term.
+        const term = rows.find((r) => r.id === keywordId)?.term ?? "";
+        const termKey = term.trim().toLowerCase();
+        if (termKey) {
+          const { competitor1, competitor2 } = json;
+          setCompetitorSlots((prev) => {
+            const next: [CompetitorSlot | null, CompetitorSlot | null] = [prev[0], prev[1]];
+
+            // Helper: patch a slot's rankByTerm for this keyword's term.
+            const patchSlot = (
+              slot: CompetitorSlot | null,
+              fresh: { packageId: string; rank: string | null } | null | undefined,
+            ): CompetitorSlot | null => {
+              if (!slot || !fresh) return slot;
+              // Verify package match (guard against stale slot state).
+              if (
+                slot.packageId.trim().toLowerCase() !== fresh.packageId.trim().toLowerCase()
+              ) return slot;
+              // Convert rank string to number for the map, or remove key if "100+"/null.
+              const rankNum = fresh.rank && fresh.rank !== "100+"
+                ? Number.parseInt(fresh.rank, 10)
+                : null;
+              const newMap = new Map(slot.rankByTerm);
+              if (rankNum != null && Number.isFinite(rankNum)) {
+                newMap.set(termKey, rankNum);
+              } else {
+                newMap.delete(termKey);
+              }
+              return { ...slot, rankByTerm: newMap };
+            };
+
+            next[0] = patchSlot(prev[0], competitor1);
+            next[1] = patchSlot(prev[1], competitor2);
+            return next;
+          });
+        }
+
         const charged = json.creditsCharged ?? 0;
         toast.success(t("serper.rowRefreshToast", { credits: charged }));
         refresh();
@@ -1313,8 +1423,11 @@ export function KeywordTrackerClient({
                   countryLabel={countryLabel}
                   onHistory={setHistoryFor}
                   onDelete={(id) => void onDelete(id)}
-                  onSerperRefresh={(id) => void onSerperRefreshRow(id)}
-                  competitorRankByTerm={competitorRankByTerm}
+                  onSerperRefresh={(id) => {
+                    const term = flatRows.find((r) => r.source.id === id)?.source.term ?? id;
+                    setPendingRefreshRow({ id, term });
+                  }}
+                  competitorSlots={competitorSlots}
                 />
               )}
             </>
@@ -1338,6 +1451,88 @@ export function KeywordTrackerClient({
         pending={saveSerperPending}
         onSave={(countries) => onSaveSerperPreview(countries)}
       />
+
+      {/* ── Serper Refresh Credit Confirmation Modal ─────────────────────── */}
+      {pendingRefreshRow && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setPendingRefreshRow(null)}
+        >
+          <div
+            className="mx-4 w-full max-w-md rounded-2xl border border-zinc-800 bg-[#0c1018] p-6 shadow-[0_24px_64px_-12px_rgba(0,0,0,0.75)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Icon */}
+            <div className="mb-4 flex size-11 items-center justify-center rounded-xl border border-emerald-500/25 bg-emerald-500/10">
+              <ScanLine className="size-5 text-emerald-400" aria-hidden />
+            </div>
+
+            {/* Title */}
+            <h2 className="text-base font-semibold tracking-tight text-white">
+              Confirm Marketplace Scan for &ldquo;{pendingRefreshRow.term}&rdquo;?
+            </h2>
+
+            {/* Body */}
+            <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+              This will execute a live Play Store index query for{" "}
+              <span className="font-semibold text-emerald-300">
+                &ldquo;{pendingRefreshRow.term}&rdquo;
+              </span>{" "}
+              and record the current rank position for your app in the specified market.
+            </p>
+
+            {/* Credit protection tooltip block */}
+            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+              <p className="text-xs leading-relaxed text-zinc-400">
+                💡 This operation costs exactly{" "}
+                <span className="font-semibold text-zinc-200">
+                  {AI_CREDIT_COSTS.serper_preview_per_country} credit
+                </span>
+                . Please note: if your app&apos;s rank position has not shifted on the live
+                store charts since your last update, your rank score will remain the same.
+              </p>
+            </div>
+
+            {/* Insufficient credits warning (if blocked) */}
+            {blockingError && (
+              <div className="mt-3 flex items-start gap-2 rounded-lg border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2.5">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-rose-400" aria-hidden />
+                <p className="text-xs text-rose-400/90">
+                  An error is preventing operations. Please refresh the page and try again.
+                </p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="mt-5 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setPendingRefreshRow(null)}
+                className="flex-1 rounded-lg border border-zinc-800 bg-zinc-900/80 py-2.5 text-sm font-medium text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={blockingError || serperRowRefreshId != null}
+                onClick={() => {
+                  const { id } = pendingRefreshRow;
+                  setPendingRefreshRow(null);
+                  void onSerperRefreshRow(id);
+                }}
+                className={cn(
+                  "flex-1 rounded-lg py-2.5 text-sm font-semibold text-white transition-[background-color,box-shadow]",
+                  "bg-emerald-600 shadow-[0_2px_12px_-4px_rgba(34,197,94,0.5)]",
+                  "hover:bg-emerald-500 hover:shadow-[0_4px_18px_-4px_rgba(34,197,94,0.55)]",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                )}
+              >
+                Confirm &amp; Deduct {AI_CREDIT_COSTS.serper_preview_per_country} Credit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

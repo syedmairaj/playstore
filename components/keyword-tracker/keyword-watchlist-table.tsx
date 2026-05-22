@@ -1,6 +1,6 @@
 "use client";
 
-import { Info, Loader2, RefreshCw } from "lucide-react";
+import { Flame, Info, Loader2, RefreshCw, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { KeywordWatchlistTableSkeleton } from "@/components/keyword-tracker/keyword-watchlist-table-skeleton";
@@ -11,22 +11,16 @@ import {
 } from "@/lib/countries";
 import { formatRankForDisplay } from "@/lib/keywords/format-rank-display";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
-import { isKeywordRankSyncPending } from "@/lib/keywords/keyword-rank-sync-pending";
 import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import type { FlatKeywordRow } from "@/lib/keywords/flatten-keyword-rows";
+import {
+  formatCapturedAgo,
+  getRankFreshness,
+} from "@/lib/keywords/flatten-keyword-rows";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
-
-function RankSyncingPlaceholder({ label }: { label: string }) {
-  return (
-    <span className="inline-flex animate-pulse items-center gap-1.5 text-sm text-zinc-400">
-      <Loader2 className="size-3.5 shrink-0 animate-spin text-emerald-400/80" aria-hidden />
-      <span>{label}</span>
-    </span>
-  );
-}
 
 function NotInTopRankWithHint({
   rank,
@@ -63,6 +57,14 @@ function NotInTopRankWithHint({
   );
 }
 
+export type CompetitorSlot = {
+  name: string;
+  packageId: string;
+  /** App icon URL from workspace_competitor_analyses.icon_url — may be null. */
+  iconUrl?: string | null;
+  rankByTerm: ReadonlyMap<string, number>;
+};
+
 export type KeywordWatchlistTableProps = {
   /** One row per (keyword × country) — produced by flattenKeywordsToRows(). */
   rows: FlatKeywordRow[];
@@ -82,8 +84,8 @@ export type KeywordWatchlistTableProps = {
   onHistory: (row: KeywordWithRanks) => void;
   onDelete: (id: string) => void;
   onSerperRefresh: (id: string) => void;
-  /** Map of lowercased keyword term → competitor's rank for that term. */
-  competitorRankByTerm?: ReadonlyMap<string, number>;
+  /** Dual competitor slots — up to two competitors with their rank maps. */
+  competitorSlots?: [CompetitorSlot | null, CompetitorSlot | null];
 };
 
 export function KeywordWatchlistTable({
@@ -104,7 +106,7 @@ export function KeywordWatchlistTable({
   onHistory,
   onDelete,
   onSerperRefresh,
-  competitorRankByTerm,
+  competitorSlots,
 }: KeywordWatchlistTableProps) {
   const t = useTranslations("keywordTracker");
 
@@ -133,9 +135,9 @@ export function KeywordWatchlistTable({
               >
                 {t("table.bestRank")}
               </th>
-              {/* 4 — Competitor Rank (center-aligned) */}
+              {/* 4 — Competitors (center-aligned) */}
               <th className="sticky top-0 z-10 bg-[#0c1018] px-4 py-3.5 text-center shadow-[0_1px_0_0_rgba(255,255,255,0.06)]">
-                {t("table.competitorRank")}
+                {t("table.competitors")}
               </th>
               {/* 5 — Actions (right-aligned) */}
               <th className="sticky top-0 z-10 bg-[#0c1018] px-5 py-3.5 text-end shadow-[0_1px_0_0_rgba(255,255,255,0.06)]">
@@ -150,17 +152,15 @@ export function KeywordWatchlistTable({
               {rows.map((row) => {
                 const src = row.source;
                 const rankFmt = { notInTop: t("table.rankNotInTop") };
-                const pendingInitialSync = isKeywordRankSyncPending(src);
                 const rankDetailHint = t("table.rankNotInTopDetailTooltip", {
                   appName: appNameById.get(src.app_id) ?? src.app_id,
                 });
 
-                // Your Rank: flat row already holds the per-country rank value.
+                // Your Rank: flat row holds per-country rank value + capturedAt timestamp.
                 const yourRank = row.yourRank;
-
-                // Competitor Rank: looked up by term (market-agnostic lookup, best-effort).
-                const compRank =
-                  competitorRankByTerm?.get(src.term.trim().toLowerCase()) ?? null;
+                const freshness = getRankFreshness(row.capturedAt);
+                const isStale = freshness === "stale";
+                const isBrandNew = freshness === "new";
 
                 return (
                   <tr
@@ -206,93 +206,258 @@ export function KeywordWatchlistTable({
                       </span>
                     </td>
 
-                    {/* 3 — Your Rank (per-country value from flat row) */}
+                    {/* 3 — Your Rank (per-country value; faded when stale) */}
                     <td className="px-4 py-4 text-center align-middle font-mono text-zinc-100">
-                      {pendingInitialSync ? (
-                        <RankSyncingPlaceholder label={t("table.rankSyncing")} />
-                      ) : yourRank != null ? (
-                        <NotInTopRankWithHint
-                          rank={yourRank}
-                          rankFmt={rankFmt}
-                          detailTooltip={rankDetailHint}
-                        />
+                      {yourRank != null ? (
+                        <span className={cn(isStale && "opacity-60")}>
+                          <NotInTopRankWithHint
+                            rank={yourRank}
+                            rankFmt={rankFmt}
+                            detailTooltip={rankDetailHint}
+                          />
+                        </span>
                       ) : (
                         <span className="text-zinc-500">—</span>
                       )}
                     </td>
 
-                    {/* 4 — Competitor Rank */}
-                    <td className="px-4 py-4 text-center align-middle font-mono text-amber-300/90">
-                      {compRank != null ? (
-                        <NotInTopRankWithHint
-                          rank={compRank}
-                          rankFmt={rankFmt}
-                          detailTooltip={t("table.rankTooltip")}
-                        />
-                      ) : (
-                        <span className="text-zinc-500">—</span>
-                      )}
-                    </td>
-
-                    {/* 5 — Actions */}
-                    <td className="px-5 py-4 align-middle">
-                      <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-end">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className={cn(
-                            "gap-1.5 text-emerald-300/90 hover:bg-emerald-500/10 hover:text-emerald-200",
-                            serperRowRefreshId === src.id && "pointer-events-none",
-                          )}
-                          title={t("actions.refreshSerperHint", {
-                            per: AI_CREDIT_COSTS.serper_preview_per_country,
+                    {/* 4 — Competitors: icon-first horizontal dual-slot cell */}
+                    <td className="px-4 py-4 text-center align-middle">
+                      {competitorSlots && (competitorSlots[0] || competitorSlots[1]) ? (
+                        <div className="flex items-center justify-center gap-3">
+                          {([0, 1] as const).map((idx) => {
+                            const slot = competitorSlots[idx];
+                            if (!slot) return null;
+                            const termKey = src.term.trim().toLowerCase();
+                            const rank = slot.rankByTerm.get(termKey) ?? null;
+                            const ranked = rank != null && rank < SERPER_RANK_NOT_IN_FIRST_PAGE;
+                            return (
+                              <div key={idx} className="flex flex-col items-center gap-1">
+                                {/* App icon with hover tooltip showing full app name */}
+                                <Tooltip
+                                  content={
+                                    <span className="text-zinc-200">
+                                      {slot.name}
+                                      <span className="ms-1 text-zinc-500">({slot.packageId})</span>
+                                    </span>
+                                  }
+                                  side="top"
+                                  className="max-w-[260px] border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                                  asChild
+                                >
+                                  <div
+                                    className="relative size-6 cursor-default overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-800/60 ring-1 ring-white/[0.04] shrink-0"
+                                    tabIndex={0}
+                                    aria-label={`${slot.name} rank`}
+                                  >
+                                    {slot.iconUrl ? (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img
+                                        src={slot.iconUrl}
+                                        alt={slot.name}
+                                        className="size-full object-cover"
+                                        loading="lazy"
+                                        onError={(e) => {
+                                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                                          const fb = (e.currentTarget as HTMLImageElement).nextElementSibling as HTMLElement | null;
+                                          if (fb) fb.style.display = "flex";
+                                        }}
+                                      />
+                                    ) : null}
+                                    {/* Fallback initial badge — shown when no iconUrl or img fails */}
+                                    <span
+                                      className={cn(
+                                        "absolute inset-0 flex items-center justify-center text-[9px] font-bold uppercase text-zinc-400",
+                                        slot.iconUrl ? "hidden" : "flex",
+                                      )}
+                                      aria-hidden
+                                    >
+                                      {(slot.name[0] ?? "?").toUpperCase()}
+                                    </span>
+                                  </div>
+                                </Tooltip>
+                                {/* Rank value */}
+                                {ranked ? (
+                                  <span className="font-mono text-[11px] font-semibold tabular-nums text-amber-300/90">
+                                    {formatRankForDisplay(rank, rankFmt)}
+                                  </span>
+                                ) : (
+                                  <Tooltip
+                                    content={<span className="text-zinc-400">Not ranked in top 100</span>}
+                                    side="bottom"
+                                    className="border border-white/[0.12] bg-[#0a0d12] px-2 py-1 text-xs shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                                    asChild
+                                  >
+                                    <span className="cursor-default text-[11px] font-medium text-zinc-600">
+                                      —
+                                    </span>
+                                  </Tooltip>
+                                )}
+                              </div>
+                            );
                           })}
-                          disabled={
-                            blockingError ||
-                            mutationPending ||
-                            (serperRowRefreshId != null &&
-                              serperRowRefreshId !== src.id)
-                          }
-                          aria-busy={serperRowRefreshId === src.id}
-                          onClick={() => onSerperRefresh(src.id)}
-                        >
+                        </div>
+                      ) : (
+                        <span className="text-zinc-500">—</span>
+                      )}
+                    </td>
+
+                    {/* 5 — Actions: icon-only compact buttons */}
+                    <td className="px-5 py-4 align-middle">
+                      <div className="flex flex-col items-end">
+
+                        {/* Button row — all icons in a strict horizontal line */}
+                        <div className="flex items-center gap-2">
+
+                          {/* ── Fetch / Refresh icon button (3 states) ── */}
                           {serperRowRefreshId === src.id ? (
-                            <Loader2
-                              className="size-4 shrink-0 animate-spin text-emerald-200"
-                              aria-hidden
-                            />
+                            /* Actively syncing — animated spinner, not clickable */
+                            <span
+                              className="flex size-8 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950"
+                              aria-label={t("actions.syncingPlayStore")}
+                            >
+                              <Loader2 className="size-4 animate-spin text-emerald-400/80" aria-hidden />
+                            </span>
                           ) : (
-                            <RefreshCw className="size-3.5 shrink-0" aria-hidden />
+                            <>
+                              {/* State A — Brand New: yellow lightning bolt */}
+                              {isBrandNew && (
+                                <Tooltip
+                                  content={
+                                    <span className="leading-snug text-zinc-200">
+                                      Fetch Live Rank ({AI_CREDIT_COSTS.serper_preview_per_country} AI credit)
+                                    </span>
+                                  }
+                                  side="top"
+                                  className="border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                                  asChild
+                                >
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      "flex size-8 shrink-0 items-center justify-center rounded-xl",
+                                      "border border-zinc-800 bg-zinc-950 transition-all",
+                                      "hover:border-emerald-500/40 hover:bg-zinc-900 hover:shadow-[0_0_12px_-3px_rgba(52,211,153,0.4)]",
+                                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50",
+                                      "disabled:cursor-not-allowed disabled:opacity-40",
+                                    )}
+                                    disabled={blockingError || mutationPending || serperRowRefreshId != null}
+                                    onClick={() => onSerperRefresh(src.id)}
+                                    aria-label="Fetch Live Rank"
+                                  >
+                                    <Zap className="size-3.5 text-yellow-400" aria-hidden />
+                                  </button>
+                                </Tooltip>
+                              )}
+
+                              {/* State B — Fresh: sync icon */}
+                              {freshness === "fresh" && (
+                                <Tooltip
+                                  content={
+                                    <span className="block max-w-[240px] leading-snug text-zinc-200">
+                                      Force Refresh ({AI_CREDIT_COSTS.serper_preview_per_country} AI credit) — data is
+                                      fresh but you can re-query if you recently updated your app&apos;s metadata.
+                                    </span>
+                                  }
+                                  side="top"
+                                  className="max-w-[260px] border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                                  asChild
+                                >
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      "flex size-8 shrink-0 items-center justify-center rounded-xl",
+                                      "border border-zinc-800 bg-zinc-950 transition-all",
+                                      "hover:border-zinc-600 hover:bg-zinc-900",
+                                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/50",
+                                      "disabled:cursor-not-allowed disabled:opacity-40",
+                                    )}
+                                    disabled={blockingError || mutationPending || serperRowRefreshId != null}
+                                    onClick={() => onSerperRefresh(src.id)}
+                                    aria-label="Force Refresh"
+                                  >
+                                    <RefreshCw className="size-3.5 text-zinc-400" aria-hidden />
+                                  </button>
+                                </Tooltip>
+                              )}
+
+                              {/* State C — Stale: amber flame icon */}
+                              {isStale && (
+                                <Tooltip
+                                  content={
+                                    <span className="leading-snug text-zinc-200">
+                                      Update Metrics ({AI_CREDIT_COSTS.serper_preview_per_country} AI credit) — data is stale
+                                    </span>
+                                  }
+                                  side="top"
+                                  className="border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                                  asChild
+                                >
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      "flex size-8 shrink-0 items-center justify-center rounded-xl",
+                                      "border border-amber-500/30 bg-zinc-950 transition-all",
+                                      "hover:border-amber-500/60 hover:bg-amber-500/10 hover:shadow-[0_0_12px_-3px_rgba(245,158,11,0.4)]",
+                                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50",
+                                      "disabled:cursor-not-allowed disabled:opacity-40",
+                                    )}
+                                    disabled={blockingError || mutationPending || serperRowRefreshId != null}
+                                    onClick={() => onSerperRefresh(src.id)}
+                                    aria-label="Update Metrics"
+                                  >
+                                    <Flame className="size-3.5 text-amber-400" aria-hidden />
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </>
                           )}
-                          {serperRowRefreshId === src.id
-                            ? t("actions.syncingPlayStore")
-                            : t("actions.refreshSerper")}
-                        </Button>
-                        <span className="text-zinc-600" aria-hidden>
-                          ·
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-emerald-300/90 hover:bg-emerald-500/10 hover:text-emerald-200"
-                          onClick={() => onHistory(src)}
-                        >
-                          {t("actions.viewHistory")}
-                        </Button>
-                        <span className="text-zinc-600" aria-hidden>
-                          ·
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-zinc-400 hover:bg-rose-500/10 hover:text-rose-300"
-                          onClick={() => onDelete(src.id)}
-                        >
-                          {t("actions.delete")}
-                        </Button>
+
+                          {/* View History — icon button */}
+                          <Tooltip
+                            content={<span className="text-zinc-200">{t("actions.viewHistory")}</span>}
+                            side="top"
+                            className="border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                            asChild
+                          >
+                            <button
+                              type="button"
+                              className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 text-zinc-400 transition-all hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                              onClick={() => onHistory(src)}
+                              aria-label={t("actions.viewHistory")}
+                            >
+                              <Info className="size-3.5" aria-hidden />
+                            </button>
+                          </Tooltip>
+
+                          {/* Delete — icon button */}
+                          <Tooltip
+                            content={<span className="text-zinc-200">{t("actions.delete")}</span>}
+                            side="top"
+                            className="border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                            asChild
+                          >
+                            <button
+                              type="button"
+                              className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 text-zinc-500 transition-all hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50"
+                              onClick={() => onDelete(src.id)}
+                              aria-label={t("actions.delete")}
+                            >
+                              <svg className="size-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12M5 4V2.5A.5.5 0 015.5 2h5a.5.5 0 01.5.5V4M6 7v5M10 7v5M3 4l1 9.5A.5.5 0 004.5 14h7a.5.5 0 00.497-.5L13 4" />
+                              </svg>
+                            </button>
+                          </Tooltip>
+
+                        </div>
+
+                        {/* Timestamp — always below the button row, never inside it */}
+                        {row.capturedAt && (freshness === "fresh" || isStale) ? (
+                          <span className="mt-1 block w-full text-center text-[10px] text-zinc-500">
+                            {formatCapturedAgo(row.capturedAt)}
+                          </span>
+                        ) : null}
+
                       </div>
                     </td>
                   </tr>
