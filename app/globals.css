@@ -53,6 +53,16 @@
   * {
     @apply border-border;
   }
+  /**
+   * Reserve the scrollbar gutter globally so the viewport never shifts 16px
+   * horizontally when a long page mounts or a modal traps scroll.
+   * `overflow-y: scroll` keeps the scrollbar track always present; together with
+   * `scrollbar-gutter: stable` this is the canonical CLS fix for SPA shells.
+   */
+  html {
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+  }
   body {
     @apply bg-background text-foreground antialiased;
   }

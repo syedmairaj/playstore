@@ -21,13 +21,19 @@ export function assertGeminiApiKey(): string {
 }
 
 /**
- * Applies default sampling (`temperature`, `topP`) while preserving other
- * keys from `existing` (e.g. `responseMimeType`, `maxOutputTokens`).
+ * Applies default sampling (`temperature`, `topP`, `maxOutputTokens`) while
+ * preserving other keys from `existing` (e.g. `responseMimeType`).
+ *
+ * `maxOutputTokens: 2540` is a safety ceiling that prevents runaway generation
+ * from exhausting the Gemini node's response budget and triggering 502 timeouts.
+ * The listing optimizer JSON output comfortably fits within this budget; callers
+ * that need a higher ceiling can pass `existing.maxOutputTokens` to override.
  */
 export function mergeGeminiGenerationConfig(
   existing?: GenerationConfig,
 ): GenerationConfig {
   return {
+    maxOutputTokens: 2540,
     ...existing,
     temperature: 0.7,
     topP: 0.95,

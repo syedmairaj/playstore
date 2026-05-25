@@ -26,6 +26,7 @@ import {
 import type { CreditsLedgerEntry } from "@/components/settings/settings-types";
 import { normalizePlan, PLAN_META, type PlanId } from "@/lib/plan-limits";
 import { cn } from "@/lib/utils";
+import { CreditDashboard } from "@/components/settings/credit-dashboard";
 
 type TimeHorizon = "7days" | "30days" | "thisMonth" | "lastMonth";
 
@@ -216,52 +217,33 @@ export function BillingTab({
 
   return (
     <div className="space-y-8">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card className="border-white/[0.08] bg-zinc-950/60 shadow-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold text-zinc-100">
-              {t("billing.aiCredits")}
-            </CardTitle>
-            <CardDescription className="text-zinc-500">
-              {t("billing.aiCreditsHint")}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-2xl font-semibold tabular-nums text-white">
-              {creditsRemaining}
-              <span className="text-base font-normal text-zinc-500"> / {creditsAllocation}</span>
-            </p>
-            <Progress value={creditsPct} />
-            <p className="text-xs text-zinc-500">{t("billing.creditsRemaining", { pct: creditsPct })}</p>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full border-white/[0.12] bg-transparent text-zinc-200 hover:bg-white/[0.06] hover:text-white sm:w-auto"
-              onClick={() => setPricingModalOpen(true)}
-            >
-              {t("billing.upgradeManagePlan")}
-            </Button>
-          </CardContent>
-        </Card>
+      {/* ── Infographic credit dashboard ──────────────────────────────────── */}
+      {/*
+       * CreditDashboard fetches its own data from /api/.../billing/usage-summary
+       * so BillingTab does not need to thread credit props into it.  The two
+       * legacy credit props (creditsRemaining / creditsAllocation) are still
+       * consumed below for the plan row and the keywords tracker.
+       */}
+      <CreditDashboard workspaceId={workspaceId} />
 
-        <Card className="border-white/[0.08] bg-zinc-950/60 shadow-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold text-zinc-100">
-              {t("billing.trackedKeywords")}
-            </CardTitle>
-            <CardDescription className="text-zinc-500">
-              {t("billing.keywordsHint", { plan: meta.label })}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-2xl font-semibold tabular-nums text-white">
-              {keywordCount}
-              <span className="text-base font-normal text-zinc-500"> / {keywordLimit}</span>
-            </p>
-            <Progress value={keywordsPct} />
-          </CardContent>
-        </Card>
-      </div>
+      {/* ── Keywords usage tracker ────────────────────────────────────────── */}
+      <Card className="border-white/[0.08] bg-zinc-950/60 shadow-none">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-semibold text-zinc-100">
+            {t("billing.trackedKeywords")}
+          </CardTitle>
+          <CardDescription className="text-zinc-400 font-normal">
+            {t("billing.keywordsHint", { plan: meta.label })}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-2xl font-semibold tabular-nums text-white">
+            {keywordCount}
+            <span className="text-base font-normal text-zinc-500"> / {keywordLimit}</span>
+          </p>
+          <Progress value={keywordsPct} />
+        </CardContent>
+      </Card>
 
       <div className="rounded-xl border border-white/[0.08] bg-zinc-950/40 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">

@@ -1,10 +1,34 @@
-import type { ReviewRow } from "@/components/reviews/reviews-types";
+import type { ReviewMarketLocale, ReviewRow } from "@/components/reviews/reviews-types";
+
+/**
+ * Derives the BCP-47 langCode from a Play-Console locale token.
+ * Demo rows don't come from the scraper so they have no explicit lang field;
+ * we infer it from the locale they already carry.
+ */
+function langFromLocale(locale: ReviewMarketLocale): string {
+  if (locale === "ae-ar") return "ar";
+  if (locale === "in-hi") return "en"; // India single-pass = English
+  return "en";
+}
+
+/**
+ * Stamps `langCode` onto every object in a demo ReviewRow array so the
+ * array satisfies the updated ReviewRow type without modifying every literal.
+ */
+function stampLangCode(
+  rows: Omit<ReviewRow, "langCode">[],
+): ReviewRow[] {
+  return rows.map((r) => ({
+    ...r,
+    langCode: langFromLocale(r.locale),
+  }));
+}
 
 /**
  * Generic competitor demo reviews — shown for any competitor tab whose packageId
  * does not have a dedicated entry in COMPETITOR_REVIEWS_BY_PACKAGE below.
  */
-const GENERIC_COMPETITOR_REVIEWS: ReviewRow[] = [
+const GENERIC_COMPETITOR_REVIEWS_RAW: Omit<ReviewRow, "langCode">[] = [
   {
     id: "gc1",
     userName: "Nathan B.",
@@ -71,7 +95,7 @@ const GENERIC_COMPETITOR_REVIEWS: ReviewRow[] = [
  * Package-specific demo reviews for known competitors.
  * Key = Play Store packageId. Add new competitors here as needed.
  */
-export const COMPETITOR_REVIEWS_BY_PACKAGE: Record<string, ReviewRow[]> = {
+const COMPETITOR_REVIEWS_BY_PACKAGE_RAW: Record<string, Omit<ReviewRow, "langCode">[]> = {
   "com.myfitnesspal.app": [
     {
       id: "mfp1",
@@ -212,11 +236,22 @@ export const COMPETITOR_REVIEWS_BY_PACKAGE: Record<string, ReviewRow[]> = {
  * Returns the demo review set for a given competitor packageId.
  * Falls back to generic competitor reviews if no specific set exists.
  */
+/** Stamped (with langCode) export map — built once from the raw literals. */
+export const COMPETITOR_REVIEWS_BY_PACKAGE: Record<string, ReviewRow[]> = Object.fromEntries(
+  Object.entries(COMPETITOR_REVIEWS_BY_PACKAGE_RAW).map(([pkg, rows]) => [
+    pkg,
+    stampLangCode(rows),
+  ]),
+);
+
+/** Stamped generic reviews — used when no package-specific set exists. */
+const GENERIC_COMPETITOR_REVIEWS: ReviewRow[] = stampLangCode(GENERIC_COMPETITOR_REVIEWS_RAW);
+
 export function getCompetitorDemoReviews(packageId: string): ReviewRow[] {
   return COMPETITOR_REVIEWS_BY_PACKAGE[packageId] ?? GENERIC_COMPETITOR_REVIEWS;
 }
 
-export const DEMO_REVIEWS: ReviewRow[] = [
+const DEMO_REVIEWS_RAW: Omit<ReviewRow, "langCode">[] = [
   {
     id: "r1",
     userName: "Jordan M.",
@@ -298,3 +333,5 @@ export const DEMO_REVIEWS: ReviewRow[] = [
     classifications: ["bug_crash"],
   },
 ];
+
+export const DEMO_REVIEWS: ReviewRow[] = stampLangCode(DEMO_REVIEWS_RAW);

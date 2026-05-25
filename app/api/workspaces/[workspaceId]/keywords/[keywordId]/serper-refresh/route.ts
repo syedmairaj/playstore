@@ -38,6 +38,15 @@ import { getWorkspaceRole } from "@/lib/workspace/membership";
  * Resolves the best organic Play Store rank for `competitorPkg` in country `cc`
  * from the Serper results array.
  *
+ * Design notes:
+ *   - Both the tracked package and every result item package are normalised through
+ *     `normPkgForSerperSnapshot` / `effectiveSerperPreviewItemPackage` which trim,
+ *     decode percent-encoding, and lowercase — preventing space/case mismatches from
+ *     DB-stored values vs Serper API payload strings.
+ *   - The loop NEVER breaks early: all items are scanned so the best (lowest)
+ *     organic position across any alias variant of the package is captured.
+ *   - Used symmetrically for competitor slot 1 AND competitor slot 2 — no divergence.
+ *
  * Returns:
  *   - A numeric string e.g. `"7"` when the app appears in the first 100 results.
  *   - `"100+"` when the package is NOT found in the top 100 (clean UI badge).
@@ -48,6 +57,8 @@ function resolveCompetitorRankString(
   competitorPkg: string | null | undefined,
   cc: string,
 ): string | null {
+  // normPkgForSerperSnapshot: trims raw input, decodes percent-encoding, trims again,
+  // lowercases. Returns null when slot is empty — callers write NULL to the DB column.
   const want = normPkgForSerperSnapshot(competitorPkg);
   if (!want) return null; // slot empty → sparse NULL
 
@@ -58,24 +69,29 @@ function resolveCompetitorRankString(
   if (!block || block.error) return "100+";
 
   let best: number | undefined;
+
+  // Iterate ALL items — no break, no early return. We want the minimum position
+  // across every alias match (e.g. com.foo and com.foo.debug are treated as the same app).
   for (const item of block.items) {
+    // effectiveSerperPreviewItemPackage resolves packageId or ?id= from link, then
+    // normalises through normPkgForSerperSnapshot → always trimmed + lowercased.
     const ep = effectiveSerperPreviewItemPackage({
       packageId: item.packageId,
       link: item.link,
     });
     if (!ep) continue;
+
+    // Strict or suffix/prefix family match (e.g. com.foo vs com.foo.debug).
     const isMatch =
       ep === want ||
       ep.startsWith(`${want}.`) ||
       want.startsWith(`${ep}.`);
     if (!isMatch) continue;
-    const pos =
-      typeof item.position === "number" && Number.isFinite(item.position)
-        ? item.position
-        : typeof item.position === "string"
-          ? Number.parseInt(item.position, 10)
-          : NaN;
-    if (!Number.isFinite(pos)) continue;
+
+    // Serper position is 1-indexed numeric. Guard against non-finite / zero values.
+    const pos = Math.round(item.position);
+    if (!Number.isFinite(pos) || pos < 1) continue;
+
     if (best === undefined || pos < best) best = pos;
   }
 

@@ -566,7 +566,17 @@ export function ListingOptimizer({
     (appsQuery.isFetching && appsList.length === 0);
 
   const clearOptimizerGeneratedOutputs = useCallback(
-    (opts?: { clearLocalCache?: boolean; appId?: string }) => {
+    (opts?: {
+      clearLocalCache?: boolean;
+      appId?: string;
+      /**
+       * When true, also clears the App Identity, App Features & Value, and Phone
+       * Mockup frame fields. Set this on a fresh exploit-injection campaign so
+       * stale data from the previous session never bleeds into the new run.
+       */
+      clearInputFrames?: boolean;
+    }) => {
+      // ── Generated output frames ─────────────────────────────────────────────
       setResult(null);
       setEditedTitle("");
       setEditedShort("");
@@ -578,6 +588,13 @@ export function ListingOptimizer({
       setWizardStep(0);
       setWizardPanelPeek({});
       setPurgedAwaitingGenerate(false);
+      // ── App Identity / Features / Phone Mockup frames (on fresh injection) ──
+      if (opts?.clearInputFrames) {
+        setAppName("");
+        setFeatures("");
+        setPreviewShortDesc("");
+        setPreviewIconUrl("");
+      }
       if (opts?.clearLocalCache && opts.appId?.trim()) {
         clearFinalListingCache(opts.appId.trim());
       }
@@ -718,9 +735,12 @@ export function ListingOptimizer({
       // 1. Clear all generated output (nulls result → nulls asoScore) and reset
       //    wizard to step 0. purgedAwaitingGenerate=true holds the skeleton open
       //    until the user runs a fresh generation.
+      //    clearInputFrames=true additionally wipes App Identity, App Features & Value,
+      //    and Phone Mockup frames so stale cached data never bleeds into the new campaign.
       clearOptimizerGeneratedOutputs({
         clearLocalCache: Boolean(resolvedAppId),
         appId: resolvedAppId || undefined,
+        clearInputFrames: true,
       });
       setPurgedAwaitingGenerate(true);
       setError(null);
@@ -1762,7 +1782,7 @@ export function ListingOptimizer({
       competitorVulnerabilitiesRef.current = [];
       const inversionDirective =
         vulns.length > 0
-          ? `The competitor has the following active user complaints: ${vulns.join("; ")}. DO NOT mention these issues literally. Instead, aggressively highlight how our app solves these problems by emphasising stability, accuracy, seamless synchronisation, and a clean ad-free experience. Keep all target keywords positive and optimised for high-volume Play Store indexing.`
+          ? `Tracked competitor analysis has surfaced the following active user pain-points across rival apps: ${vulns.join("; ")}. DO NOT mention these issues literally in the listing. Instead, aggressively position our app as the definitive solution — emphasise stability, accuracy, seamless synchronisation, and a clean ad-free experience that directly resolves each of these rival weaknesses. Where multiple competitors share the same pain-point, treat it as a high-priority differentiation signal. Keep all target keywords positive and optimised for high-volume Play Store indexing.`
           : "";
       const improvementsDirective = buildListingImprovementsGenerateDirective(
         queuedImprovements,

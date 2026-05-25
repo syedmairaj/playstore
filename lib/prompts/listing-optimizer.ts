@@ -89,8 +89,65 @@ function listingOptimizerStrategyBlock(
     .join("\n");
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Prompt token-budget constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maximum number of target keywords injected into the prompt.
+ * Slicing to 25 keeps the keyword line under ~300 tokens while still covering
+ * all high-priority ASO terms. Passing 60+ keywords produces diminishing returns
+ * and bloats the prompt enough to trigger 502 timeouts on slower Gemini nodes.
+ */
+const PROMPT_MAX_KEYWORDS = 25;
+
+/**
+ * Maximum number of exploit / competitor pain-point strings injected into the
+ * displacement campaign block. Beyond 5, the prompt context is filled with raw
+ * review text that the model cannot meaningfully act on within a single listing
+ * output — causing latency spikes and incoherent copy.
+ */
+const PROMPT_MAX_EXPLOIT_TARGETS = 5;
+
+/**
+ * Normalise and deduplicate a keyword list, then cap at `PROMPT_MAX_KEYWORDS`.
+ * Trim whitespace, lower-case for dedup, but preserve original casing in output.
+ */
+function truncateKeywords(raw: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const kw of raw) {
+    const trimmed = kw.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+    if (out.length >= PROMPT_MAX_KEYWORDS) break;
+  }
+  return out;
+}
+
+/**
+ * Trim and cap the exploit targets array to `PROMPT_MAX_EXPLOIT_TARGETS`.
+ * Each entry is also trimmed so stray whitespace from sessionStorage doesn't
+ * waste tokens.
+ */
+function truncateExploitTargets(raw: string[]): string[] {
+  return raw
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, PROMPT_MAX_EXPLOIT_TARGETS);
+}
+
 /**
  * System + user messages for Gemini. Output must be JSON per schema in system.
+ *
+ * Token-budget enforcement:
+ *   - targetKeywords is capped at PROMPT_MAX_KEYWORDS (25) after dedup.
+ *   - exploitTargets is capped at PROMPT_MAX_EXPLOIT_TARGETS (5).
+ * These limits prevent prompt bloat that causes 502 timeouts on large payloads
+ * while preserving all actionable signal for the model.
  */
 export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
   system: string;
@@ -98,6 +155,13 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
 } {
   const tone = TONE_FOR_PROMPT[input.toneStyle];
   const targetArabic = input.targetArabic ?? false;
+
+  // ── Token-budget enforcement ───────────────────────────────────────────────
+  // Truncate before any string interpolation so the budget is guaranteed even
+  // when the client sends a very large keyword or exploit payload.
+  const keywords = truncateKeywords(input.targetKeywords);
+  const exploitTargets = truncateExploitTargets(input.exploitTargets ?? []);
+  // ─────────────────────────────────────────────────────────────────────────
 
   const system = [
     "You are an expert Google Play ASO copywriter and strategist for Android apps on Google Play.",
@@ -120,10 +184,11 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
     .filter(Boolean)
     .join(" ");
 
+  // Pass the budget-capped keyword list to the strategy block.
   const strategy = listingOptimizerStrategyBlock(
     input.appName,
     input.category,
-    input.targetKeywords,
+    keywords,          // ← truncated, not the raw input
     tone,
     targetArabic,
   );
@@ -137,12 +202,14 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
         ].join("\n")
       : "";
 
+  // Only inject the displacement block when there are staged targets.
+  // exploitTargets is already capped at PROMPT_MAX_EXPLOIT_TARGETS (5).
   const exploitBlock =
-    Array.isArray(input.exploitTargets) && input.exploitTargets.length > 0
+    exploitTargets.length > 0
       ? [
           "",
           "🔥 CRITICAL INSTRUCTIONS — STRATEGIC DISPLACEMENT CAMPAIGN:",
-          `The user has staged specific competitive loop-holes and user pain points they intend to exploit: [${input.exploitTargets.join(", ")}].`,
+          `The user has staged ${exploitTargets.length} competitive pain point${exploitTargets.length !== 1 ? "s" : ""} to exploit: [${exploitTargets.join(", ")}].`,
           "For each staged target, apply the matching displacement strategy when writing title, shortDescription, and longDescription:",
           "- If a target relates to stability or performance flaws (e.g., 'Bug / Crash', 'Crashes', 'Freezes'), position this app as an ultra-stable, battle-tested alternative. Use language like 'zero crashes', 'rock-solid performance', or 'built to last'.",
           "- If a target relates to monetization friction (e.g., 'Ads too intrusive', 'Too many ads', 'Paywalled features'), highlight a smooth premium experience, fair pricing, or ad-light design.",

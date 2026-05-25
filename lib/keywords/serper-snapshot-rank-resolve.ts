@@ -14,13 +14,17 @@ export type SerperCountryResultForSnapshot = {
 
 export function normPkgForSerperSnapshot(id: string | null | undefined): string | null {
   if (!id || typeof id !== "string") return null;
+  // Trim before decode — remove any leading/trailing whitespace from DB storage.
   let t = id.trim();
   if (!t) return null;
   try {
-    t = decodeURIComponent(t);
+    // Decode percent-encoded characters (e.g. %20 → space) then trim again in case
+    // the encoded form contained leading/trailing encoded whitespace.
+    t = decodeURIComponent(t).trim();
   } catch {
-    /* keep raw */
+    /* keep raw trimmed value */
   }
+  // Normalise to lowercase so matching is case-insensitive end-to-end.
   const low = t.toLowerCase();
   return low.length > 0 ? low : null;
 }

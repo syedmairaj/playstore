@@ -46,7 +46,7 @@ export function DashboardShell({
   }, [mobileNavOpen]);
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-[#090c11] text-zinc-100 antialiased">
+    <div className="flex h-full min-h-0 w-full overflow-x-hidden bg-[#090c11] text-zinc-100 antialiased">
       {mobileNavOpen ? (
         <button
           type="button"

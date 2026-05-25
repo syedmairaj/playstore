@@ -1370,14 +1370,14 @@
         "ariaLabel": "Learn how the Optimization Queue works",
         "heading": "💡 How the Optimization Queue Works",
         "whatItIsLabel": "🤔 WHAT IT IS:",
-        "whatItIsBody": "A unified staging workspace that aggregates critical user complaints, feature requests, and bugs flagged across both YOUR app store reviews and your tracked COMPETITORS' listings.",
+        "whatItIsBody": "This campaign utilizes AI matrices to deploy Defensive vs. Offensive Marketing tactics against your rivals. A unified staging workspace that aggregates critical user complaints, feature requests, and bugs flagged across both YOUR app store reviews and your tracked COMPETITORS' listings.",
         "strategyLabel": "⚡ DEFENSIVE VS. OFFENSIVE MARKETING:",
         "strategyOwnLabel": "From Your App:",
         "strategyOwnBody": "Fixes real user pain points in your metadata copy to salvage your conversion ratings and reassure new downloaders.",
         "strategyCompetitorLabel": "From Competitors:",
         "strategyCompetitorBody": "Identifies functional gaps or system crashes in rival products so you can rewrite your storefront copy to steal their frustrated users.",
-        "expectedResultLabel": "🚀 EXPECTED RESULT:",
-        "expectedResultBody": "Clicking 'Generate Optimized Metadata Copy' feeds these targeted issues straight into the AI Listing Optimizer. The engine will intelligently output high-converting store titles, subtitles, and search keyword metrics crafted to address these exact customer demands.",
+        "expectedResultLabel": "🚀 HOW TO POPULATE THIS QUEUE:",
+        "expectedResultBody": "Go to 'Review Insights', select a competitor, and click 'Stage Competitor Exploit' on their vulnerabilities to feed data to this workspace tracker. Once staged, click 'Run Optimization Campaign' to compile the live AI rewriting process instantly.",
         "pillDefensive": "🛡️ Defensive Optimization (Your App Review)",
         "pillOffensive": "⚔️ Offensive Conquest (Competitor Review)"
       },
@@ -1602,8 +1602,8 @@
     },
     "empty": {
       "body": "Results appear here after you generate. Everything stays editable in the Play Console—use this as a strong first draft.",
-      "runScanCta": "⚡ Run Optimization Scan",
-      "runScanHint": "Keywords are loaded and ready. Generate your Play Store listing now."
+      "runScanCta": "⚡ Run Optimization Campaign",
+      "runScanHint": "Competitor exploit data is staged and ready. Launch the AI rewriting process to generate your Play Store listing now."
     },
     "smartWorkflow": {
       "bannerTitle": "💡 Smart ASO Workflow Tip",

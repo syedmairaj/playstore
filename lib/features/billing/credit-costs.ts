@@ -25,6 +25,13 @@ export const AI_CREDIT_COSTS = {
   serper_preview_per_country: 1,
   /** AI draft reply for a single Play Store review (Reviews dashboard). */
   reviews_ai_reply: 1,
+  /**
+   * Gemini-powered Common Issues analysis: clusters ≤2★ reviews into labelled
+   * pain-point cards with severity + impact metrics.  Billed once per
+   * (workspace × package_name × lang_code) analysis run; cached result is served
+   * free on subsequent reads until the cache expires or is invalidated.
+   */
+  reviews_issue_analysis: 3,
   /** On-demand marketplace ecosystem scan: re-crawls tracked keywords + competitor listings and writes fresh alerts. */
   marketplace_scan: 1,
 } as const;

@@ -1084,6 +1084,30 @@ export function CompetitorSpyClient({
       countryOverlapShared.length === 0,
   );
 
+  /**
+   * When 2 competitors are tracked, build a keyword → theirRank lookup map for
+   * the *inactive* competitor so the shared keyword table can show both rivals'
+   * ranks side-by-side in the "Their Rank" column.
+   */
+  const inactiveCompetitor = useMemo(
+    () =>
+      competitors.length >= 2
+        ? competitors.find((c) => c.id !== (activeCompetitor?.id ?? null)) ?? null
+        : null,
+    [competitors, activeCompetitor],
+  );
+
+  const inactiveCompetitorRankMap = useMemo((): Map<string, number> => {
+    if (!inactiveCompetitor) return new Map();
+    const map = new Map<string, number>();
+    for (const row of inactiveCompetitor.shared) {
+      if (typeof row.theirRank === "number") {
+        map.set(row.keyword.trim().toLowerCase(), row.theirRank);
+      }
+    }
+    return map;
+  }, [inactiveCompetitor]);
+
   const gapEmptyVariant = useMemo((): CompetitorSpyGapEmptyVariant | null => {
     if (!hydrated || dbLoadPending) return null;
     if (competitors.length === 0) return "noCompetitors";
@@ -2357,6 +2381,49 @@ export function CompetitorSpyClient({
                                 <span className="inline-flex items-center justify-center rounded-md border border-white/[0.06] bg-white/[0.04] px-2 py-0.5 text-xs text-zinc-500">
                                   —
                                 </span>
+                              ) : inactiveCompetitor ? (
+                                /* Dual-competitor mode: show both rivals' ranks side-by-side */
+                                <span className="inline-flex items-center justify-center gap-2">
+                                  {/* Active competitor rank */}
+                                  <span className="inline-flex flex-col items-center gap-0.5">
+                                    <span
+                                      className="flex size-4 shrink-0 items-center justify-center rounded text-[9px] font-bold"
+                                      style={{ background: "rgba(16,185,129,0.15)", color: "rgb(167,243,208)" }}
+                                      title={activeCompetitor?.displayName}
+                                      aria-hidden
+                                    >
+                                      {(activeCompetitor?.displayName[0] ?? "?").toUpperCase()}
+                                    </span>
+                                    <RankDisplay
+                                      rank={row.theirRank}
+                                      labels={rankLabels}
+                                      context={{ column: "theirs" }}
+                                      emphasize
+                                    />
+                                  </span>
+                                  <span className="h-6 w-px bg-white/[0.08]" aria-hidden />
+                                  {/* Inactive competitor rank */}
+                                  <span className="inline-flex flex-col items-center gap-0.5">
+                                    <span
+                                      className="flex size-4 shrink-0 items-center justify-center rounded text-[9px] font-bold bg-zinc-700/60 text-zinc-400"
+                                      title={inactiveCompetitor.displayName}
+                                      aria-hidden
+                                    >
+                                      {(inactiveCompetitor.displayName[0] ?? "?").toUpperCase()}
+                                    </span>
+                                    {(() => {
+                                      const kwKey = row.keyword.trim().toLowerCase();
+                                      const inactiveRank = inactiveCompetitorRankMap.get(kwKey) ?? null;
+                                      return (
+                                        <RankDisplay
+                                          rank={inactiveRank}
+                                          labels={rankLabels}
+                                          context={{ column: "theirs" }}
+                                        />
+                                      );
+                                    })()}
+                                  </span>
+                                </span>
                               ) : (
                                 <span className="inline-flex justify-center">
                                   <RankDisplay
@@ -2573,9 +2640,21 @@ export function CompetitorSpyClient({
             const exploitKeywords = [
               ...praiseTerms,
               ...requestTerms.slice(0, 3),
+              // When a second competitor is tracked, fold in their quick-win ranking
+              // terms so the optimizer receives cross-rival keyword coverage.
+              ...(inactiveCompetitor
+                ? inactiveCompetitor.quickWinTerms.slice(0, 3).filter(Boolean)
+                : []),
             ].filter(Boolean);
             // Vulnerabilities: competitor pain-points to be inverted into positive angles.
-            const exploitVulnerabilities = bugTerms.filter(Boolean);
+            // Merge from both rivals so the LLM prompt addresses weaknesses across the board.
+            const exploitVulnerabilities = [
+              ...bugTerms,
+              ...(inactiveCompetitor?.gaps
+                .filter((g) => g.opportunity === "high")
+                .map((g) => g.keyword)
+                .slice(0, 3) ?? []),
+            ].filter(Boolean);
             // Legacy alias used by the CTA visibility guard below.
             const exploitTerms = exploitKeywords;
 
@@ -2859,75 +2938,68 @@ export function CompetitorSpyClient({
 
         </div>
 
-        <div className="flex min-h-0 min-w-0 flex-col lg:border-s lg:border-white/[0.06] lg:ps-10">
+        {/* RHS snapshot panel — min-h prevents CLS collapse while competitor data swaps */}
+        <div className="flex min-h-[420px] min-w-0 flex-col lg:border-s lg:border-white/[0.06] lg:ps-10">
 
-          {/* ── Dual Competitor Switcher (when 2 tracked) ─────────────── */}
+          {/* ── Dual Competitor Micro-Tab Switcher (when 2 tracked) ──────── */}
           {competitors.length >= 2 ? (
             <div
               dir={isRtl ? "rtl" : "ltr"}
-              className={cn(
-                "mb-4 overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0c1018]",
-                isRtl && "font-arabic",
-              )}
+              className={cn("mb-5", isRtl && "font-arabic")}
             >
-              <div className="border-b border-white/[0.06] px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                  Tracked Competitors
-                </p>
-              </div>
-              <div className="divide-y divide-white/[0.05]">
-                {competitors.slice(0, 2).map((comp) => {
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-600">
+                Competitor
+              </p>
+              <div
+                className={cn(
+                  "flex gap-1 rounded-lg bg-zinc-900 p-1",
+                  isRtl && "flex-row-reverse",
+                )}
+                role="tablist"
+                aria-label="Select competitor"
+              >
+                {competitors.slice(0, 2).map((comp, idx) => {
                   const isActive = comp.id === selectedCompetitorId;
                   const compMinRank = minTheirRankFromShared(comp);
                   return (
                     <button
                       key={comp.id}
                       type="button"
-                      className={cn(
-                        "flex w-full items-center gap-3 px-4 py-3 text-start transition-colors",
-                        isRtl && "flex-row-reverse text-end",
-                        isActive
-                          ? "bg-emerald-500/10 text-white"
-                          : "text-zinc-300 hover:bg-white/[0.03]",
-                      )}
+                      role="tab"
+                      aria-selected={isActive}
                       onClick={() => selectCompetitor(comp.id)}
-                      aria-pressed={isActive}
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2 text-start text-sm font-medium transition-all duration-150",
+                        isActive
+                          ? "bg-zinc-800 text-white shadow-sm ring-1 ring-white/[0.08]"
+                          : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300",
+                      )}
                     >
-                      {/* Initial avatar */}
-                      <div
+                      {/* Slot number pill */}
+                      <span
                         className={cn(
-                          "flex size-8 shrink-0 items-center justify-center rounded-xl text-sm font-bold",
+                          "flex size-5 shrink-0 items-center justify-center rounded text-[10px] font-bold tabular-nums",
                           isActive
-                            ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40"
-                            : "bg-zinc-800 text-zinc-400 ring-1 ring-white/[0.06]",
+                            ? "bg-emerald-500/20 text-emerald-300"
+                            : "bg-zinc-700/60 text-zinc-500",
                         )}
                         aria-hidden
                       >
-                        {(comp.displayName[0] ?? "?").toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1 space-y-0.5">
-                        <p className="truncate text-sm font-semibold leading-tight">
-                          {comp.displayName}
-                        </p>
-                        <p className="truncate font-mono text-[10px] text-zinc-500">
-                          {comp.packageId}
-                        </p>
-                      </div>
+                        {idx + 1}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate leading-tight">
+                        {comp.displayName}
+                      </span>
                       {compMinRank != null && compMinRank < 101 ? (
                         <span
                           className={cn(
-                            "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ring-1",
+                            "shrink-0 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ring-1",
                             isActive
-                              ? "bg-emerald-500/15 text-emerald-200 ring-emerald-500/30"
-                              : "bg-zinc-800 text-zinc-400 ring-zinc-700/50",
+                              ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25"
+                              : "bg-zinc-800 text-zinc-500 ring-zinc-700/40",
                           )}
                         >
                           #{compMinRank}
-                        </span>
-                      ) : null}
-                      {isActive ? (
-                        <span className="ms-1 shrink-0 text-emerald-400 text-xs" aria-label="Selected">
-                          ●
                         </span>
                       ) : null}
                     </button>
@@ -2952,18 +3024,33 @@ export function CompetitorSpyClient({
               manageCompetitorsLabel={t("manage.button")}
               onManageCompetitors={() => setManageOpen(true)}
               onSendToOptimizer={() => {
-                const seed = [
+                // Primary competitor seed (active)
+                const activeSeed = [
                   ...(countryInsights?.topKeywords ?? activeCompetitor.topKeywords),
                   ...(countryInsights?.gaps ?? activeCompetitor.gaps).map((g) => g.keyword),
                 ].filter(Boolean);
-                pushListingOptimizer(seed.slice(0, 12));
+                // Merge second competitor's keywords when both rivals are tracked
+                const inactiveSeed = inactiveCompetitor
+                  ? [
+                      ...inactiveCompetitor.topKeywords,
+                      ...inactiveCompetitor.gaps.map((g) => g.keyword),
+                    ].filter(Boolean)
+                  : [];
+                // Deduplicate across both rivals, active competitor's terms take priority
+                const seen = new Set(activeSeed.map((k) => k.trim().toLowerCase()));
+                const merged = [
+                  ...activeSeed,
+                  ...inactiveSeed.filter((k) => !seen.has(k.trim().toLowerCase())),
+                ];
+                pushListingOptimizer(merged.slice(0, 15));
               }}
             />
           ) : (
+            /* min-h matches RHS column reservation — prevents card collapse CLS on competitor swap */
             <aside
               dir={isRtl ? "rtl" : "ltr"}
               className={cn(
-                "rounded-2xl border border-dashed border-white/[0.12] bg-[#080c12]/80 px-5 py-12 text-center text-sm text-zinc-500",
+                "flex min-h-[360px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/[0.12] bg-[#080c12]/80 px-5 py-12 text-center text-sm text-zinc-500",
                 isRtl && "font-arabic",
               )}
             >
