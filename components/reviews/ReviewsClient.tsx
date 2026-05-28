@@ -859,6 +859,28 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   const [hydrated, setHydrated] = useState(false);
   const [improvementIds, setImprovementIds] = useState<string[]>([]);
 
+  // ── Backlog queue state ──────────────────────────────────────────────────
+  // Mirrors workspace_listing_backlog — active (not implemented) + archived (implemented)
+  type BacklogItem = {
+    id: string;
+    packageName: string;
+    countryCode: string;
+    issueTitle: string;
+    issueDescription: string;
+    severity: "CRITICAL" | "MEDIUM" | "LOW";
+    impact: number;        // 0.0–1.0
+    isImplemented: boolean;
+    createdAt: string;
+    updatedAt: string;
+  };
+  const [backlogItems, setBacklogItems] = useState<BacklogItem[]>([]);
+  const [backlogLoading, setBacklogLoading] = useState(false);
+  const [backlogError, setBacklogError] = useState(false);
+  // "active" = Active Insights tab, "archive" = Optimization History Archive tab
+  const [insightsTab, setInsightsTab] = useState<"active" | "archive">("active");
+  // Per-item busy state for stage-exploit / restore buttons
+  const [backlogBusy, setBacklogBusy] = useState<Record<string, boolean>>({});
+
   // App selector — "my-app" | competitor packageId
   const [selectedAppFilter, setSelectedAppFilter] = useState<string>("my-app");
   const [competitorOptions, setCompetitorOptions] = useState<AppSourceOption[]>([]);
@@ -1047,6 +1069,113 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
       JSON.stringify(improvementIds),
     );
   }, [hydrated, improvementIds, workspaceId]);
+
+  // ── Fetch backlog (active queue + history archive) ───────────────────────
+  const loadBacklog = useCallback(() => {
+    let cancelled = false;
+    setBacklogLoading(true);
+    setBacklogError(false);
+
+    fetch(`/api/workspaces/${workspaceId}/backlog`, {
+      credentials: "same-origin",
+    })
+      .then((r) => r.json())
+      .then((json: { success: boolean; items?: Array<{
+        id: string;
+        package_name: string;
+        country_code: string;
+        issue_title: string;
+        issue_description: string;
+        severity: "CRITICAL" | "MEDIUM" | "LOW";
+        impact: number;
+        is_implemented: boolean;
+        created_at: string;
+        updated_at: string;
+      }> }) => {
+        if (cancelled) return;
+        if (json.success) {
+          setBacklogItems((json.items ?? []).map((i) => ({
+            id: i.id,
+            packageName: i.package_name,
+            countryCode: i.country_code,
+            issueTitle: i.issue_title,
+            issueDescription: i.issue_description,
+            severity: i.severity,
+            impact: i.impact,
+            isImplemented: i.is_implemented,
+            createdAt: i.created_at,
+            updatedAt: i.updated_at,
+          })));
+        } else {
+          setBacklogError(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBacklogError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setBacklogLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+
+  useEffect(() => {
+    const cancel = loadBacklog();
+    return cancel;
+  }, [loadBacklog]);
+
+  // ── Mark item as implemented (active → history) ──────────────────────────
+  const markDone = useCallback(async (itemId: string) => {
+    setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/backlog/${itemId}`,
+        {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_implemented: true }),
+        },
+      );
+      const json = (await res.json()) as { success: boolean };
+      if (json.success) {
+        setBacklogItems((prev) =>
+          prev.map((i) => (i.id === itemId ? { ...i, isImplemented: true } : i)),
+        );
+      }
+    } catch {
+      // silent — item stays active
+    } finally {
+      setBacklogBusy((prev) => ({ ...prev, [itemId]: false }));
+    }
+  }, [workspaceId]);
+
+  // ── Revert item back to active (history → active) ────────────────────────
+  const revertToActive = useCallback(async (itemId: string) => {
+    setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/backlog/${itemId}`,
+        {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_implemented: false }),
+        },
+      );
+      const json = (await res.json()) as { success: boolean };
+      if (json.success) {
+        setBacklogItems((prev) =>
+          prev.map((i) => (i.id === itemId ? { ...i, isImplemented: false } : i)),
+        );
+      }
+    } catch {
+      // silent
+    } finally {
+      setBacklogBusy((prev) => ({ ...prev, [itemId]: false }));
+    }
+  }, [workspaceId]);
 
   const refresh = useCallback(() => {
     router.refresh();
@@ -1636,6 +1765,253 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
               improvementIds={improvementIds}
               onAddImprovement={addImprovement}
             />
+          </section>
+
+
+          {/* ── Active Insights / Optimization History Archive ─────────── */}
+          <section className="space-y-4" aria-labelledby="insights-panel-heading">
+            {/* Section header */}
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                {t("commonIssues.kicker")}
+              </p>
+              <h2
+                id="insights-panel-heading"
+                className="text-xl font-semibold tracking-tight text-white sm:text-2xl"
+              >
+                {t("commonIssues.title")}
+              </h2>
+            </div>
+
+            {/* Tab switcher */}
+            <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-1 w-fit">
+              <button
+                type="button"
+                onClick={() => setInsightsTab("active")}
+                className={[
+                  "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  insightsTab === "active"
+                    ? "bg-zinc-800 text-white shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-300",
+                ].join(" ")}
+              >
+                <Zap className="size-3.5" aria-hidden />
+                {t("insightsTabs.activeInsights")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setInsightsTab("archive")}
+                className={[
+                  "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  insightsTab === "archive"
+                    ? "bg-zinc-800 text-white shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-300",
+                ].join(" ")}
+              >
+                <Inbox className="size-3.5" aria-hidden />
+                {t("insightsTabs.historyArchive")}
+              </button>
+            </div>
+
+            {/* ── ACTIVE INSIGHTS TAB ──────────────────────────────────── */}
+            {insightsTab === "active" && (() => {
+              const activeItems = backlogItems.filter((i) => !i.isImplemented);
+              return (
+                <div className="space-y-3">
+                  {backlogLoading && (
+                    <div className="flex items-center gap-2 text-xs text-zinc-500">
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      <span>{t("loading")}</span>
+                    </div>
+                  )}
+                  {backlogError && !backlogLoading && (
+                    <p className="text-xs text-red-400">{t("insightsTabs.loadError")}</p>
+                  )}
+                  {!backlogLoading && !backlogError && activeItems.length === 0 && (
+                    <p className="text-sm text-zinc-500">{t("insightsTabs.emptyActive")}</p>
+                  )}
+                  {!backlogLoading && activeItems.map((item) => {
+                    const severityStyles: Record<string, string> = {
+                      CRITICAL: "bg-red-500/10 text-red-400 border border-red-500/20",
+                      MEDIUM:   "bg-amber-500/10 text-amber-400 border border-amber-500/20",
+                      LOW:      "bg-blue-500/10 text-blue-400 border border-blue-500/20",
+                    };
+                    const accentBar: Record<string, string> = {
+                      CRITICAL: "bg-red-500",
+                      MEDIUM:   "bg-amber-500",
+                      LOW:      "bg-blue-500",
+                    };
+                    const isBusy = backlogBusy[item.id] ?? false;
+                    return (
+                      <div
+                        key={item.id}
+                        className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/60 px-4 py-4"
+                      >
+                        {/* Severity accent bar on start edge */}
+                        <div
+                          className={`absolute start-0 top-0 h-full w-1 ${accentBar[item.severity] ?? "bg-zinc-500"}`}
+                          aria-hidden
+                        />
+                        <div className="ms-2 space-y-2">
+                          {/* Top row: severity + impact + trash */}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${severityStyles[item.severity] ?? ""}`}>
+                                {item.severity}
+                              </span>
+                              <span className="text-xs text-amber-400/80">
+                                {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={t("insightsTabs.deleteItem")}
+                              onClick={() => {
+                                setBacklogItems((prev) => prev.filter((i) => i.id !== item.id));
+                              }}
+                              className="text-zinc-600 hover:text-red-400 transition-colors"
+                            >
+                              <svg viewBox="0 0 20 20" fill="currentColor" className="size-4" aria-hidden>
+                                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                              </svg>
+                            </button>
+                          </div>
+
+                          {/* Title + description */}
+                          <p className="font-semibold text-zinc-100">{item.issueTitle}</p>
+                          <p className="text-sm text-zinc-400">{item.issueDescription}</p>
+
+                          {/* CTA: Stage Competitor Exploit */}
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => markDone(item.id)}
+                            className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 px-3 py-1.5 text-xs font-medium text-orange-400 hover:bg-orange-500/20 transition-colors disabled:opacity-50"
+                          >
+                            {isBusy ? (
+                              <>
+                                <Loader2 className="size-3 animate-spin" aria-hidden />
+                                {t("insightsTabs.markingDone")}
+                              </>
+                            ) : (
+                              <>
+                                <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
+                                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                                </svg>
+                                {t("insightsTabs.stageExploit")}
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* ── OPTIMIZATION HISTORY ARCHIVE TAB ─────────────────────── */}
+            {insightsTab === "archive" && (() => {
+              const doneItems = backlogItems.filter((i) => i.isImplemented);
+              return (
+                <div className="space-y-3">
+                  {/* Archive header hint */}
+                  <div className="flex items-center justify-between gap-2">
+                    {doneItems.length > 0 ? (
+                      <p className="text-sm text-zinc-400">
+                        {t("insightsTabs.exploitedCount", { count: doneItems.length })}
+                      </p>
+                    ) : null}
+                    <span className="ms-auto rounded-full border border-white/[0.08] bg-zinc-900 px-2.5 py-0.5 text-[11px] text-zinc-500">
+                      {t("insightsTabs.archiveBadge")}
+                    </span>
+                  </div>
+
+                  {backlogLoading && (
+                    <div className="flex items-center gap-2 text-xs text-zinc-500">
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      <span>{t("loading")}</span>
+                    </div>
+                  )}
+                  {!backlogLoading && doneItems.length === 0 && (
+                    <p className="text-sm text-zinc-500">{t("insightsTabs.emptyArchive")}</p>
+                  )}
+
+                  {!backlogLoading && doneItems.map((item) => {
+                    const severityStyles: Record<string, string> = {
+                      CRITICAL: "bg-red-500/10 text-red-400 border border-red-500/20",
+                      MEDIUM:   "bg-amber-500/10 text-amber-400 border border-amber-500/20",
+                      LOW:      "bg-blue-500/10 text-blue-400 border border-blue-500/20",
+                    };
+                    const isBusy = backlogBusy[item.id] ?? false;
+                    const exploitedDate = new Intl.DateTimeFormat(undefined, {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }).format(new Date(item.updatedAt));
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-xl border border-white/[0.08] bg-zinc-900/60 px-4 py-4 space-y-3"
+                      >
+                        {/* Top row: severity badge + trash */}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${severityStyles[item.severity] ?? ""}`}>
+                            {item.severity}
+                          </span>
+                          <span className="text-xs text-amber-400/80">
+                            {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
+                          </span>
+                        </div>
+
+                        {/* Title + description */}
+                        <div>
+                          <p className="font-semibold text-zinc-100">{item.issueTitle}</p>
+                          <p className="mt-1 text-sm text-zinc-400">{item.issueDescription}</p>
+                        </div>
+
+                        {/* Counter-attacked badge + timestamp */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
+                            <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                            </svg>
+                            {t("insightsTabs.counterAttacked")}
+                          </span>
+                          <span className="text-xs text-zinc-500">
+                            {t("insightsTabs.exploitedOn", { date: exploitedDate })}
+                          </span>
+                        </div>
+
+                        {/* Restore to Active button */}
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => revertToActive(item.id)}
+                          className="w-full flex items-center justify-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.03] py-2 text-sm text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors disabled:opacity-50"
+                        >
+                          {isBusy ? (
+                            <>
+                              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                              {t("insightsTabs.restoring")}
+                            </>
+                          ) : (
+                            <>
+                              <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
+                                <path fillRule="evenodd" d="M7.793 2.232a.75.75 0 01-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 010 10.75H10.75a.75.75 0 010-1.5h2.875a3.875 3.875 0 000-7.75H3.622l4.146 3.957a.75.75 0 01-1.036 1.085l-5.5-5.25a.75.75 0 010-1.085l5.5-5.25a.75.75 0 011.061.025z" clipRule="evenodd" />
+                              </svg>
+                              {t("insightsTabs.restoreToActive")}
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </section>
         </>
       )}

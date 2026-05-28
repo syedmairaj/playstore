@@ -1,12 +1,220 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { CheckCircle2, XCircle, Loader2, Store } from "lucide-react";
 import { SignOutButton } from "@/components/app/SignOutButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type ConnectionStatus = "idle" | "checking" | "connected" | "disconnected" | "error";
+
+// ── ConnectedStoresSection ─────────────────────────────────────────────────
+
+function ConnectedStoresSection({ workspaceId, canAdmin }: { workspaceId: string; canAdmin?: boolean }) {
+  const t = useTranslations("settings.integrations");
+  const searchParams = useSearchParams();
+
+  const [status, setStatus] = useState<ConnectionStatus>("checking");
+  const [authorizedEmail, setAuthorizedEmail] = useState<string | null>(null);
+  const [connectedAt, setConnectedAt] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [flashType, setFlashType] = useState<"success" | "error">("success");
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  // ── Flash from OAuth redirect ──────────────────────────────────────────────
+  useEffect(() => {
+    const success = searchParams.get("integration_success");
+    const error = searchParams.get("integration_error");
+
+    if (success === "google_play") {
+      setFlash(t("flashConnected"));
+      setFlashType("success");
+    } else if (error === "access_denied") {
+      setFlash(t("flashCancelled"));
+      setFlashType("error");
+    } else if (error) {
+      setFlash(t("flashFailed"));
+      setFlashType("error");
+    }
+  }, [searchParams, t]);
+
+  // ── Load connection status ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!workspaceId) return;
+
+    let cancelled = false;
+    setStatus("checking");
+
+    fetch(`/api/integrations/google-play/status?workspaceId=${encodeURIComponent(workspaceId)}`)
+      .then((r) => r.json())
+      .then((json: { ok: boolean; connected?: boolean; authorizedEmail?: string | null; connectedAt?: string | null }) => {
+        if (cancelled) return;
+        if (json.ok) {
+          setStatus(json.connected ? "connected" : "disconnected");
+          setAuthorizedEmail(json.authorizedEmail ?? null);
+          setConnectedAt(json.connectedAt ?? null);
+        } else {
+          setStatus("error");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStatus("error");
+      });
+
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+
+  // ── Disconnect ─────────────────────────────────────────────────────────────
+  async function handleDisconnect() {
+    if (!window.confirm(t("disconnectConfirm"))) return;
+    setDisconnecting(true);
+    try {
+      const res = await fetch(
+        `/api/integrations/google-play/connect?workspaceId=${encodeURIComponent(workspaceId)}`,
+        { method: "DELETE" },
+      );
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (json.ok) {
+        setStatus("disconnected");
+        setAuthorizedEmail(null);
+        setConnectedAt(null);
+        setFlash(t("flashDisconnected"));
+        setFlashType("success");
+      } else {
+        setFlash(json.error ?? t("errorLoadStatus"));
+        setFlashType("error");
+      }
+    } catch {
+      setFlash(t("errorLoadStatus"));
+      setFlashType("error");
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const connectedDate = connectedAt
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(connectedAt))
+    : null;
+
+  return (
+    <section className="border-t border-white/[0.06] pt-8">
+      <div className="flex items-center gap-2">
+        <Store className="size-4 text-zinc-400" aria-hidden />
+        <h2 className="text-sm font-semibold text-zinc-100">{t("connectedStoresTitle")}</h2>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">{t("connectedStoresHint")}</p>
+
+      {/* Flash banner */}
+      {flash && (
+        <div
+          className={`mt-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
+            flashType === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : "border-red-500/30 bg-red-500/10 text-red-300"
+          }`}
+          role="status"
+        >
+          {flashType === "success" ? (
+            <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+          ) : (
+            <XCircle className="size-4 shrink-0" aria-hidden />
+          )}
+          {flash}
+        </div>
+      )}
+
+      <div className="mt-4 rounded-xl border border-white/[0.08] bg-zinc-950/40 px-4 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          {/* Left: icon + label */}
+          <div className="flex items-center gap-3">
+            {/* Google Play icon */}
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.06]">
+              <svg viewBox="0 0 24 24" className="size-5" aria-hidden fill="none">
+                <path d="M3.18 23.76a2 2 0 0 0 2.19-.22l12.67-7.32-2.83-2.83L3.18 23.76z" fill="#EA4335"/>
+                <path d="M20.82 10.03 17.04 7.8 13.96 10.88l3.08 3.08 3.78-2.23a1.99 1.99 0 0 0 0-3.7z" fill="#FBBC05"/>
+                <path d="M3.18.24a2 2 0 0 0-.18.87v21.78c0 .31.06.6.18.87l.1.09 12.2-12.2v-.29L3.28.15l-.1.09z" fill="#4285F4"/>
+                <path d="M15.04 8.03 3.18.24l-.1.09 12.2 12.2.09-.09L17.04 9.8l-2-1.77z" fill="#34A853"/>
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-zinc-100">{t("googlePlay")}</p>
+              {status === "checking" && (
+                <p className="flex items-center gap-1 text-xs text-zinc-500">
+                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                  {t("checkingConnection")}
+                </p>
+              )}
+              {status === "connected" && (
+                <p className="text-xs text-emerald-400">
+                  {authorizedEmail ? `${authorizedEmail} · ` : ""}
+                  {connectedDate ? t("connectedSince", { date: connectedDate }) : t("connected")}
+                </p>
+              )}
+              {status === "disconnected" && (
+                <p className="text-xs text-zinc-500">{t("notConnected")}</p>
+              )}
+              {status === "error" && (
+                <p className="text-xs text-red-400">{t("errorLoadStatus")}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Right: action button */}
+          {canAdmin && (
+            <div>
+              {status === "connected" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={disconnecting}
+                  onClick={handleDisconnect}
+                  className="border-white/[0.12] text-zinc-300 hover:border-red-500/40 hover:text-red-400"
+                >
+                  {disconnecting ? (
+                    <>
+                      <Loader2 className="me-1.5 size-3.5 animate-spin" aria-hidden />
+                      {t("disconnecting")}
+                    </>
+                  ) : (
+                    t("disconnect")
+                  )}
+                </Button>
+              ) : status === "disconnected" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  asChild
+                  className="bg-emerald-600 hover:bg-emerald-500"
+                >
+                  <a href={`/api/integrations/google-play/connect?workspaceId=${encodeURIComponent(workspaceId)}`}>
+                    {t("connect")}
+                  </a>
+                </Button>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        {!canAdmin && (
+          <p className="mt-3 text-xs text-zinc-600">{t("connectNote")}</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── IntegrationsTab ───────────────────────────────────────────────────────────
+
 export function IntegrationsTab({
+  workspaceId,
+  canAdmin,
   prefs,
   onPrefsChange,
   displayName,
@@ -15,6 +223,8 @@ export function IntegrationsTab({
   onSaveNotifications,
   onSaveProfile,
 }: {
+  workspaceId: string;
+  canAdmin?: boolean;
   prefs: {
     emailAlerts: boolean;
     weeklySummary: boolean;
@@ -35,7 +245,11 @@ export function IntegrationsTab({
 
   return (
     <div className="space-y-10">
-      <section>
+      {/* Connected Stores */}
+      <ConnectedStoresSection workspaceId={workspaceId} canAdmin={canAdmin} />
+
+      {/* Notifications */}
+      <section className="border-t border-white/[0.06] pt-8">
         <h2 className="text-sm font-semibold text-zinc-100">{t("integrations.alertsTitle")}</h2>
         <p className="mt-1 text-xs text-zinc-500">{t("integrations.alertsHint")}</p>
         <div className="mt-5 space-y-5">
@@ -92,6 +306,7 @@ export function IntegrationsTab({
         </Button>
       </section>
 
+      {/* Account */}
       <section className="border-t border-white/[0.06] pt-8">
         <h2 className="text-sm font-semibold text-zinc-100">{t("integrations.accountTitle")}</h2>
         <p className="mt-1 text-xs text-zinc-500">{t("integrations.accountHint")}</p>

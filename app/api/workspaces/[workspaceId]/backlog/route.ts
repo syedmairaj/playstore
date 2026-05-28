@@ -181,7 +181,7 @@ export async function GET(_request: NextRequest, context: Ctx) {
 
   const { data: items, error } = await supabase
     .from(TABLE)
-    .select("id, package_name, country_code, issue_title, issue_description, severity, impact, created_at")
+    .select("id, package_name, country_code, issue_title, issue_description, severity, impact, is_implemented, created_at, updated_at")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: false });
 

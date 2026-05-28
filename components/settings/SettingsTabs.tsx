@@ -317,6 +317,8 @@ export function SettingsTabs(props: {
         <TabsContent value="integrations">
           <div className="rounded-2xl border border-white/[0.08] bg-zinc-950/40 p-5 shadow-sm sm:p-6">
             <IntegrationsTab
+              workspaceId={props.workspaceId}
+              canAdmin={canAdmin}
               prefs={prefs}
               onPrefsChange={setPrefs}
               displayName={displayName}

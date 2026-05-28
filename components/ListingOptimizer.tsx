@@ -337,6 +337,8 @@ export function ListingOptimizer({
   const [addAppOpen, setAddAppOpen] = useState(false);
   const [exportPlayOpen, setExportPlayOpen] = useState(false);
   const [logoGenOpen, setLogoGenOpen] = useState(false);
+  const [googlePlayConnected, setGooglePlayConnected] = useState<boolean | null>(null);
+  const [connectedEmail, setConnectedEmail] = useState<string | null>(null);
   const [previewShortDesc, setPreviewShortDesc] = useState("");
   const [previewIconUrl, setPreviewIconUrl] = useState("");
   const [autofillBusy, setAutofillBusy] = useState<AutofillField | null>(null);
@@ -867,6 +869,23 @@ export function ListingOptimizer({
   useEffect(() => {
     refreshQueuedImprovements();
   }, [refreshQueuedImprovements]);
+
+  // ── Google Play connection status ─────────────────────────────────────────
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    fetch(`/api/integrations/google-play/status?workspaceId=${workspaceId}`)
+      .then((r) => r.json() as Promise<{ ok: boolean; connected: boolean; authorizedEmail: string | null }>)
+      .then((data) => {
+        if (cancelled) return;
+        if (data.ok) {
+          setGooglePlayConnected(data.connected);
+          setConnectedEmail(data.authorizedEmail);
+        }
+      })
+      .catch(() => { /* non-fatal — publish button just won't show */ });
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   // ── Queue item deletion ───────────────────────────────────────────────────
   const handleRemoveQueueItem = useCallback(
@@ -2411,6 +2430,11 @@ export function ListingOptimizer({
             )
           }
           onDownloadTxt={() => downloadPlayConsoleExport()}
+          workspaceId={workspaceId}
+          appId={selectedAppId || undefined}
+          locale={locale}
+          googlePlayConnected={googlePlayConnected ?? false}
+          connectedEmail={connectedEmail}
         />
       ) : null}
 
