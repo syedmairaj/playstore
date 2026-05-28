@@ -1290,8 +1290,9 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
           throw new Error(json.error?.message ?? "Backlog write failed");
         }
 
-        // ── Step 3: Success ──────────────────────────────────────────────────
+        // ── Step 3: Success — reload backlog so Active Insights queue updates ──
         toast.success(t("commonIssues.addedToast"));
+        loadBacklog(); // refresh backlog list so item appears in Active Insights tab
         return true;
       } catch (err) {
         // ── Step 4: Rollback ─────────────────────────────────────────────────
@@ -1301,7 +1302,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
         return false;
       }
     },
-    [improvementIds, workspaceId, selectedAppFilter, apps, countryCode, t],
+    [improvementIds, workspaceId, selectedAppFilter, apps, countryCode, t, loadBacklog],
   );
 
   const primaryApp = apps[0];
@@ -1730,7 +1731,21 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
            * Credits are only charged on the POST (analyzing → ready) path.
            * The GET (checking) path is always free — it only probes the cache.
            */}
+
+          {/* ── Common Issues — Active Insights + Optimization History Archive ── */}
+          {/*
+           * Single section with two tabs:
+           *   ⚡ Active Insights   — CommonIssuesPanel (Gemini analysis) + backlog active queue
+           *   🗂 Optimization History Archive — exploited/implemented backlog items
+           *
+           * CommonIssuesPanel is keyed on selectedAppFilter so it remounts on tab switch.
+           * "Add to Optimization Backlog" in the IssueCard fires addImprovement, which
+           * POSTs to /backlog and appends to improvementIds. loadBacklog() re-fetches
+           * the full backlog list so the item also appears in the Active Insights queue.
+           */}
           <section className="space-y-4" aria-labelledby="common-issues-heading">
+
+            {/* Section header */}
             <div className="space-y-1">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
                 {t("commonIssues.kicker")}
@@ -1746,45 +1761,8 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
               </p>
             </div>
 
-            {improvementIds.length > 0 ? (
-              <p className="flex items-center gap-2 text-xs text-emerald-400/85">
-                <Sparkles className="size-3.5 shrink-0" aria-hidden />
-                {t("commonIssues.queueHint", { count: improvementIds.length })}
-              </p>
-            ) : null}
-
-            <CommonIssuesPanel
-              key={selectedAppFilter}
-              workspaceId={workspaceId}
-              packageName={activePackageName}
-              countryCode={countryCode}
-              langCode={primaryLang}
-              reviewTexts={activeLowRatingTexts}
-              rawReviewCount={activeLowRatingTexts.length}
-              isSyncLoading={activeLoading}
-              improvementIds={improvementIds}
-              onAddImprovement={addImprovement}
-            />
-          </section>
-
-
-          {/* ── Active Insights / Optimization History Archive ─────────── */}
-          <section className="space-y-4" aria-labelledby="insights-panel-heading">
-            {/* Section header */}
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                {t("commonIssues.kicker")}
-              </p>
-              <h2
-                id="insights-panel-heading"
-                className="text-xl font-semibold tracking-tight text-white sm:text-2xl"
-              >
-                {t("commonIssues.title")}
-              </h2>
-            </div>
-
             {/* Tab switcher */}
-            <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-1 w-fit">
+            <div className="flex items-center gap-0 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-1 w-fit">
               <button
                 type="button"
                 onClick={() => setInsightsTab("active")}
@@ -1795,7 +1773,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                     : "text-zinc-500 hover:text-zinc-300",
                 ].join(" ")}
               >
-                <Zap className="size-3.5" aria-hidden />
+                <Zap className="size-3.5 shrink-0" aria-hidden />
                 {t("insightsTabs.activeInsights")}
               </button>
               <button
@@ -1808,114 +1786,128 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                     : "text-zinc-500 hover:text-zinc-300",
                 ].join(" ")}
               >
-                <Inbox className="size-3.5" aria-hidden />
+                <Inbox className="size-3.5 shrink-0" aria-hidden />
                 {t("insightsTabs.historyArchive")}
               </button>
             </div>
 
-            {/* ── ACTIVE INSIGHTS TAB ──────────────────────────────────── */}
-            {insightsTab === "active" && (() => {
-              const activeItems = backlogItems.filter((i) => !i.isImplemented);
-              return (
-                <div className="space-y-3">
-                  {backlogLoading && (
-                    <div className="flex items-center gap-2 text-xs text-zinc-500">
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                      <span>{t("loading")}</span>
-                    </div>
-                  )}
-                  {backlogError && !backlogLoading && (
-                    <p className="text-xs text-red-400">{t("insightsTabs.loadError")}</p>
-                  )}
-                  {!backlogLoading && !backlogError && activeItems.length === 0 && (
-                    <p className="text-sm text-zinc-500">{t("insightsTabs.emptyActive")}</p>
-                  )}
-                  {!backlogLoading && activeItems.map((item) => {
-                    const severityStyles: Record<string, string> = {
-                      CRITICAL: "bg-red-500/10 text-red-400 border border-red-500/20",
-                      MEDIUM:   "bg-amber-500/10 text-amber-400 border border-amber-500/20",
-                      LOW:      "bg-blue-500/10 text-blue-400 border border-blue-500/20",
-                    };
-                    const accentBar: Record<string, string> = {
-                      CRITICAL: "bg-red-500",
-                      MEDIUM:   "bg-amber-500",
-                      LOW:      "bg-blue-500",
-                    };
-                    const isBusy = backlogBusy[item.id] ?? false;
-                    return (
-                      <div
-                        key={item.id}
-                        className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/60 px-4 py-4"
-                      >
-                        {/* Severity accent bar on start edge */}
+            {/* ── ACTIVE INSIGHTS TAB ──────────────────────────────────────── */}
+            {insightsTab === "active" && (
+              <div className="space-y-6">
+
+                {/* Gemini Common Issues panel — the IssueCard grid */}
+                {improvementIds.length > 0 ? (
+                  <p className="flex items-center gap-2 text-xs text-emerald-400/85">
+                    <Sparkles className="size-3.5 shrink-0" aria-hidden />
+                    {t("commonIssues.queueHint", { count: improvementIds.length })}
+                  </p>
+                ) : null}
+
+                <CommonIssuesPanel
+                  key={selectedAppFilter}
+                  workspaceId={workspaceId}
+                  packageName={activePackageName}
+                  countryCode={countryCode}
+                  langCode={primaryLang}
+                  reviewTexts={activeLowRatingTexts}
+                  rawReviewCount={activeLowRatingTexts.length}
+                  isSyncLoading={activeLoading}
+                  improvementIds={improvementIds}
+                  onAddImprovement={addImprovement}
+                />
+
+                {/* ── Active backlog queue (items added via "Add to Optimization Backlog") ── */}
+                {(backlogLoading || backlogError || backlogItems.filter((i) => !i.isImplemented).length > 0) && (
+                  <div className="space-y-3 border-t border-white/[0.06] pt-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                      {t("insightsTabs.activeInsights")}
+                    </p>
+
+                    {backlogLoading && (
+                      <div className="flex items-center gap-2 text-xs text-zinc-500">
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                        <span>{t("loading")}</span>
+                      </div>
+                    )}
+                    {backlogError && !backlogLoading && (
+                      <p className="text-xs text-red-400">{t("insightsTabs.loadError")}</p>
+                    )}
+
+                    {!backlogLoading && backlogItems.filter((i) => !i.isImplemented).map((item) => {
+                      const severityStyles: Record<string, string> = {
+                        CRITICAL: "bg-red-500/10 text-red-400 border border-red-500/20",
+                        MEDIUM:   "bg-amber-500/10 text-amber-400 border border-amber-500/20",
+                        LOW:      "bg-blue-500/10 text-blue-400 border border-blue-500/20",
+                      };
+                      const accentBar: Record<string, string> = {
+                        CRITICAL: "bg-red-500",
+                        MEDIUM:   "bg-amber-500",
+                        LOW:      "bg-blue-500",
+                      };
+                      const isBusy = backlogBusy[item.id] ?? false;
+                      return (
                         <div
-                          className={`absolute start-0 top-0 h-full w-1 ${accentBar[item.severity] ?? "bg-zinc-500"}`}
-                          aria-hidden
-                        />
-                        <div className="ms-2 space-y-2">
-                          {/* Top row: severity + impact + trash */}
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${severityStyles[item.severity] ?? ""}`}>
-                                {item.severity}
-                              </span>
-                              <span className="text-xs text-amber-400/80">
-                                {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
-                              </span>
+                          key={item.id}
+                          className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/60 px-4 py-4"
+                        >
+                          <div className={`absolute start-0 top-0 h-full w-1 ${accentBar[item.severity] ?? "bg-zinc-500"}`} aria-hidden />
+                          <div className="ms-2 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${severityStyles[item.severity] ?? ""}`}>
+                                  {item.severity}
+                                </span>
+                                <span className="text-xs text-amber-400/80">
+                                  {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                aria-label={t("insightsTabs.deleteItem")}
+                                onClick={() => setBacklogItems((prev) => prev.filter((i) => i.id !== item.id))}
+                                className="text-zinc-600 hover:text-red-400 transition-colors"
+                              >
+                                <svg viewBox="0 0 20 20" fill="currentColor" className="size-4" aria-hidden>
+                                  <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                                </svg>
+                              </button>
                             </div>
+                            <p className="font-semibold text-zinc-100">{item.issueTitle}</p>
+                            <p className="text-sm text-zinc-400">{item.issueDescription}</p>
                             <button
                               type="button"
-                              aria-label={t("insightsTabs.deleteItem")}
-                              onClick={() => {
-                                setBacklogItems((prev) => prev.filter((i) => i.id !== item.id));
-                              }}
-                              className="text-zinc-600 hover:text-red-400 transition-colors"
+                              disabled={isBusy}
+                              onClick={() => markDone(item.id)}
+                              className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 px-3 py-1.5 text-xs font-medium text-orange-400 hover:bg-orange-500/20 transition-colors disabled:opacity-50"
                             >
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="size-4" aria-hidden>
-                                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                              </svg>
+                              {isBusy ? (
+                                <>
+                                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                                  {t("insightsTabs.markingDone")}
+                                </>
+                              ) : (
+                                <>
+                                  <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
+                                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                                  </svg>
+                                  {t("insightsTabs.stageExploit")}
+                                </>
+                              )}
                             </button>
                           </div>
-
-                          {/* Title + description */}
-                          <p className="font-semibold text-zinc-100">{item.issueTitle}</p>
-                          <p className="text-sm text-zinc-400">{item.issueDescription}</p>
-
-                          {/* CTA: Stage Competitor Exploit */}
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => markDone(item.id)}
-                            className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 px-3 py-1.5 text-xs font-medium text-orange-400 hover:bg-orange-500/20 transition-colors disabled:opacity-50"
-                          >
-                            {isBusy ? (
-                              <>
-                                <Loader2 className="size-3 animate-spin" aria-hidden />
-                                {t("insightsTabs.markingDone")}
-                              </>
-                            ) : (
-                              <>
-                                <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
-                                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                                </svg>
-                                {t("insightsTabs.stageExploit")}
-                              </>
-                            )}
-                          </button>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
-            {/* ── OPTIMIZATION HISTORY ARCHIVE TAB ─────────────────────── */}
+            {/* ── OPTIMIZATION HISTORY ARCHIVE TAB ─────────────────────────── */}
             {insightsTab === "archive" && (() => {
               const doneItems = backlogItems.filter((i) => i.isImplemented);
               return (
                 <div className="space-y-3">
-                  {/* Archive header hint */}
                   <div className="flex items-center justify-between gap-2">
                     {doneItems.length > 0 ? (
                       <p className="text-sm text-zinc-400">
@@ -1956,7 +1948,6 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                         key={item.id}
                         className="rounded-xl border border-white/[0.08] bg-zinc-900/60 px-4 py-4 space-y-3"
                       >
-                        {/* Top row: severity badge + trash */}
                         <div className="flex items-center justify-between gap-2">
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${severityStyles[item.severity] ?? ""}`}>
                             {item.severity}
@@ -1964,15 +1955,21 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                           <span className="text-xs text-amber-400/80">
                             {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
                           </span>
+                          <button
+                            type="button"
+                            aria-label={t("insightsTabs.deleteItem")}
+                            onClick={() => setBacklogItems((prev) => prev.filter((i) => i.id !== item.id))}
+                            className="ms-auto text-zinc-600 hover:text-red-400 transition-colors"
+                          >
+                            <svg viewBox="0 0 20 20" fill="currentColor" className="size-4" aria-hidden>
+                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                            </svg>
+                          </button>
                         </div>
-
-                        {/* Title + description */}
                         <div>
                           <p className="font-semibold text-zinc-100">{item.issueTitle}</p>
                           <p className="mt-1 text-sm text-zinc-400">{item.issueDescription}</p>
                         </div>
-
-                        {/* Counter-attacked badge + timestamp */}
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
                             <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
@@ -1984,8 +1981,6 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                             {t("insightsTabs.exploitedOn", { date: exploitedDate })}
                           </span>
                         </div>
-
-                        {/* Restore to Active button */}
                         <button
                           type="button"
                           disabled={isBusy}
@@ -2012,6 +2007,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                 </div>
               );
             })()}
+
           </section>
         </>
       )}
