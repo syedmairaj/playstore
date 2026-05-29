@@ -101,13 +101,58 @@ export async function generateListingWithGemini(
     },
   });
 
-  const rawText = result.response.text();
+  // ── Finish-reason guard ───────────────────────────────────────────────────
+  // The SDK's response.text() throws a generic Error (not InvalidModelOutputError)
+  // when finishReason is MAX_TOKENS, SAFETY, RECITATION, or OTHER. Inspect the
+  // candidate directly first so we can throw the right error type and trigger the
+  // 422 retry path rather than falling through to a 500.
+  const candidate = result.response.candidates?.[0];
+  const finishReason = candidate?.finishReason as string | undefined;
+  const isBlocked =
+    finishReason && finishReason !== "STOP" && finishReason !== "1";
+
+  // Always log in debug mode so you can see exactly what Gemini returned.
+  if (
+    process.env.DEBUG_GEMINI === "1" ||
+    process.env.NODE_ENV !== "production"
+  ) {
+    console.log("[listing-generate] finishReason:", finishReason ?? "unknown");
+    console.log(
+      "[listing-generate] raw candidate text:",
+      candidate?.content?.parts?.[0]?.text?.slice(0, 400) ?? "(empty)",
+    );
+  }
+
+  if (isBlocked) {
+    throw new InvalidModelOutputError(
+      `Model response was blocked or truncated (finishReason: ${finishReason ?? "unknown"}). This is a transient Gemini issue — please try again.`,
+      undefined,
+    );
+  }
+
+  // ── Extract raw text ──────────────────────────────────────────────────────
+  // response.text() can still throw even with STOP if parts is empty.
+  // Wrap it so the error becomes an InvalidModelOutputError (422) not a 500.
+  let rawText: string;
+  try {
+    rawText = result.response.text();
+  } catch (textErr) {
+    const msg = textErr instanceof Error ? textErr.message : String(textErr);
+    throw new InvalidModelOutputError(
+      `Model returned an empty or unreadable response: ${msg}. Please try again.`,
+      undefined,
+    );
+  }
 
   // ── Truncation recovery guard ─────────────────────────────────────────────
   // Even with responseSchema, a network timeout or TPM spike can truncate the
   // output mid-object. Heal the three most common truncation patterns before
   // hitting JSON.parse so a partial response doesn't throw an unrecoverable error.
   let text = rawText?.trim() ?? "";
+  if (process.env.DEBUG_GEMINI === "1" || process.env.NODE_ENV !== "production") {
+    console.log("[listing-generate] raw text length:", text.length);
+    console.log("[listing-generate] raw text preview:", text.slice(0, 500));
+  }
   if (text.startsWith("{") && !text.endsWith("}")) {
     // Trailing comma after last key → strip it
     text = text.replace(/,\s*$/, "");
@@ -129,8 +174,23 @@ export async function generateListingWithGemini(
 
   const normalized = normalizeListingGenerationParsed(parsed);
   const clamped = clampListingGenerationParsed(normalized);
+
+  if (process.env.DEBUG_GEMINI === "1" || process.env.NODE_ENV !== "production") {
+    const rec = clamped as Record<string, unknown>;
+    console.log("[listing-generate] parsed keys:", Object.keys(rec));
+    console.log("[listing-generate] title:", rec.title);
+    console.log("[listing-generate] shortDescription len:", typeof rec.shortDescription === "string" ? rec.shortDescription.length : "N/A");
+    console.log("[listing-generate] fullDescription len:", typeof rec.fullDescription === "string" ? rec.fullDescription.length : "N/A");
+    console.log("[listing-generate] keywordSuggestions count:", Array.isArray(rec.keywordSuggestions) ? rec.keywordSuggestions.length : "N/A");
+    console.log("[listing-generate] asoScore:", rec.asoScore);
+    console.log("[listing-generate] scoreBreakdown:", JSON.stringify(rec.scoreBreakdown));
+  }
+
   const coreResult = listingGenerationCoreSchema.safeParse(clamped);
   if (!coreResult.success) {
+    if (process.env.DEBUG_GEMINI === "1" || process.env.NODE_ENV !== "production") {
+      console.error("[listing-generate] coreSchema failure:", JSON.stringify(coreResult.error.flatten(), null, 2));
+    }
     throw new InvalidModelOutputError(
       "The model returned listing data that could not be validated after applying Play Store length limits. Try Regenerate.",
       coreResult.error,
