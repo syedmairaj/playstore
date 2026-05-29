@@ -2017,11 +2017,9 @@ export function ListingOptimizer({
       } else {
         toast.success(t("form.generateSuccessToastSaved"));
       }
-      if (json.meta?.asoScorePartial) {
-        toast.message(t("results.asoScorePartialTitle"), {
-          description: t("results.asoScorePartialBody"),
-        });
-      }
+      // asoScorePartial: listing is fully generated — the ASO score section
+      // is an optional metric. Silently skip it; don't show a warning toast
+      // that confuses users into thinking generation failed.
     } catch {
       toast.dismiss(runToastId);
       setError(t("form.networkError"));
