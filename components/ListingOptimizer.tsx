@@ -860,8 +860,49 @@ export function ListingOptimizer({
       return;
     }
     setQueuedImprovementsLoading(true);
-    void fetchUnutilizedListingImprovements(workspaceId).then((rows) => {
-      setQueuedImprovements(rows);
+
+    // Fetch both listing-improvements (review-based) AND backlog items (Common Issues)
+    // then merge them so the Active Optimization Queue shows everything at once.
+    const listingImprovementsPromise = fetchUnutilizedListingImprovements(workspaceId);
+    const backlogPromise = fetch(
+      `/api/workspaces/${workspaceId}/backlog`,
+      { credentials: "same-origin" },
+    )
+      .then((r) => r.json() as Promise<{ success: boolean; items?: Array<{
+        id: string;
+        package_name: string;
+        country_code: string;
+        issue_title: string;
+        issue_description: string;
+        severity: string;
+        impact: number;
+        is_implemented: boolean;
+        created_at: string;
+        updated_at: string;
+      }> }>)
+      .then((json) => {
+        if (!json.success || !Array.isArray(json.items)) return [] as ListingImprovementItem[];
+        // Only show active (not yet exploited) backlog items
+        return json.items
+          .filter((item) => !item.is_implemented)
+          .map((item): ListingImprovementItem => ({
+            id: `backlog-${item.id}`,
+            reviewId: item.id,
+            reviewText: item.issue_description,
+            userName: "",
+            score: 0,
+            sentimentTag: item.issue_title,
+            appId: null,
+            packageName: item.package_name ?? null,
+            isUtilized: false,
+            createdAt: item.created_at,
+          }));
+      })
+      .catch(() => [] as ListingImprovementItem[]);
+
+    void Promise.all([listingImprovementsPromise, backlogPromise]).then(([listingRows, backlogRows]) => {
+      // Deduplicate: backlog rows are prefixed "backlog-", listing rows have plain UUIDs
+      setQueuedImprovements([...listingRows, ...backlogRows]);
       setQueuedImprovementsLoading(false);
     });
   }, [workspaceId]);
@@ -895,6 +936,20 @@ export function ListingOptimizer({
       // Skip API call for synthetic url-inject stubs (no DB row)
       if (itemId.startsWith("url-exploit-")) return;
       if (!workspaceId) return;
+      // Backlog items are prefixed "backlog-" — mark them as implemented rather than delete
+      if (itemId.startsWith("backlog-")) {
+        const realId = itemId.replace(/^backlog-/, "");
+        void fetch(
+          `/api/workspaces/${workspaceId}/backlog/${realId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_implemented: true }),
+            credentials: "same-origin",
+          },
+        ).catch(() => refreshQueuedImprovements());
+        return;
+      }
       void fetch(
         `/api/workspaces/${workspaceId}/listing-improvements/${itemId}`,
         { method: "DELETE", credentials: "same-origin" },

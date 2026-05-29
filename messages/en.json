@@ -1073,7 +1073,9 @@
       "impact": "Impact: {pct}%",
       "addedOn": "Added {date}",
       "deleteItem": "Remove from queue",
-      "loadError": "Could not load insights queue."
+      "loadError": "Could not load insights queue.",
+      "sourceOwnApp": "Your App",
+      "sourceCompetitor": "Competitor"
     },
     "activeQueue": {
       "kicker": "Active",
@@ -1459,7 +1461,8 @@
         "confirm": "Deduct {credits} Credits & Run Campaign"
       },
       "ctaNavigate": "→ Open AI Optimizer to Run This Campaign",
-      "ctaNavigateHint": "You're not on the Optimizer page. Click to go there with these insights pre-loaded."
+      "ctaNavigateHint": "You're not on the Optimizer page. Click to go there with these insights pre-loaded.",
+      "processingBanner": "Processing — generating your optimized listing…"
     },
     "guidance": {
       "selectApp": "Select app",

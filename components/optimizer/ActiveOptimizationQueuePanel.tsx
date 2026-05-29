@@ -172,6 +172,13 @@ export type ActiveOptimizationQueuePanelProps = {
    * navigation CTA can build the correct `/app/[workspaceId]/listing-optimizer` URL.
    */
   workspaceId?: string;
+  /**
+   * When true, the queue is locked in "Processing…" mode — all pills are dimmed
+   * and the delete button is hidden. Use this while the Gemini generation is running
+   * to prevent the user from modifying the queue mid-flight (which can cause
+   * state duplication bugs).
+   */
+  isGenerating?: boolean;
 };
 
 export function ActiveOptimizationQueuePanel({
@@ -185,6 +192,7 @@ export function ActiveOptimizationQueuePanel({
   onRemoveItem,
   ownPackageName,
   workspaceId,
+  isGenerating = false,
 }: ActiveOptimizationQueuePanelProps) {
   const t = useTranslations("optimizer.activeQueue");
   const pathname = usePathname();
@@ -316,9 +324,24 @@ export function ActiveOptimizationQueuePanel({
             </motion.div>
           ) : items.length > 0 ? (
             <TooltipProvider>
+              {/* Optimistic "Processing" banner — shown while Gemini generation is running.
+                  Locks the entire pill list so the user can't mutate the queue mid-flight. */}
+              {isGenerating && (
+                <motion.div
+                  className="mb-3 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400"
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                  <span>{t("processingBanner")}</span>
+                </motion.div>
+              )}
               <motion.div
                 layout
-                className="flex flex-wrap gap-2"
+                className={cn(
+                  "flex flex-wrap gap-2",
+                  isGenerating && "pointer-events-none opacity-50",
+                )}
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
@@ -343,16 +366,25 @@ export function ActiveOptimizationQueuePanel({
                           {/* Pill wrapper — no native `title` attr to avoid double tooltip */}
                           <span
                             tabIndex={0}
-                            className="group inline-flex cursor-default items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-slate-800/70 ps-3 pe-1.5 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-inset ring-slate-700/40 transition-colors hover:border-emerald-500/30 hover:bg-slate-800"
+                            className={cn(
+                              "group inline-flex cursor-default items-center gap-1.5 rounded-lg border bg-slate-800/70 ps-3 pe-1.5 py-1.5 text-xs font-medium ring-1 ring-inset ring-slate-700/40 transition-colors",
+                              isGenerating
+                                ? "border-amber-500/20 text-amber-300/70"
+                                : "border-emerald-500/20 text-slate-200 hover:border-emerald-500/30 hover:bg-slate-800",
+                            )}
                           >
-                            <CheckCircle2
-                              className="size-3 shrink-0 text-emerald-400"
-                              aria-hidden
-                            />
+                            {isGenerating ? (
+                              <Loader2 className="size-3 shrink-0 animate-spin text-amber-400/70" aria-hidden />
+                            ) : (
+                              <CheckCircle2
+                                className="size-3 shrink-0 text-emerald-400"
+                                aria-hidden
+                              />
+                            )}
                             {queueImprovementBadgeLabel(item)}
 
-                            {/* Delete (×) button — only rendered when onRemoveItem is wired */}
-                            {onRemoveItem && (
+                            {/* Delete (×) button — hidden during generation to prevent mid-flight mutations */}
+                            {onRemoveItem && !isGenerating && (
                               <button
                                 type="button"
                                 disabled={isDeleting}

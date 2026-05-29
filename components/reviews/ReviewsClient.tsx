@@ -1819,10 +1819,6 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                 {/* ── Active backlog queue (items added via "Add to Optimization Backlog") ── */}
                 {(backlogLoading || backlogError || backlogItems.filter((i) => !i.isImplemented).length > 0) && (
                   <div className="space-y-3 border-t border-white/[0.06] pt-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                      {t("insightsTabs.activeInsights")}
-                    </p>
-
                     {backlogLoading && (
                       <div className="flex items-center gap-2 text-xs text-zinc-500">
                         <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -1943,6 +1939,18 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                       hour: "2-digit",
                       minute: "2-digit",
                     }).format(new Date(item.updatedAt));
+
+                    // ── Resolve competitor source label for archive cards ────────
+                    const ownPackage = apps[0]?.package_name?.trim() ?? "";
+                    const isOwnApp = ownPackage && item.packageName?.trim() === ownPackage;
+                    const matchedCompetitor = competitorOptions.find(
+                      (c) => c.packageId === item.packageName?.trim(),
+                    );
+                    const sourceLabel = isOwnApp
+                      ? t("insightsTabs.sourceOwnApp")
+                      : matchedCompetitor?.label ?? item.packageName ?? null;
+                    const isCompetitorSource = !isOwnApp && sourceLabel !== null;
+
                     return (
                       <div
                         key={item.id}
@@ -1955,6 +1963,22 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                           <span className="text-xs text-amber-400/80">
                             {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
                           </span>
+                          {/* Source pill — competitor name or "Your App" */}
+                          {sourceLabel && (
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${isCompetitorSource ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "bg-sky-500/10 border border-sky-500/20 text-sky-400"}`}>
+                              {isCompetitorSource ? (
+                                <svg viewBox="0 0 16 16" fill="currentColor" className="size-2.5 shrink-0" aria-hidden>
+                                  <path d="M8 1a5 5 0 100 10A5 5 0 008 1zM0 8a8 8 0 1116 0A8 8 0 010 8z"/>
+                                  <path d="M7 5.5a.5.5 0 011 0V8h1.5a.5.5 0 010 1H7.5A.5.5 0 017 8.5v-3z"/>
+                                </svg>
+                              ) : (
+                                <svg viewBox="0 0 16 16" fill="currentColor" className="size-2.5 shrink-0" aria-hidden>
+                                  <path d="M8 8a3 3 0 100-6 3 3 0 000 6zm-5 6s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3z"/>
+                                </svg>
+                              )}
+                              <span className="max-w-[90px] truncate">{sourceLabel}</span>
+                            </span>
+                          )}
                           <button
                             type="button"
                             aria-label={t("insightsTabs.deleteItem")}
