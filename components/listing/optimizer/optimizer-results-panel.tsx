@@ -29,6 +29,7 @@ import {
 import { OptimizerAsoScoreCard } from "@/components/listing/optimizer/optimizer-aso-score-card";
 import { OptimizerListingSkeleton } from "@/components/listing/optimizer/optimizer-listing-skeleton";
 import { OptimizerResultList } from "@/components/listing/optimizer/optimizer-result-list";
+import { KeywordStrategyPanel } from "@/components/listing/optimizer/keyword-strategy-panel";
 
 type ApiMeta = {
   model?: string;
@@ -510,11 +511,29 @@ export function OptimizerResultsPanel({
       </div>
 
       <div className="grid min-w-0 gap-7 sm:gap-8">
-        <OptimizerResultList
-          title={t("results.keywordsList")}
-          items={result.keywordSuggestions ?? []}
+        {/* ── Visibility Rationale — extracted from ctaSuggestions[0] if present ── */}
+        {(() => {
+          const firstCta = result.ctaSuggestions?.[0] ?? "";
+          const rationale = firstCta.startsWith("WHY THIS RANKS:")
+            ? firstCta.replace(/^WHY THIS RANKS:\s*/i, "").trim()
+            : null;
+          if (!rationale) return null;
+          return (
+            <div className="rounded-2xl border border-emerald-500/20 bg-[#07120e]/80 px-5 py-4 ring-1 ring-emerald-500/10">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-emerald-400/80">
+                Why This Ranks
+              </p>
+              <p className="text-sm leading-relaxed text-zinc-200/90">{rationale}</p>
+            </div>
+          );
+        })()}
+
+        {/* ── Keyword Strategy Panel ── */}
+        <KeywordStrategyPanel
+          keywords={result.keywordSuggestions ?? []}
           copyLabel={t("results.copyAll")}
           onCopyAll={onCopyKeywordsList}
+          isRtl={isRtl}
         />
         {workspaceId &&
         selectedAppId.trim() &&
@@ -561,7 +580,9 @@ export function OptimizerResultsPanel({
         ) : null}
         <OptimizerResultList
           title={t("results.ctaList")}
-          items={result.ctaSuggestions ?? []}
+          items={(result.ctaSuggestions ?? []).filter(
+            (cta, idx) => !(idx === 0 && /^WHY THIS RANKS:/i.test(cta)),
+          )}
           copyLabel={t("results.copyAll")}
           onCopyAll={onCopyCtasList}
         />
