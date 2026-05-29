@@ -113,6 +113,11 @@ export type IssueCardProps = {
   issue:       IssueItem;
   /** workspaceId — used to build the listing-optimizer deep-link in STAGED state. */
   workspaceId: string;
+  /**
+   * appId — when provided, appended as ?appId= to the listing-optimizer deep-link
+   * so the optimizer pre-selects the correct app and loads its queue immediately.
+   */
+  appId?:      string;
   /** Whether this issue has already been added (initialises state to STAGED). */
   added:       boolean;
   /** Async handler that POSTs to /api/workspaces/[id]/backlog.  Returns true on success. */
@@ -123,7 +128,7 @@ export type IssueCardProps = {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function IssueCard({ issue, workspaceId, added, onAdd }: IssueCardProps) {
+export function IssueCard({ issue, workspaceId, appId, added, onAdd }: IssueCardProps) {
   const router = useRouter();
   const config = SEVERITY_CONFIG[issue.severity] ?? SEVERITY_CONFIG.MEDIUM;
   const impactPct = Math.round(issue.impact * 100);
@@ -140,8 +145,10 @@ export function IssueCard({ issue, workspaceId, added, onAdd }: IssueCardProps) 
     if (busy) return;
 
     if (status === "STAGED") {
-      // STAGED → navigate to listing optimizer
-      router.push(`/app/${workspaceId}/listing-optimizer`);
+      // STAGED → navigate to listing optimizer, pre-selecting the app so the
+      // queue is immediately visible without the user having to pick an app.
+      const qs = appId ? `?appId=${encodeURIComponent(appId)}` : "";
+      router.push(`/app/${workspaceId}/listing-optimizer${qs}`);
       return;
     }
 

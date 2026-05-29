@@ -137,6 +137,11 @@ type CommonIssuesPanelProps = {
   isSyncLoading: boolean;
   improvementIds: string[];
   /**
+   * appId of the workspace's own app — passed to IssueCard so the "Open in
+   * Listing Optimizer" deep-link appends ?appId= and pre-selects the app.
+   */
+  appId?: string;
+  /**
    * Titles of backlog items that are already archived (isImplemented=true).
    * IssueCards whose title matches one of these will be hidden from the grid
    * so there is no duplication between Active Insights and History Archive.
@@ -205,6 +210,7 @@ function CommonIssuesPanel({
   rawReviewCount,
   isSyncLoading,
   improvementIds,
+  appId,
   excludeTitles,
   onAddImprovement,
 }: CommonIssuesPanelProps) {
@@ -633,6 +639,7 @@ function CommonIssuesPanel({
               key={issueId}
               issue={issue}
               workspaceId={workspaceId}
+              appId={appId}
               added={improvementIds.includes(issueId)}
               onAdd={() => onAddImprovement(issueId, issue)}
             />
@@ -1883,6 +1890,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                 <CommonIssuesPanel
                   key={selectedAppFilter}
                   workspaceId={workspaceId}
+                  appId={primaryAppId}
                   packageName={activePackageName}
                   countryCode={countryCode}
                   langCode={primaryLang}
