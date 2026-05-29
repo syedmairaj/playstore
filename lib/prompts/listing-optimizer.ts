@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v4";
+const PROMPT_VERSION = "listing-optimizer-v5";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -167,18 +167,22 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
     "You are an expert Google Play ASO copywriter and strategist for Android apps on Google Play.",
     "Prioritize install conversion: clear benefits, honest claims, scannable copy — while strictly obeying character limits below (counts every character).",
     "In ONE response (no tool calls), execute this workflow internally: (1) Draft listing copy from the inputs. (2) Self-audit against the primary keywords and Google Play ASO best practices (honest claims, no keyword stuffing, strong hooks, scannable structure). (3) Rewrite weaker sections until the listing is cohesive. (4) Score the final listing with the rubric below and output a single JSON object only.",
-    "Return a single JSON object only (no markdown, no code fences, no prose before or after) with exactly these keys:",
+    // ── Field contract (camelCase only — matches LISTING_RESPONSE_SCHEMA exactly) ──
+    // Using camelCase throughout eliminates the snake_case ↔ camelCase mismatch that
+    // previously caused the normalizer to fire and asoScorePartial to trigger on
+    // otherwise-valid model outputs.
+    "Return a single JSON object only (no markdown, no code fences, no prose before or after) with EXACTLY these camelCase keys:",
     "title: string — Google Play title, at most 30 characters (hard cap 30, never 31+); include primary keyword naturally.",
     "shortDescription: string — CRITICAL: at most 74 characters (hard cap 74, never 75+). One sharp hook; count every character before outputting; do NOT write marketing phrases that require post-processing truncation.",
-    "longDescription: string — at most 4000 characters (stay ≤4000). Feature → Benefit structure, sections, bullets where helpful; weave keywords naturally, no stuffing. (Synonym: you may instead send fullDescription with the same content; prefer longDescription.)",
+    "fullDescription: string — at most 4000 characters (stay ≤4000). Feature → Benefit structure, sections, bullets where helpful; weave keywords naturally, no stuffing.",
     "keywordSuggestions: array of 8-20 concise keyword phrases for ASO.",
     "ctaSuggestions: array of 3-8 short conversion-focused CTAs or button-style lines.",
-    "aso_score: integer from 0 to 100 — Certified ASO Score; MUST equal the sum of the four values in score_breakdown (within 1 if rounding).",
-    "score_breakdown: object with exactly these numeric keys (each an integer; use these exact spellings): title (0–30 max), shortDescription (0–20 max), longDescription (0–40 max), persuasiveness (0–10 max). The four values MUST sum to aso_score.",
-    "improvement_tips: array of 2–8 short, actionable ASO tips specific to this listing (not generic platitudes).",
+    "asoScore: integer from 0 to 100 — Certified ASO Score; MUST equal the sum of the four values in scoreBreakdown (within 1 if rounding).",
+    "scoreBreakdown: object with exactly these camelCase numeric keys (each an integer): title (0–30 max), shortDescription (0–20 max), longDescription (0–40 max), persuasiveness (0–10 max). The four values MUST sum to asoScore.",
+    "improvementTips: array of 2–8 short, actionable ASO tips specific to this listing (not generic platitudes).",
     "Align with Google Play policies: honest claims, no misleading text.",
     targetArabic
-      ? "All user-visible string values in the JSON (title, descriptions, tips, keywordSuggestions, ctaSuggestions) must be natural modern Arabic (MSA/Gulf mix for MENA), except proper nouns where appropriate. Numeric scores stay as numbers."
+      ? "All user-visible string values in the JSON (title, descriptions, improvementTips, keywordSuggestions, ctaSuggestions) must be natural modern Arabic (MSA/Gulf mix for MENA), except proper nouns where appropriate. Numeric scores stay as numbers."
       : null,
   ]
     .filter(Boolean)
@@ -224,9 +228,9 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
   const user = [
     strategy,
     "",
-    "Using the rules above, produce the JSON object described in the system message (including aso_score, score_breakdown, and improvement_tips).",
+    "Using the rules above, produce the JSON object described in the system message (including asoScore, scoreBreakdown, and improvementTips).",
     "",
-    "REMINDER — hard limits on your JSON strings (count every character): title ≤30, shortDescription ≤74 (CRITICAL: never exceed 74 characters — do not write marketing phrases that need truncation or clamping), longDescription ≤4000. Prioritize conversion; shorten shortDescription aggressively if needed.",
+    "REMINDER — hard limits on your JSON strings (count every character): title ≤30, shortDescription ≤74 (CRITICAL: never exceed 74 characters — do not write marketing phrases that need truncation or clamping), fullDescription ≤4000. Prioritize conversion; shorten shortDescription aggressively if needed.",
     "",
     "App features / value props:",
     input.appFeatures,
