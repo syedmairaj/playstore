@@ -2026,6 +2026,177 @@ export function ListingOptimizer({
     }
   }
 
+  // ── Automated pipeline — calls /api/listings/generate-from-insights ─────────
+  //
+  // No form values needed. The route fetches app metadata, tracked keywords,
+  // and staged backlog pain points from the DB automatically. This is the
+  // SaaS-grade path: one click → full competitive-displacement listing, with
+  // zero manual prompt filling by the user.
+  async function runAutoGeneration() {
+    if (!workspaceId) { setError(t("appContext.missingWorkspaceId")); return; }
+    if (!selectedAppId.trim()) {
+      setPickAppGate(true);
+      if (!generateNoAppToastShownRef.current) {
+        generateNoAppToastShownRef.current = true;
+        toast.message(t("appContext.needAppToOptimize"));
+      }
+      return;
+    }
+    if (loading || isProcessingCredits) return;
+    setIsProcessingCredits(true);
+
+    if (
+      typeof aiCreditsRemaining === "number" &&
+      aiCreditsRemaining < AI_CREDIT_COSTS.listing_generation
+    ) {
+      toast.message(t("form.autofill.insufficientTitle"), {
+        description: `${t("form.creditsDetail", {
+          rem: aiCreditsRemaining,
+          req: AI_CREDIT_COSTS.listing_generation,
+        })}${t("form.creditsSuffix")}`,
+      });
+      setUpgradeOpen(true);
+      setIsProcessingCredits(false);
+      return;
+    }
+
+    const toastId = toast.loading(t("form.autoGenerating"));
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    setMeta(undefined);
+    setListingGenerationId(undefined);
+    setLastGeneratedAtIso(null);
+
+    try {
+      const res = await fetch("/api/listings/generate-from-insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          workspaceId,
+          appId: selectedAppId.trim(),
+          toneStyle,
+          targetArabic: locale === "ar",
+        }),
+      });
+
+      const json = (await res.json()) as ApiSuccess | ApiError;
+      toast.dismiss(toastId);
+
+      if (!json.ok) {
+        if (res.status === 401) {
+          setError(t("form.signInError"));
+        } else if (res.status === 402 || json.error.code === "insufficient_credits") {
+          const rem = json.error.remaining;
+          const req = json.error.required;
+          const suffix =
+            typeof rem === "number" && typeof req === "number"
+              ? ` ${t("form.creditsDetail", { rem, req })}`
+              : "";
+          setError(`${json.error.message}${suffix}${t("form.creditsSuffix")}`);
+          setUpgradeOpen(true);
+          if (typeof rem === "number") setAiCreditsRemaining(rem);
+        } else {
+          setError(json.error.message || t("form.autoGenerateError"));
+        }
+        return;
+      }
+
+      // ── Success — same state hydration as runListingGeneration ──────────────
+      const d = json.data;
+      setError(null);
+      suppressListingHydrationRef.current = false;
+      setPurgedAwaitingGenerate(false);
+      setResult(d);
+
+      const freshKeywordsText = d.keywordSuggestions?.length
+        ? d.keywordSuggestions.join(", ")
+        : keywords.trim();
+      const freshFeatures = d.fullDescription?.trim() || features.trim();
+
+      if (d.keywordSuggestions?.length) setKeywords(freshKeywordsText);
+      if (freshFeatures && freshFeatures !== features.trim()) setFeatures(freshFeatures);
+
+      // Archive all staged backlog items — the generation consumed them
+      const backlogIdsToArchive = queuedImprovements
+        .filter((item) => item.id.startsWith("backlog-"))
+        .map((item) => item.id.replace(/^backlog-/, ""));
+      if (workspaceId && backlogIdsToArchive.length > 0) {
+        for (const realId of backlogIdsToArchive) {
+          void fetch(`/api/workspaces/${workspaceId}/backlog/${realId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_implemented: true }),
+            credentials: "same-origin",
+          }).catch(() => {});
+        }
+      }
+      setQueuedImprovements([]);
+      setGenerateJustSucceeded(true);
+      setWizardStep(2);
+      setWizardPanelPeek({});
+      setEditedTitle(d.title);
+      setEditedShort(d.shortDescription);
+      setEditedLong(d.fullDescription);
+      setMeta(json.meta);
+      const generationIdFromApi = json.meta?.generationId;
+      setListingGenerationId(generationIdFromApi);
+      const savedIso = json.meta?.savedAt ?? new Date().toISOString();
+      setLastGeneratedAtIso(savedIso);
+
+      const sid = selectedAppId.trim();
+      if (sid) {
+        writeFinalListingCache(sid, listingOutputToFinalListingCache(d, savedIso, generationIdFromApi));
+      }
+
+      if (generationIdFromApi) {
+        const kws = d.keywordSuggestions?.length
+          ? d.keywordSuggestions
+          : keywords.trim().split(/\s*,\s*/).filter(Boolean);
+        void fetch("/api/listings/generate", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ generationId: generationIdFromApi, appFeatures: freshFeatures, targetKeywords: kws }),
+        }).catch(() => {});
+      }
+
+      if (generationIdFromApi && sid) {
+        setHydrationByApp((prev) => ({
+          ...prev,
+          [sid]: {
+            generationId: generationIdFromApi,
+            createdAt: savedIso,
+            appName: displayAppName,
+            category: category.trim(),
+            keywordsText: freshKeywordsText,
+            appFeatures: freshFeatures,
+            toneStyle,
+            output: d,
+          },
+        }));
+      }
+
+      if (json.meta?.persisted === false) {
+        toast.warning(t("results.persistWarning"));
+      } else {
+        toast.success(t("form.autoGenerateSuccess"));
+      }
+      if (json.meta?.asoScorePartial) {
+        toast.message(t("results.asoScorePartialTitle"), {
+          description: t("results.asoScorePartialBody"),
+        });
+      }
+    } catch {
+      toast.dismiss(toastId);
+      setError(t("form.networkError"));
+    } finally {
+      setLoading(false);
+      setIsProcessingCredits(false);
+    }
+  }
+
   async function trackKeywordsInKeywordTracker() {
     if (!workspaceId?.trim()) return;
     if (!selectedAppId.trim()) {
@@ -3000,6 +3171,37 @@ export function ListingOptimizer({
                           })}
                         </p>
                       </div>
+
+                      {/* ── Auto-Generate from Insights ────────────────────────
+                          Visible only when an app is selected AND there are
+                          staged backlog pain points to exploit. Calls the
+                          fully-automated pipeline — no form filling needed. */}
+                      {selectedAppId.trim() && queuedImprovements.length > 0 && (
+                        <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
+                          <button
+                            type="button"
+                            disabled={isProcessingCredits || loading}
+                            onClick={() => void runAutoGeneration()}
+                            className={cn(
+                              "inline-flex w-full items-center justify-center gap-2 rounded-xl px-6 py-4 text-sm font-bold transition",
+                              "bg-amber-500/10 border border-amber-500/30 text-amber-300",
+                              "hover:bg-amber-500/20 hover:border-amber-400/50 hover:text-amber-200",
+                              "disabled:cursor-not-allowed disabled:opacity-50",
+                              "sm:w-auto sm:min-w-[280px]",
+                            )}
+                          >
+                            {loading
+                              ? t("form.autoGenerating")
+                              : t("form.autoGenerate", {
+                                  credits: AI_CREDIT_COSTS.listing_generation,
+                                })}
+                          </button>
+                          <p className="max-w-xs text-center text-xs leading-relaxed text-white/40 sm:text-start">
+                            {t("form.autoGenerateHint", { count: queuedImprovements.length })}
+                          </p>
+                        </div>
+                      )}
+
                       {/* "This can take a few seconds" moved into the
                           OptimizerResultsGeneratingView skeleton below so it
                           appears in context rather than floating next to the button */}
