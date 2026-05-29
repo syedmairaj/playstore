@@ -1881,6 +1881,11 @@ export function ListingOptimizer({
       if (!json.ok) {
         if (res.status === 401) {
           setError(t("form.signInError"));
+        } else if (json.error.code === "duplicate_request") {
+          // A generation is already running for this workspace — silently discard
+          // the duplicate. The in-flight request will complete and update the UI.
+          // No error message, no credit deduction — safe to ignore.
+          return;
         } else if (
           res.status === 402 ||
           json.error.code === "insufficient_credits"
@@ -2979,7 +2984,7 @@ export function ListingOptimizer({
                       <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
                         <button
                           type="submit"
-                          disabled={!canSubmit || isProcessingCredits}
+                          disabled={!canSubmit || isProcessingCredits || loading}
                           aria-busy={loading ? true : undefined}
                           className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
                         >
@@ -3362,7 +3367,7 @@ export function ListingOptimizer({
               <button
                 type="submit"
                 form="listing-optimizer-form"
-                disabled={!canSubmit || isProcessingCredits}
+                disabled={!canSubmit || isProcessingCredits || loading}
                 className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-7 py-3.5 text-sm font-bold text-white shadow-[0_8px_24px_-8px_rgba(34,197,94,0.5)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0"
               >
                 {t("empty.runScanCta")}
