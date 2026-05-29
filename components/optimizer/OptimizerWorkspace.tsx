@@ -34,7 +34,7 @@ export function OptimizerWorkspace({ workspaceId, className, children }: Optimiz
 
   return (
     <div className={cn("flex flex-col gap-4", className)}>
-      <ActiveOptimizationQueuePanel items={items} loading={loading} workspaceId={workspaceId} />
+      <ActiveOptimizationQueuePanel items={items} loading={loading} />
       {children}
     </div>
   );

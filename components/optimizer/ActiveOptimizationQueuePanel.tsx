@@ -1,14 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, ExternalLink, Info, Loader2, Rocket, Star, X } from "lucide-react";
+import { CheckCircle2, Info, Loader2, Star, X } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Link } from "@/i18n/navigation";
 import type { ListingImprovementItem } from "@/components/reviews/review-improvements-queue";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
-import { ActiveQueueExploitConfirmDialog } from "@/components/optimizer/active-queue-exploit-confirm-dialog";
 import { cn } from "@/lib/utils";
 
 export function queueImprovementBadgeLabel(item: ListingImprovementItem): string {
@@ -17,16 +14,6 @@ export function queueImprovementBadgeLabel(item: ListingImprovementItem): string
   const text = item.reviewText.trim();
   if (text.length <= 20) return text;
   return `${text.slice(0, 20)}...`;
-}
-
-/**
- * Encodes queued improvement items into a URL-safe `exploit_targets` param value.
- */
-export function buildExploitTargetsParam(items: ListingImprovementItem[]): string {
-  const labels = items
-    .map((item) => queueImprovementBadgeLabel(item))
-    .filter(Boolean);
-  return encodeURIComponent(labels.join(","));
 }
 
 /**
@@ -143,19 +130,6 @@ export type ActiveOptimizationQueuePanelProps = {
   items: ListingImprovementItem[];
   loading?: boolean;
   className?: string;
-  isRtl?: boolean;
-  /** Credit cost shown in the confirm modal. Defaults to 5. */
-  credits?: number;
-  /**
-   * Called when the user confirms the modal while already on the optimizer page.
-   * Triggers a fresh listing generation directly.
-   */
-  onGenerate?: () => void;
-  /**
-   * Called when the user confirms the modal from outside the optimizer page.
-   * Receives the encoded `exploit_targets` query param value.
-   */
-  onNavigateToOptimizer?: (exploitTargetsParam: string) => void;
   /**
    * Called when the user clicks the delete (×) button on a pill.
    * The parent should remove the item from state and call the DELETE API.
@@ -167,11 +141,6 @@ export type ActiveOptimizationQueuePanelProps = {
    * Without this, classification falls back to the less reliable appId heuristic.
    */
   ownPackageName?: string | null;
-  /**
-   * The workspace ID — required when rendering outside the optimizer page so the
-   * navigation CTA can build the correct `/app/[workspaceId]/listing-optimizer` URL.
-   */
-  workspaceId?: string;
   /**
    * When true, the queue is locked in "Processing…" mode — all pills are dimmed
    * and the delete button is hidden. Use this while the Gemini generation is running
@@ -185,37 +154,14 @@ export function ActiveOptimizationQueuePanel({
   items,
   loading = false,
   className,
-  isRtl = false,
-  credits = 5,
-  onGenerate,
-  onNavigateToOptimizer,
   onRemoveItem,
   ownPackageName,
-  workspaceId,
   isGenerating = false,
 }: ActiveOptimizationQueuePanelProps) {
   const t = useTranslations("optimizer.activeQueue");
-  const pathname = usePathname();
-  const isOptimizerPage =
-    pathname.includes("/listing-optimizer") || pathname.includes("/optimizer");
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
   // Track which item IDs are mid-delete for visual feedback
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-
-  const hasItems = !loading && items.length > 0;
-  // Show CTA whenever there are items — handlers are optional; clicking with neither wired is a no-op
-  const hasCta = hasItems;
-
-  function handleConfirm() {
-    if (onGenerate) {
-      onGenerate();
-      return;
-    }
-    if (onNavigateToOptimizer) {
-      onNavigateToOptimizer(buildExploitTargetsParam(items));
-    }
-  }
 
   function handleRemove(itemId: string) {
     if (!onRemoveItem || deletingIds.has(itemId)) return;
@@ -233,8 +179,7 @@ export function ActiveOptimizationQueuePanel({
   }
 
   return (
-    <>
-      <motion.div
+    <motion.div
         layout
         className={cn(
           "mb-6 overflow-hidden rounded-xl border border-slate-700/60 bg-slate-950 shadow-lg shadow-black/30",
@@ -422,72 +367,6 @@ export function ActiveOptimizationQueuePanel({
           )}
         </div>
 
-        {/* CTA — context-aware: generate in-place on the optimizer page, navigate from elsewhere */}
-        {hasCta && (
-          <div className="border-t border-slate-800/70 bg-slate-900/40 px-5 py-4 space-y-2">
-            {isOptimizerPage ? (
-              /* ── On the optimizer page: trigger the confirm modal directly ── */
-              <motion.button
-                type="button"
-                onClick={() => setConfirmOpen(true)}
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.98 }}
-                className={cn(
-                  "group relative w-full overflow-hidden rounded-lg px-4 py-2.5",
-                  "bg-emerald-600 text-sm font-medium text-white",
-                  "transition-colors duration-150 hover:bg-emerald-500",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950",
-                  "shadow-[0_0_16px_rgba(16,185,129,0.25)] hover:shadow-[0_0_24px_rgba(16,185,129,0.40)]",
-                )}
-              >
-                {/* Shimmer sweep */}
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 -translate-x-full skew-x-[-20deg] bg-white/10 transition-transform duration-700 group-hover:translate-x-[200%]"
-                />
-                <span className="relative inline-flex items-center justify-center gap-2">
-                  <Rocket className="size-4 shrink-0" aria-hidden />
-                  {t("ctaGenerate")}
-                </span>
-              </motion.button>
-            ) : (
-              /* ── Off the optimizer page: navigate there with exploit_targets pre-loaded ── */
-              <Link
-                href={
-                  workspaceId
-                    ? `/app/${workspaceId}/listing-optimizer?exploit_targets=${buildExploitTargetsParam(items)}`
-                    : "/listing-optimizer"
-                }
-                className={cn(
-                  "group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg px-4 py-2.5",
-                  "border border-emerald-500/40 bg-emerald-500/10 text-sm font-medium text-emerald-300",
-                  "transition-colors duration-150 hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:text-emerald-200",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950",
-                )}
-              >
-                <ExternalLink className="size-4 shrink-0" aria-hidden />
-                {t("ctaNavigate")}
-              </Link>
-            )}
-            {/* Hint shown only when off the optimizer page */}
-            {!isOptimizerPage && (
-              <p className="text-center text-[11px] leading-relaxed text-slate-500">
-                {t("ctaNavigateHint")}
-              </p>
-            )}
-          </div>
-        )}
       </motion.div>
-
-      {/* Confirm modal — portals outside the card */}
-      <ActiveQueueExploitConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        items={items}
-        credits={credits}
-        isRtl={isRtl}
-        onConfirm={handleConfirm}
-      />
-    </>
   );
 }
