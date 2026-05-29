@@ -1064,18 +1064,18 @@
       "archiveBadge": "Optimization archive",
       "emptyActive": "No active insights yet. Add common issues above to build your queue.",
       "emptyArchive": "No exploited issues yet. Mark issues as done from the Active Insights tab.",
-      "stageExploit": "Stage Competitor Exploit",
       "counterAttacked": "Successfully Counter-Attacked",
       "exploitedOn": "Exploited on {date}",
       "restoreToActive": "Restore to Active",
       "restoring": "Restoring…",
-      "markingDone": "Staging…",
       "impact": "Impact: {pct}%",
       "addedOn": "Added {date}",
-      "deleteItem": "Remove from queue",
       "loadError": "Could not load insights queue.",
       "sourceOwnApp": "Your App",
-      "sourceCompetitor": "Competitor"
+      "sourceCompetitor": "Competitor",
+      "queueSectionLabel": "Queued for listing optimization",
+      "openInOptimizer": "Open in Listing Optimizer →",
+      "dismissItem": "Dismiss — remove from queue"
     },
     "activeQueue": {
       "kicker": "Active",

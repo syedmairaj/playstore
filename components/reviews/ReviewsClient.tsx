@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Calendar, Inbox, Info, Loader2, MessageSquareQuote, RefreshCw, Sparkles, Zap } from "lucide-react";
+import { ArrowRight, ArrowUp, Calendar, Inbox, Info, Loader2, MessageSquareQuote, RefreshCw, Sparkles, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
@@ -1148,27 +1148,24 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     return cancel;
   }, [loadBacklog]);
 
-  // ── Mark item as implemented (active → history) ──────────────────────────
-  const markDone = useCallback(async (itemId: string) => {
+
+  // ── Dismiss item (permanently delete from backlog) ───────────────────────
+  //
+  // Used by the "Dismiss" trash button in the Active Optimization Queue.
+  // Deletes the row from the DB so the issue reappears in Active Insights.
+  const dismissItem = useCallback(async (itemId: string) => {
     setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
     try {
       const res = await fetch(
         `/api/workspaces/${workspaceId}/backlog/${itemId}`,
-        {
-          method: "PATCH",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ is_implemented: true }),
-        },
+        { method: "DELETE", credentials: "same-origin" },
       );
       const json = (await res.json()) as { success: boolean };
       if (json.success) {
-        setBacklogItems((prev) =>
-          prev.map((i) => (i.id === itemId ? { ...i, isImplemented: true } : i)),
-        );
+        setBacklogItems((prev) => prev.filter((i) => i.id !== itemId));
       }
     } catch {
-      // silent — item stays active
+      // silent
     } finally {
       setBacklogBusy((prev) => ({ ...prev, [itemId]: false }));
     }
@@ -1856,11 +1853,22 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                   onAddImprovement={addImprovement}
                 />
 
-                {/* ── Active backlog queue (items added via "Add to Optimization Backlog") ──
-                    Rendered as a grid matching the IssueCard grid above for visual consistency.
-                    Each card uses the same accent stripe, severity badge, and compact proportions. */}
+                {/* ── Active Optimization Queue ────────────────────────────────
+                    Shows issues the user has queued for listing optimization.
+                    Two actions only:
+                      • "Open in Listing Optimizer →" — navigate to generate listing
+                      • Trash icon — dismiss (delete from DB, reappears in Active Insights)
+                    Items move to History Archive automatically when a listing is generated. */}
                 {(backlogLoading || backlogError || backlogItems.filter((i) => !i.isImplemented).length > 0) && (
                   <div className="space-y-3 border-t border-white/[0.06] pt-4">
+
+                    {/* Section label */}
+                    {!backlogLoading && backlogItems.filter((i) => !i.isImplemented).length > 0 && (
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
+                        {t("insightsTabs.queueSectionLabel")}
+                      </p>
+                    )}
+
                     {backlogLoading && (
                       <div className="flex items-center gap-2 text-xs text-zinc-500">
                         <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -1890,33 +1898,35 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                             LOW:      "Low",
                           };
                           const isBusy = backlogBusy[item.id] ?? false;
+                          const qs = primaryAppId ? `?appId=${encodeURIComponent(primaryAppId)}` : "";
                           return (
                             <div
                               key={item.id}
                               className="relative overflow-visible rounded-xl border border-zinc-800 bg-zinc-900/50 shadow-[0_0_0_1px_rgba(16,185,129,0.06)] transition-shadow hover:shadow-[0_0_0_1px_rgba(16,185,129,0.14)]"
                             >
-                              {/* Left accent stripe — mirrors IssueCard */}
+                              {/* Left accent stripe */}
                               <div
                                 className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${accentBar[item.severity] ?? "bg-zinc-500"}`}
                                 aria-hidden
                               />
-                              {/* Impact % — top-right, matches IssueCard positioning */}
+                              {/* Impact % — top-right */}
                               <span className="absolute right-3 top-3 text-[11px] font-medium tabular-nums whitespace-nowrap text-amber-400">
                                 {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
                               </span>
                               {/* Card body */}
                               <div className="space-y-2 pb-3 pl-6 pr-12 pt-3">
-                                {/* Severity badge row */}
+                                {/* Severity badge + dismiss */}
                                 <div className="flex items-center justify-between">
                                   <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${severityBadge[item.severity] ?? ""}`}>
                                     {severityLabel[item.severity] ?? item.severity}
                                   </span>
-                                  {/* Delete button — top-right of badge row */}
+                                  {/* Dismiss — removes from queue, reappears in Active Insights */}
                                   <button
                                     type="button"
-                                    aria-label={t("insightsTabs.deleteItem")}
-                                    onClick={() => setBacklogItems((prev) => prev.filter((i) => i.id !== item.id))}
-                                    className="text-zinc-600 hover:text-red-400 transition-colors"
+                                    aria-label={t("insightsTabs.dismissItem")}
+                                    disabled={isBusy}
+                                    onClick={() => void dismissItem(item.id)}
+                                    className="text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-40"
                                   >
                                     <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
                                       <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
@@ -1926,26 +1936,15 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                                 {/* Title + description */}
                                 <p className="text-sm font-semibold leading-snug text-white">{item.issueTitle}</p>
                                 <p className="text-xs leading-relaxed text-zinc-400">{item.issueDescription}</p>
-                                {/* Stage Exploit CTA — styled like STAGED IssueCard button */}
+                                {/* Primary CTA — open listing optimizer pre-loaded with this app */}
                                 <button
                                   type="button"
                                   disabled={isBusy}
-                                  onClick={() => markDone(item.id)}
-                                  className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-800/80 border border-zinc-700 px-3 py-1.5 text-xs font-medium text-orange-400 hover:bg-zinc-700/80 hover:text-orange-300 transition-colors disabled:opacity-50"
+                                  onClick={() => router.push(`/app/${workspaceId}/listing-optimizer${qs}`)}
+                                  className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-800/80 border border-zinc-700 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-zinc-700/80 hover:text-blue-300 transition-colors disabled:opacity-50"
                                 >
-                                  {isBusy ? (
-                                    <>
-                                      <Loader2 className="size-3 animate-spin" aria-hidden />
-                                      {t("insightsTabs.markingDone")}
-                                    </>
-                                  ) : (
-                                    <>
-                                      <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5 shrink-0" aria-hidden>
-                                        <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                                      </svg>
-                                      {t("insightsTabs.stageExploit")}
-                                    </>
-                                  )}
+                                  <ArrowRight className="size-3.5 shrink-0" aria-hidden />
+                                  {t("insightsTabs.openInOptimizer")}
                                 </button>
                               </div>
                             </div>

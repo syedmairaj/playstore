@@ -79,3 +79,46 @@ export async function PATCH(request: NextRequest, context: Ctx) {
 
   return NextResponse.json({ success: true, item });
 }
+
+// DELETE /api/workspaces/[workspaceId]/backlog/[itemId]
+// Permanently removes a backlog item.
+// Used by the "Dismiss" button in the Active Optimization Queue.
+export async function DELETE(_request: NextRequest, context: Ctx) {
+  const { workspaceId, itemId } = await context.params;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: { code: "unauthorized", message: "Sign in required." } },
+      { status: 401 },
+    );
+  }
+
+  const role = await getWorkspaceRole(supabase, workspaceId, user.id);
+  if (!role) {
+    return NextResponse.json(
+      { success: false, error: { code: "forbidden", message: "Workspace not found or inaccessible." } },
+      { status: 403 },
+    );
+  }
+
+  const { error } = await supabase
+    .from(TABLE)
+    .delete()
+    .eq("id", itemId)
+    .eq("workspace_id", workspaceId);
+
+  if (error) {
+    console.error("[DELETE backlog/[itemId]]", error.message);
+    return NextResponse.json(
+      { success: false, error: { code: "db_error", message: "Failed to delete backlog item." } },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ success: true });
+}

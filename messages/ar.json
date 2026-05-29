@@ -1064,18 +1064,18 @@
       "archiveBadge": "أرشيف التحسينات",
       "emptyActive": "لا رؤى نشطة بعد. أضف المشكلات الشائعة أعلاه لبناء قائمتك.",
       "emptyArchive": "لا مشكلات مستغلة بعد. ضع علامة تم على المشكلات من تبويب الرؤى النشطة.",
-      "stageExploit": "تنفيذ استغلال المنافس",
       "counterAttacked": "تمت مواجهة المنافس بنجاح",
       "exploitedOn": "استُغل في {date}",
       "restoreToActive": "إرجاع إلى النشط",
       "restoring": "جارٍ الإرجاع…",
-      "markingDone": "جارٍ المعالجة…",
       "impact": "التأثير: {pct}%",
       "addedOn": "أُضيف {date}",
-      "deleteItem": "إزالة من القائمة",
       "loadError": "تعذّر تحميل قائمة الرؤى.",
       "sourceOwnApp": "تطبيقك",
-      "sourceCompetitor": "منافس"
+      "sourceCompetitor": "منافس",
+      "queueSectionLabel": "في قائمة انتظار تحسين القائمة",
+      "openInOptimizer": "فتح في محسّن القائمة ←",
+      "dismissItem": "رفض — إزالة من القائمة"
     },
     "activeQueue": {
       "kicker": "نشط",
