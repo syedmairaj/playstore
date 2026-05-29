@@ -64,9 +64,10 @@ const LISTING_RESPONSE_SCHEMA = {
 // Kept English-only (model instruction, not UI copy).
 const STRICT_RETRY_ADDENDUM =
   "STRICT RETRY — previous attempt failed schema validation. You MUST return every required key: " +
-  "title (≤30 chars), shortDescription (≤74 chars), fullDescription (≤4000 chars), " +
-  "keywordSuggestions (8–20 strings), ctaSuggestions (3–8 strings), " +
-  "asoScore (integer 0–100 = sum of scoreBreakdown), " +
+  "title (≤30 chars), shortDescription (≤74 chars — count every character, never 75+), fullDescription (≤4000 chars), " +
+  "keywordSuggestions (exactly 20 strings, each prefixed [competitive], [intent], or [gap]), " +
+  "ctaSuggestions (4–8 strings — first item MUST start with 'WHY THIS RANKS: '), " +
+  "asoScore (integer 0–100 = exact sum of scoreBreakdown), " +
   "scoreBreakdown.title (0–30) + shortDescription (0–20) + longDescription (0–40) + persuasiveness (0–10), " +
   "improvementTips (2–8 strings). Return ONLY the JSON object — no prose, no markdown.";
 

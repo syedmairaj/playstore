@@ -1,118 +1,33 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v5";
+const PROMPT_VERSION = "listing-optimizer-v6";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
 }
 
-const TONE_FOR_PROMPT: Record<ToneStyle, string> = {
-  professional: "Clear & Benefit-focused, professional",
-  friendly: "Clear & Benefit-focused, friendly",
-  bold: "Clear & Benefit-focused, bold",
-  minimal: "Clear & Benefit-focused, minimal",
+// ── Tone psychology — behaviourally differentiated (v6) ───────────────────────
+// Each entry is a precise behavioural brief, not just an adjective.
+// The model is instructed to apply the psychology throughout ALL fields.
+const TONE_BRIEF: Record<ToneStyle, string> = {
+  professional:
+    "Professional / Data-authoritative: Use precise metrics, clinical language, and factual benefit statements. " +
+    "Lead with measurable outcomes (e.g. 'tracks 50+ nutrients'). Avoid hyperbole. Trust is built through specificity.",
+  friendly:
+    "Friendly / Habit-empathetic: Write in second-person ('you'), use warm inclusive language, and frame features as " +
+    "daily habit wins. Celebrate small progress. Avoid intimidating numbers — make the app feel like a supportive companion.",
+  bold:
+    "Bold / Result-driven: Use imperative verbs, short punchy sentences, and power words (Crush, Master, Dominate, Zero). " +
+    "Every sentence must earn its place — cut anything that doesn't push urgency or outcome. High energy throughout.",
+  minimal:
+    "Minimal / Feature-first: Zero fluff. State each feature once, precisely. No exclamation marks, no filler adjectives. " +
+    "Bullet points preferred over prose. If a word can be cut without losing meaning, cut it.",
 };
 
-/**
- * Full ASO strategist brief + markdown output spec (e.g. for docs, evals, or non-JSON tools).
- * For the live API, {@link buildListingOptimizerMessages} reuses the same rules but requires JSON.
- */
-export const listingOptimizerPrompt = (
-  appName: string,
-  category: string,
-  keywords: string[],
-  tone: string = "Clear & Benefit-focused",
-  targetArabic: boolean = false,
-) => `
-You are an expert Google Play ASO Strategist for indie Android developers.
-
-App: ${appName}
-Category: ${category}
-Primary Keywords: ${keywords.join(", ")}
-
-Rules:
-- Title: at most 30 characters (hard limit; never exceed).
-- Short description: CRITICAL CHARACTER LIMIT — strictly under 75 characters (hard cap; never exceed). One sharp conversion hook; count every character before outputting.
-- Long description: at most 4000 characters — Feature → Benefit structure with bullet points and sections.
-- Naturally integrate keywords without stuffing.
-- Tone: ${tone}. Professional but approachable. No generic marketing fluff.
-${
-  targetArabic
-    ? "- Language: Provide natural, modern Arabic (MSA/Gulf mix suitable for MENA) for all sections below."
-    : "- Language: Write in clear English unless the app or audience clearly requires another language."
-}
-
-Output in this exact format:
-
-**Optimized Title**
-[Title]
-
-**Short Description**
-[Short desc]
-
-**Long Description**
-[Full description with proper formatting]
-
-**Keyword Strategy**
-• Primary keywords used
-• Secondary opportunities
-
-**Expected Impact**
-Short explanation of ranking & conversion potential.
-`.trim();
-
-function listingOptimizerStrategyBlock(
-  appName: string,
-  category: string,
-  keywords: string[],
-  tone: string,
-  targetArabic: boolean,
-): string {
-  return [
-    "You are an expert Google Play ASO Strategist for indie Android developers.",
-    "",
-    `App: ${appName}`,
-    `Category: ${category}`,
-    `Primary Keywords: ${keywords.join(", ")}`,
-    "",
-    "Rules (Google Play HARD limits — counts every character including spaces and punctuation):",
-    "- Title: at most 30 characters (never 31+). Include primary keyword naturally.",
-    "- Short description: CRITICAL CHARACTER LIMIT — You MUST keep the generated Short Description strictly under 75 characters. Do not write marketing phrases that require truncation or post-processing clamping loops. Count every character before outputting. Never exceed 74 characters.",
-    "- Long description: fewer than 4000 characters in practice — stay at or under 4000. Feature → Benefit structure, bullets/sections where helpful.",
-    "- Naturally integrate keywords without stuffing.",
-    `- Tone: ${tone}. Professional but approachable. No generic marketing fluff.`,
-    targetArabic
-      ? "- Arabic: All user-visible strings in your JSON output must be natural, modern Arabic (MSA/Gulf mix suitable for MENA), except proper nouns where appropriate."
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Prompt token-budget constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Maximum number of target keywords injected into the prompt.
- * Slicing to 25 keeps the keyword line under ~300 tokens while still covering
- * all high-priority ASO terms. Passing 60+ keywords produces diminishing returns
- * and bloats the prompt enough to trigger 502 timeouts on slower Gemini nodes.
- */
+// ── Prompt token-budget constants ─────────────────────────────────────────────
 const PROMPT_MAX_KEYWORDS = 25;
-
-/**
- * Maximum number of exploit / competitor pain-point strings injected into the
- * displacement campaign block. Beyond 5, the prompt context is filled with raw
- * review text that the model cannot meaningfully act on within a single listing
- * output — causing latency spikes and incoherent copy.
- */
 const PROMPT_MAX_EXPLOIT_TARGETS = 5;
 
-/**
- * Normalise and deduplicate a keyword list, then cap at `PROMPT_MAX_KEYWORDS`.
- * Trim whitespace, lower-case for dedup, but preserve original casing in output.
- */
 function truncateKeywords(raw: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -128,11 +43,6 @@ function truncateKeywords(raw: string[]): string[] {
   return out;
 }
 
-/**
- * Trim and cap the exploit targets array to `PROMPT_MAX_EXPLOIT_TARGETS`.
- * Each entry is also trimmed so stray whitespace from sessionStorage doesn't
- * waste tokens.
- */
 function truncateExploitTargets(raw: string[]): string[] {
   return raw
     .map((s) => s.trim())
@@ -140,103 +50,196 @@ function truncateExploitTargets(raw: string[]): string[] {
     .slice(0, PROMPT_MAX_EXPLOIT_TARGETS);
 }
 
-/**
- * System + user messages for Gemini. Output must be JSON per schema in system.
- *
- * Token-budget enforcement:
- *   - targetKeywords is capped at PROMPT_MAX_KEYWORDS (25) after dedup.
- *   - exploitTargets is capped at PROMPT_MAX_EXPLOIT_TARGETS (5).
- * These limits prevent prompt bloat that causes 502 timeouts on large payloads
- * while preserving all actionable signal for the model.
- */
-export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
-  system: string;
-  user: string;
-} {
-  const tone = TONE_FOR_PROMPT[input.toneStyle];
-  const targetArabic = input.targetArabic ?? false;
+// ── Legacy markdown export (used by docs / evals only) ───────────────────────
+export const listingOptimizerPrompt = (
+  appName: string,
+  category: string,
+  keywords: string[],
+  tone: string = "professional",
+  targetArabic: boolean = false,
+) => `
+You are a Lead ASO Strategist and First-Page Visibility Specialist for Google Play.
 
-  // ── Token-budget enforcement ───────────────────────────────────────────────
-  // Truncate before any string interpolation so the budget is guaranteed even
-  // when the client sends a very large keyword or exploit payload.
-  const keywords = truncateKeywords(input.targetKeywords);
-  const exploitTargets = truncateExploitTargets(input.exploitTargets ?? []);
-  // ─────────────────────────────────────────────────────────────────────────
+App: ${appName}
+Category: ${category}
+Primary Keywords: ${keywords.join(", ")}
+Tone: ${tone}
 
-  const system = [
-    "You are an expert Google Play ASO copywriter and strategist for Android apps on Google Play.",
-    "Prioritize install conversion: clear benefits, honest claims, scannable copy — while strictly obeying character limits below (counts every character).",
-    "In ONE response (no tool calls), execute this workflow internally: (1) Draft listing copy from the inputs. (2) Self-audit against the primary keywords and Google Play ASO best practices (honest claims, no keyword stuffing, strong hooks, scannable structure). (3) Rewrite weaker sections until the listing is cohesive. (4) Score the final listing with the rubric below and output a single JSON object only.",
-    // ── Field contract (camelCase only — matches LISTING_RESPONSE_SCHEMA exactly) ──
-    // Using camelCase throughout eliminates the snake_case ↔ camelCase mismatch that
-    // previously caused the normalizer to fire and asoScorePartial to trigger on
-    // otherwise-valid model outputs.
-    "Return a single JSON object only (no markdown, no code fences, no prose before or after) with EXACTLY these camelCase keys:",
-    "title: string — Google Play title, at most 30 characters (hard cap 30, never 31+); include primary keyword naturally.",
-    "shortDescription: string — CRITICAL: at most 74 characters (hard cap 74, never 75+). One sharp hook; count every character before outputting; do NOT write marketing phrases that require post-processing truncation.",
-    "fullDescription: string — at most 4000 characters (stay ≤4000). Feature → Benefit structure, sections, bullets where helpful; weave keywords naturally, no stuffing.",
-    "keywordSuggestions: array of 8-20 concise keyword phrases for ASO.",
-    "ctaSuggestions: array of 3-8 short conversion-focused CTAs or button-style lines.",
-    "asoScore: integer from 0 to 100 — Certified ASO Score; MUST equal the sum of the four values in scoreBreakdown (within 1 if rounding).",
-    "scoreBreakdown: object with exactly these camelCase numeric keys (each an integer): title (0–30 max), shortDescription (0–20 max), longDescription (0–40 max), persuasiveness (0–10 max). The four values MUST sum to asoScore.",
-    "improvementTips: array of 2–8 short, actionable ASO tips specific to this listing (not generic platitudes).",
-    "Align with Google Play policies: honest claims, no misleading text.",
+Rules:
+- Title: max 30 characters. Include primary keyword naturally.
+- Short description: max 74 characters. One sharp, benefit-driven hook.
+- Long description: max 4000 characters. Structure: Hook → Key Features (bullets/emojis) → CTA.
+- Keywords: 20 rankable phrases — mix high-volume, long-tail intent, and competitor-gap terms.
+- Tone: ${tone}
+${targetArabic ? "- Language: Natural modern Arabic (MSA/Gulf mix for MENA)." : ""}
+`.trim();
+
+// ── System message (v6) ───────────────────────────────────────────────────────
+function buildSystemMessage(targetArabic: boolean): string {
+  return [
+    // ── Role ────────────────────────────────────────────────────────────────
+    "You are a Lead ASO Strategist and First-Page Visibility Specialist for Google Play apps. " +
+      "You have 10+ years of experience pushing apps into the top-10 organic results by combining " +
+      "keyword intelligence, conversion copywriting, and competitor displacement.",
+
+    // ── Internal workflow ────────────────────────────────────────────────────
+    "In ONE response (no tool calls), execute this workflow internally: " +
+      "(1) Analyse the app inputs to identify the single strongest USP and the primary user pain point being solved. " +
+      "(2) Draft all listing fields guided by the rules below. " +
+      "(3) Self-audit: check every character limit, keyword density, tone consistency, and conversion strength. " +
+      "(4) Rewrite weak sections until the listing is cohesive and ready to ship. " +
+      "(5) Score the final listing with the rubric below. " +
+      "(6) Output a single JSON object only — no markdown, no code fences, no prose before or after.",
+
+    // ── Hard character limits ────────────────────────────────────────────────
+    "HARD CHARACTER LIMITS — Google Play enforces these at submission. Exceeding them causes rejection:",
+    "  title: max 30 characters (count every character including spaces — never 31+).",
+    "  shortDescription: max 74 characters (hard cap 74 — NEVER 75+; count every character before writing; " +
+      "if your draft exceeds 74, shorten aggressively until it fits).",
+    "  fullDescription: max 4000 characters (stay at or under 4000).",
+
+    // ── JSON field contract ──────────────────────────────────────────────────
+    "Return a single JSON object with EXACTLY these camelCase keys (no extras, no snake_case):",
+    "  title: string — primary keyword + strongest USP hook, ≤30 chars.",
+    "  shortDescription: string — one sharp benefit statement, ≤74 chars. Must answer 'why install NOW'.",
+    "  fullDescription: string — ≤4000 chars. Structure MUST follow:",
+    "    • Hook paragraph (1-2 sentences): address the primary pain point directly.",
+    "    • Key Features section: 5-8 bullet points with emojis. Each bullet = one feature + one concrete benefit.",
+    "    • Social proof line (if supported by features): e.g. '4.8★ rated by 50,000+ users'.",
+    "    • Call to Action: 1-2 sentences. Imperative. Outcome-focused.",
+    "  keywordSuggestions: array of exactly 20 keyword phrases for ASO. Format EACH as " +
+      "'[category] keyword' where category is one of: [competitive], [intent], or [gap]. " +
+      "Include: 8 high-volume competitive keywords marked [competitive], " +
+      "7 long-tail intent-based keywords that match what a user with the target pain point would search marked [intent], " +
+      "5 competitor-gap keywords (terms users search when unhappy with top competitors) marked [gap]. " +
+      "Example: '[competitive] calorie tracker', '[intent] track food without ads', '[gap] myfitnesspal alternative free'.",
+    "  ctaSuggestions: array of 4-8 items. The FIRST item must be a 'visibility_rationale' string starting with " +
+      "'WHY THIS RANKS: ' — explain in 1-2 sentences exactly why the chosen title keyword + displacement angle " +
+      "will push this app toward first-page results for the target audience. " +
+      "Remaining items are short conversion-focused CTAs (button-style lines, max 60 chars each).",
+    "  asoScore: integer 0-100 — Certified ASO Score. MUST equal the exact sum of scoreBreakdown values.",
+    "  scoreBreakdown: object with integer keys: title (0-30), shortDescription (0-20), longDescription (0-40), persuasiveness (0-10). " +
+      "Sum MUST equal asoScore.",
+    "  improvementTips: array of 2-8 short actionable ASO tips specific to THIS listing (no generic advice).",
+
+    // ── ASO quality rules ────────────────────────────────────────────────────
+    "ASO QUALITY RULES:",
+    "  • Never keyword-stuff. Keywords must read naturally in copy.",
+    "  • Bullets and emojis in fullDescription are required — walls of text kill conversion.",
+    "  • Honest claims only — no inflated stats, no misleading superlatives.",
+    "  • Do not name competitor apps directly. Displacement must read as natural feature positioning.",
+    "  • The shortDescription must work as a standalone install hook visible in search results.",
+    "  • Google Play policy: no prohibited content, no misleading category claims.",
+
+    // ── Arabic instruction (conditional) ────────────────────────────────────
     targetArabic
-      ? "All user-visible string values in the JSON (title, descriptions, improvementTips, keywordSuggestions, ctaSuggestions) must be natural modern Arabic (MSA/Gulf mix for MENA), except proper nouns where appropriate. Numeric scores stay as numbers."
+      ? "LANGUAGE: All user-visible string values (title, shortDescription, fullDescription, keywordSuggestions, " +
+        "ctaSuggestions, improvementTips) must be natural modern Arabic (MSA/Gulf mix suitable for MENA users). " +
+        "Keyword category tags [competitive], [intent], [gap] stay in English as prefixes. Numeric scores stay as numbers."
       : null,
   ]
     .filter(Boolean)
     .join(" ");
+}
 
-  // Pass the budget-capped keyword list to the strategy block.
-  const strategy = listingOptimizerStrategyBlock(
-    input.appName,
-    input.category,
-    keywords,          // ← truncated, not the raw input
-    tone,
-    targetArabic,
-  );
+// ── User message (v6) ─────────────────────────────────────────────────────────
+function buildUserMessage(
+  input: ListingOptimizerInput,
+  keywords: string[],
+  exploitTargets: string[],
+  targetArabic: boolean,
+): string {
+  const toneBrief = TONE_BRIEF[input.toneStyle];
+
+  const strategyBlock = [
+    "── APP BRIEF ──",
+    `App Name: ${input.appName}`,
+    `Category: ${input.category}`,
+    `Target Keywords (your seed list): ${keywords.join(", ")}`,
+    "",
+    "── TONE PSYCHOLOGY ──",
+    `Apply this tone throughout ALL fields (title, descriptions, CTAs, keywords, tips):`,
+    toneBrief,
+    "",
+    "── APP FEATURES & VALUE PROPS ──",
+    input.appFeatures,
+  ].join("\n");
 
   const refinement =
     typeof input.userInstruction === "string" && input.userInstruction.trim()
       ? [
           "",
-          "Additional direction from the product owner (apply on top of the rules above):",
+          "── PRODUCT OWNER DIRECTION (apply on top of all rules above) ──",
           input.userInstruction.trim(),
         ].join("\n")
       : "";
 
-  // Only inject the displacement block when there are staged targets.
-  // exploitTargets is already capped at PROMPT_MAX_EXPLOIT_TARGETS (5).
-  const exploitBlock =
+  // Competitor displacement block — only injected when there are staged targets
+  const displacementBlock =
     exploitTargets.length > 0
       ? [
           "",
-          "🔥 CRITICAL INSTRUCTIONS — STRATEGIC DISPLACEMENT CAMPAIGN:",
-          `The user has staged ${exploitTargets.length} competitive pain point${exploitTargets.length !== 1 ? "s" : ""} to exploit: [${exploitTargets.join(", ")}].`,
-          "For each staged target, apply the matching displacement strategy when writing title, shortDescription, and longDescription:",
-          "- If a target relates to stability or performance flaws (e.g., 'Bug / Crash', 'Crashes', 'Freezes'), position this app as an ultra-stable, battle-tested alternative. Use language like 'zero crashes', 'rock-solid performance', or 'built to last'.",
-          "- If a target relates to monetization friction (e.g., 'Ads too intrusive', 'Too many ads', 'Paywalled features'), highlight a smooth premium experience, fair pricing, or ad-light design.",
-          "- If a target relates to missing features or limited functionality (e.g., 'Missing feature', 'Limited', 'Basic'), showcase this app's depth and comprehensive feature set.",
-          "- If a target relates to poor UX or confusing navigation (e.g., 'Hard to use', 'Confusing UI', 'Poor UX'), emphasize intuitive design, ease of use, and fast onboarding.",
-          "- If a target relates to negative sentiment or general dissatisfaction (e.g., 'Disappointing', 'Overpriced', 'Not worth it'), craft copy that directly addresses value, trust, and user satisfaction.",
-          "- For any other target not matched above, infer the most relevant displacement angle (reliability, value, features, UX) and apply it assertively.",
-          "Seamlessly blend these competitive marketing angles into the storefront metadata copy without breaking character limits. Do not reference competitor names directly. The displacement must read as natural feature positioning, not attack advertising.",
+          "── STRATEGIC DISPLACEMENT CAMPAIGN ──",
+          `The following ${exploitTargets.length} user pain point${exploitTargets.length !== 1 ? "s" : ""} ` +
+            `have been identified from competitor and own-app reviews: [${exploitTargets.join(", ")}].`,
+          "Apply the Safe-Passage Strategy: your fullDescription MUST open with a hook that directly promises relief " +
+            "from these pain points (distraction-free, secure, reliable, ad-light — whichever applies). " +
+            "This is the primary USP against competitors who have these weaknesses.",
+          "Displacement rules per pain-point type:",
+          "  • Stability/crash issues → position as 'zero crashes', 'battle-tested', 'rock-solid performance'.",
+          "  • Ad/monetization friction → highlight smooth premium experience, fair pricing, minimal interruptions.",
+          "  • Missing features/limited → showcase depth, comprehensive feature set, power-user capabilities.",
+          "  • Poor UX/navigation → emphasise intuitive design, fast onboarding, clean interface.",
+          "  • General dissatisfaction → craft copy that builds trust through specifics: ratings, user count, guarantee.",
+          "  • Any other type → infer strongest displacement angle and apply assertively.",
+          "Blend these angles naturally into the copy. Do NOT name competitors directly. " +
+            "The displacement must read as genuine feature positioning.",
+          "Your [gap] keywords in keywordSuggestions MUST directly reflect these pain points " +
+            "(e.g. '[gap] calorie tracker no ads' if ads are a staged pain point).",
         ].join("\n")
       : "";
 
-  const user = [
-    strategy,
+  const reminderBlock = [
     "",
-    "Using the rules above, produce the JSON object described in the system message (including asoScore, scoreBreakdown, and improvementTips).",
-    "",
-    "REMINDER — hard limits on your JSON strings (count every character): title ≤30, shortDescription ≤74 (CRITICAL: never exceed 74 characters — do not write marketing phrases that need truncation or clamping), fullDescription ≤4000. Prioritize conversion; shorten shortDescription aggressively if needed.",
-    "",
-    "App features / value props:",
-    input.appFeatures,
-    refinement,
-    exploitBlock,
+    "── FINAL CHECKLIST BEFORE OUTPUTTING ──",
+    "1. title: ≤30 chars? Includes primary keyword? Tone-consistent?",
+    "2. shortDescription: ≤74 chars? (count manually) Single hook? Answers 'why install NOW'?",
+    "3. fullDescription: Hook → Features (bullets+emojis) → CTA? ≤4000 chars? Pain point addressed in first 2 sentences?",
+    "4. keywordSuggestions: exactly 20 items? 8 [competitive] + 7 [intent] + 5 [gap]? Each prefixed with category tag?",
+    "5. ctaSuggestions[0]: starts with 'WHY THIS RANKS: '?",
+    "6. asoScore = sum of scoreBreakdown values?",
+    "Now output the single JSON object.",
   ].join("\n");
+
+  return [strategyBlock, refinement, displacementBlock, reminderBlock].join("\n");
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+/**
+ * Builds system + user messages for the Gemini listing generation call (v6).
+ *
+ * v6 improvements over v5:
+ * - Lead ASO Strategist role with explicit First-Page Visibility framing
+ * - Behaviourally differentiated tone psychology (not just adjectives)
+ * - keywordSuggestions now requires exactly 20 categorised phrases:
+ *     8 [competitive] + 7 [intent] + 5 [gap]
+ * - ctaSuggestions[0] is a mandatory visibility_rationale ("WHY THIS RANKS:")
+ * - fullDescription structure enforced: Hook → Features → CTA
+ * - Safe-Passage Strategy for displacement campaigns (USP against ad-heavy/buggy rivals)
+ * - Final checklist in user message to reduce schema failures
+ */
+export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
+  system: string;
+  user: string;
+} {
+  const targetArabic = input.targetArabic ?? false;
+
+  // Token-budget enforcement
+  const keywords = truncateKeywords(input.targetKeywords);
+  const exploitTargets = truncateExploitTargets(input.exploitTargets ?? []);
+
+  const system = buildSystemMessage(targetArabic);
+  const user = buildUserMessage(input, keywords, exploitTargets, targetArabic);
 
   return { system, user };
 }
