@@ -83,11 +83,6 @@ function primaryLangForCountry(countryCode: string): string {
   return COUNTRY_PRIMARY_LANG[countryCode.toLowerCase()] ?? "en";
 }
 
-const STORAGE_IMPROVEMENTS = "playstore:reviews:listingImprovements";
-
-function storageKeyImprovements(workspaceId: string) {
-  return `${STORAGE_IMPROVEMENTS}:${workspaceId}`;
-}
 
 /**
  * Converts an ISO 8601 timestamp into a human-readable relative label.
@@ -135,17 +130,23 @@ type CommonIssuesPanelProps = {
    * genuinely zero reviews" (permanent disabled button label).
    */
   isSyncLoading: boolean;
-  improvementIds: string[];
+  /**
+   * Titles of backlog items that are staged (isImplemented=false).
+   * Drives IssueCard.added — if the title is in this set the card shows
+   * "Open in Listing Optimizer →" instead of "Add to Optimization Backlog".
+   * Derived from backlogItems (DB) so it is always correct after page refresh.
+   * Optimistic adds are reflected here via the parent's stagedTitles memo.
+   */
+  stagedTitles: ReadonlySet<string>;
   /**
    * appId of the workspace's own app — passed to IssueCard so the "Open in
    * Listing Optimizer" deep-link appends ?appId= and pre-selects the app.
    */
   appId?: string;
   /**
-   * Titles of backlog items that are already archived (isImplemented=true).
-   * IssueCards whose title matches one of these will be hidden from the grid
-   * so there is no duplication between Active Insights and History Archive.
-   * On restore (isImplemented→false) the title is removed and the card reappears.
+   * Titles of ALL backlog items (staged + archived).
+   * IssueCards whose title matches are hidden from Active Insights entirely —
+   * they live in the queue or history archive, not here.
    */
   excludeTitles?: ReadonlySet<string>;
   /** Called with the dedup key AND the full IssueItem so the parent can POST to the backlog API.
@@ -209,7 +210,7 @@ function CommonIssuesPanel({
   reviewTexts,
   rawReviewCount,
   isSyncLoading,
-  improvementIds,
+  stagedTitles,
   appId,
   excludeTitles,
   onAddImprovement,
@@ -640,7 +641,7 @@ function CommonIssuesPanel({
               issue={issue}
               workspaceId={workspaceId}
               appId={appId}
-              added={improvementIds.includes(issueId)}
+              added={stagedTitles.has(issue.title)}
               onAdd={() => onAddImprovement(issueId, issue)}
             />
           );
@@ -656,16 +657,6 @@ function CommonIssuesPanel({
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-function parseImprovementIds(raw: string | null): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((x): x is string => typeof x === "string");
-  } catch {
-    return [];
-  }
-}
 
 function RatingSparkline({ values, label }: { values: number[]; label: string }) {
   if (values.length === 0) return <span className="text-xs text-zinc-500">—</span>;
@@ -905,7 +896,6 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   const t = useTranslations("reviews");
   const router = useRouter();
   const [hydrated, setHydrated] = useState(false);
-  const [improvementIds, setImprovementIds] = useState<string[]>([]);
 
   // ── Backlog queue state ──────────────────────────────────────────────────
   // Mirrors workspace_listing_backlog — active (not implemented) + archived (implemented)
@@ -1095,28 +1085,13 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
 
   // ── Hydration ──────────────────────────────────────────────────────────────
   //
-  // sessionStorage is used as a fast within-session UI cache so the "Added to
-  // queue ✓" button state is restored instantly on page reload without a DB
-  // round-trip.  The source of truth is workspace_listing_backlog in Supabase —
-  // written by addImprovement on every button click.  A future "My Backlog" page
-  // can hydrate from the GET /api/workspaces/[id]/backlog endpoint instead.
+  // hydrated flag: prevents SSR/client mismatch on first render.
+  // backlogItems is the single source of truth for staged/archived state —
+  // no sessionStorage needed. loadBacklog() fetches from DB on mount.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setImprovementIds(
-      parseImprovementIds(sessionStorage.getItem(storageKeyImprovements(workspaceId))),
-    );
     setHydrated(true);
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!hydrated || typeof window === "undefined") return;
-    // Mirror to sessionStorage so the button state survives soft navigations
-    // within the same browser tab without re-fetching the backlog from the DB.
-    sessionStorage.setItem(
-      storageKeyImprovements(workspaceId),
-      JSON.stringify(improvementIds),
-    );
-  }, [hydrated, improvementIds, workspaceId]);
+  }, []);
 
   // ── Fetch backlog (active queue + history archive) ───────────────────────
   const loadBacklog = useCallback(() => {
@@ -1202,11 +1177,9 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   // ── Revert item back to active (history → active) ────────────────────────
   //
   // On success:
-  //   1. isImplemented → false   (item moves from History Archive back to active queue)
-  //   2. Title stays in archivedTitles (all backlogItems titles are excluded from
-  //      Active Insights — the card does NOT reappear; it lives in the queue)
-  //   3. improvementIds cleaned  (IssueCard resets to AVAILABLE in case the item
-  //      is later fully deleted from the backlog and reappears in Active Insights)
+  //   On success: isImplemented → false (item moves from History Archive back
+  //   to active queue). stagedTitles and archivedTitles update reactively
+  //   since both are derived from backlogItems. No improvementIds to clean up.
   const revertToActive = useCallback(async (itemId: string) => {
     setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
     try {
@@ -1221,28 +1194,9 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
       );
       const json = (await res.json()) as { success: boolean };
       if (json.success) {
-        setBacklogItems((prev) => {
-          const restored = prev.find((i) => i.id === itemId);
-          // Remove matching improvementIds so the IssueCard reverts to AVAILABLE
-          if (restored) {
-            setImprovementIds((ids) =>
-              ids.filter((id) => {
-                // issueId format: "<packageName>:<countryCode>:<idx>"
-                // We match on title via the backlog item — strip by scanning
-                // all backlog-source issue IDs that share the same title.
-                // Simpler: just keep only IDs whose corresponding IssueCard
-                // title does NOT match the restored item's issueTitle.
-                // Since improvementIds don't embed the title we can't do a
-                // precise match here — instead we clear ALL improvementIds
-                // for the restored item's package+country combination so the
-                // full grid refreshes cleanly for that source.
-                const [pkg, cc] = id.split(":");
-                return !(pkg === restored.packageName && cc === restored.countryCode);
-              }),
-            );
-          }
-          return prev.map((i) => (i.id === itemId ? { ...i, isImplemented: false } : i));
-        });
+        setBacklogItems((prev) =>
+          prev.map((i) => (i.id === itemId ? { ...i, isImplemented: false } : i)),
+        );
       }
     } catch {
       // silent
@@ -1310,29 +1264,21 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
    * addImprovement — persists an IssueCard entry to workspace_listing_backlog.
    *
    * Flow:
-   *   1. Optimistic update: immediately append issueId to improvementIds so the
+   *   1. POST to /api/workspaces/[id]/backlog with the full issue payload.
    *      button toggles to "Added to queue ✓" without waiting for the network.
    *   2. POST to /api/workspaces/[id]/backlog with the full issue payload.
-   *   3. On success: no-op (optimistic state is already correct).
-   *   4. On failure: roll back improvementIds, toast an error so the user knows
-   *      the entry was not saved and can try again.
+   *   3. On success: reload backlog — stagedTitles and archivedTitles update
+   *      reactively, card disappears from Active Insights and STAGED state is
+   *      driven by DB truth, not sessionStorage.
+   *   4. On failure: toast error; no optimistic state to roll back.
    *
-   * Duplicate guard: if the key is already in improvementIds the button is
-   * disabled at render time (IssueCard.added=true) so this function is never
-   * called twice for the same issue in the same session. The DB upsert is also
-   * idempotent via the unique index, so even if it fires twice it is safe.
+   * Duplicate guard: IssueCard.added is driven by stagedTitles.has(issue.title)
+   * so the button is already hidden/STAGED before this fires again. The DB
+   * upsert is also idempotent via the unique index.
    */
   const addImprovement = useCallback(
     async (issueId: string, issue: IssueItem): Promise<boolean> => {
-      if (improvementIds.includes(issueId)) {
-        toast.info(t("commonIssues.alreadyAdded"));
-        return true; // already staged — IssueCard should treat this as success
-      }
-
-      // ── Step 1: Optimistic update ───────────────────────────────────────────
-      setImprovementIds((prev) => [...prev, issueId]);
-
-      // ── Step 2: Persist to DB ───────────────────────────────────────────────
+      // ── Persist to DB ───────────────────────────────────────────────────────
       // Derive packageName inline — avoids a forward-reference to activePackageName
       // which is declared later in the component body.
       const packageName =
@@ -1364,19 +1310,17 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
           throw new Error(json.error?.message ?? "Backlog write failed");
         }
 
-        // ── Step 3: Success — reload backlog so Active Insights queue updates ──
+        // ── Success — reload backlog; stagedTitles/archivedTitles update reactively ──
         toast.success(t("commonIssues.addedToast"));
-        loadBacklog(); // refresh backlog list so item appears in Active Insights tab
+        loadBacklog();
         return true;
       } catch (err) {
-        // ── Step 4: Rollback ─────────────────────────────────────────────────
-        setImprovementIds((prev) => prev.filter((id) => id !== issueId));
         const msg = err instanceof Error ? err.message : "Unknown error";
         toast.error(`Could not save to backlog — ${msg}. Please try again.`);
         return false;
       }
     },
-    [improvementIds, workspaceId, selectedAppFilter, apps, countryCode, t, loadBacklog],
+    [workspaceId, selectedAppFilter, apps, countryCode, t, loadBacklog],
   );
 
   const primaryApp = apps[0];
@@ -1502,15 +1446,19 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   );
 
   /**
+   * Titles of staged (not-yet-implemented) backlog items.
+   * Drives IssueCard.added — the card shows "Open in Listing Optimizer →"
+   * instead of "Add to Optimization Backlog" when its title is here.
+   * DB-driven so it survives page refresh without any sessionStorage dependency.
+   */
+  const stagedTitles = useMemo(
+    () => new Set(backlogItems.filter((i) => !i.isImplemented).map((i) => i.issueTitle)),
+    [backlogItems],
+  );
+
+  /**
    * Set of issue titles that should be hidden from Active Insights.
-   * Covers BOTH:
-   *   - Staged (isImplemented=false): already in the queue — user is handling it
-   *   - Archived (isImplemented=true): already implemented — lives in History Archive
-   *
-   * This means once a user adds an issue to the queue it disappears from Active
-   * Insights immediately (no duplicate). Restoring from archive re-adds it to the
-   * queue (isImplemented=false) but keeps it hidden until explicitly removed from
-   * the backlog entirely.
+   * Covers BOTH staged and archived — once in the backlog it leaves Active Insights.
    */
   const archivedTitles = useMemo(
     () => new Set(backlogItems.map((i) => i.issueTitle)),
@@ -1830,7 +1778,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
            *
            * CommonIssuesPanel is keyed on selectedAppFilter so it remounts on tab switch.
            * "Add to Optimization Backlog" in the IssueCard fires addImprovement, which
-           * POSTs to /backlog and appends to improvementIds. loadBacklog() re-fetches
+           * POSTs to /backlog. loadBacklog() re-fetches
            * the full backlog list so the item also appears in the Active Insights queue.
            */}
           <section className="space-y-4" aria-labelledby="common-issues-heading">
@@ -1886,10 +1834,10 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
               <div className="space-y-6">
 
                 {/* Gemini Common Issues panel — the IssueCard grid */}
-                {improvementIds.length > 0 ? (
+                {stagedTitles.size > 0 ? (
                   <p className="flex items-center gap-2 text-xs text-emerald-400/85">
                     <Sparkles className="size-3.5 shrink-0" aria-hidden />
-                    {t("commonIssues.queueHint", { count: improvementIds.length })}
+                    {t("commonIssues.queueHint", { count: stagedTitles.size })}
                   </p>
                 ) : null}
 
@@ -1903,7 +1851,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                   reviewTexts={activeLowRatingTexts}
                   rawReviewCount={activeLowRatingTexts.length}
                   isSyncLoading={activeLoading}
-                  improvementIds={improvementIds}
+                  stagedTitles={stagedTitles}
                   excludeTitles={archivedTitles}
                   onAddImprovement={addImprovement}
                 />
