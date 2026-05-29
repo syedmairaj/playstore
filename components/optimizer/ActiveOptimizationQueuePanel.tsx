@@ -373,14 +373,15 @@ export function ActiveOptimizationQueuePanel({
                                 : "border-emerald-500/20 text-slate-200 hover:border-emerald-500/30 hover:bg-slate-800",
                             )}
                           >
-                            {isGenerating ? (
-                              <Loader2 className="size-3 shrink-0 animate-spin text-amber-400/70" aria-hidden />
-                            ) : (
-                              <CheckCircle2
-                                className="size-3 shrink-0 text-emerald-400"
-                                aria-hidden
-                              />
-                            )}
+                            {/* Single check icon — no per-pill spinner during generation.
+                                The amber banner above is the one and only loading indicator. */}
+                            <CheckCircle2
+                              className={cn(
+                                "size-3 shrink-0",
+                                isGenerating ? "text-amber-400/50" : "text-emerald-400",
+                              )}
+                              aria-hidden
+                            />
                             {queueImprovementBadgeLabel(item)}
 
                             {/* Delete (×) button — hidden during generation to prevent mid-flight mutations */}

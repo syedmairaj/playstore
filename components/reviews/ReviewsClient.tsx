@@ -1816,7 +1816,9 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                   onAddImprovement={addImprovement}
                 />
 
-                {/* ── Active backlog queue (items added via "Add to Optimization Backlog") ── */}
+                {/* ── Active backlog queue (items added via "Add to Optimization Backlog") ──
+                    Rendered as a grid matching the IssueCard grid above for visual consistency.
+                    Each card uses the same accent stripe, severity badge, and compact proportions. */}
                 {(backlogLoading || backlogError || backlogItems.filter((i) => !i.isImplemented).length > 0) && (
                   <div className="space-y-3 border-t border-white/[0.06] pt-4">
                     {backlogLoading && (
@@ -1829,71 +1831,88 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                       <p className="text-xs text-red-400">{t("insightsTabs.loadError")}</p>
                     )}
 
-                    {!backlogLoading && backlogItems.filter((i) => !i.isImplemented).map((item) => {
-                      const severityStyles: Record<string, string> = {
-                        CRITICAL: "bg-red-500/10 text-red-400 border border-red-500/20",
-                        MEDIUM:   "bg-amber-500/10 text-amber-400 border border-amber-500/20",
-                        LOW:      "bg-blue-500/10 text-blue-400 border border-blue-500/20",
-                      };
-                      const accentBar: Record<string, string> = {
-                        CRITICAL: "bg-red-500",
-                        MEDIUM:   "bg-amber-500",
-                        LOW:      "bg-blue-500",
-                      };
-                      const isBusy = backlogBusy[item.id] ?? false;
-                      return (
-                        <div
-                          key={item.id}
-                          className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/60 px-4 py-4"
-                        >
-                          <div className={`absolute start-0 top-0 h-full w-1 ${accentBar[item.severity] ?? "bg-zinc-500"}`} aria-hidden />
-                          <div className="ms-2 space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${severityStyles[item.severity] ?? ""}`}>
-                                  {item.severity}
-                                </span>
-                                <span className="text-xs text-amber-400/80">
-                                  {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                aria-label={t("insightsTabs.deleteItem")}
-                                onClick={() => setBacklogItems((prev) => prev.filter((i) => i.id !== item.id))}
-                                className="text-zinc-600 hover:text-red-400 transition-colors"
-                              >
-                                <svg viewBox="0 0 20 20" fill="currentColor" className="size-4" aria-hidden>
-                                  <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                                </svg>
-                              </button>
-                            </div>
-                            <p className="font-semibold text-zinc-100">{item.issueTitle}</p>
-                            <p className="text-sm text-zinc-400">{item.issueDescription}</p>
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => markDone(item.id)}
-                              className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 px-3 py-1.5 text-xs font-medium text-orange-400 hover:bg-orange-500/20 transition-colors disabled:opacity-50"
+                    {!backlogLoading && backlogItems.filter((i) => !i.isImplemented).length > 0 && (
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {backlogItems.filter((i) => !i.isImplemented).map((item) => {
+                          const severityBadge: Record<string, string> = {
+                            CRITICAL: "bg-red-500/10 text-red-500 border border-red-500/20",
+                            MEDIUM:   "bg-amber-500/10 text-amber-500 border border-amber-500/20",
+                            LOW:      "bg-blue-500/10 text-blue-500 border border-blue-500/20",
+                          };
+                          const accentBar: Record<string, string> = {
+                            CRITICAL: "bg-red-500",
+                            MEDIUM:   "bg-amber-500",
+                            LOW:      "bg-blue-500",
+                          };
+                          const severityLabel: Record<string, string> = {
+                            CRITICAL: "Critical",
+                            MEDIUM:   "Medium",
+                            LOW:      "Low",
+                          };
+                          const isBusy = backlogBusy[item.id] ?? false;
+                          return (
+                            <div
+                              key={item.id}
+                              className="relative overflow-visible rounded-xl border border-zinc-800 bg-zinc-900/50 shadow-[0_0_0_1px_rgba(16,185,129,0.06)] transition-shadow hover:shadow-[0_0_0_1px_rgba(16,185,129,0.14)]"
                             >
-                              {isBusy ? (
-                                <>
-                                  <Loader2 className="size-3 animate-spin" aria-hidden />
-                                  {t("insightsTabs.markingDone")}
-                                </>
-                              ) : (
-                                <>
-                                  <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
-                                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                                  </svg>
-                                  {t("insightsTabs.stageExploit")}
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                              {/* Left accent stripe — mirrors IssueCard */}
+                              <div
+                                className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${accentBar[item.severity] ?? "bg-zinc-500"}`}
+                                aria-hidden
+                              />
+                              {/* Impact % — top-right, matches IssueCard positioning */}
+                              <span className="absolute right-3 top-3 text-[11px] font-medium tabular-nums whitespace-nowrap text-amber-400">
+                                {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
+                              </span>
+                              {/* Card body */}
+                              <div className="space-y-2 pb-3 pl-6 pr-12 pt-3">
+                                {/* Severity badge row */}
+                                <div className="flex items-center justify-between">
+                                  <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${severityBadge[item.severity] ?? ""}`}>
+                                    {severityLabel[item.severity] ?? item.severity}
+                                  </span>
+                                  {/* Delete button — top-right of badge row */}
+                                  <button
+                                    type="button"
+                                    aria-label={t("insightsTabs.deleteItem")}
+                                    onClick={() => setBacklogItems((prev) => prev.filter((i) => i.id !== item.id))}
+                                    className="text-zinc-600 hover:text-red-400 transition-colors"
+                                  >
+                                    <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
+                                      <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </div>
+                                {/* Title + description */}
+                                <p className="text-sm font-semibold leading-snug text-white">{item.issueTitle}</p>
+                                <p className="text-xs leading-relaxed text-zinc-400">{item.issueDescription}</p>
+                                {/* Stage Exploit CTA — styled like STAGED IssueCard button */}
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => markDone(item.id)}
+                                  className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-800/80 border border-zinc-700 px-3 py-1.5 text-xs font-medium text-orange-400 hover:bg-zinc-700/80 hover:text-orange-300 transition-colors disabled:opacity-50"
+                                >
+                                  {isBusy ? (
+                                    <>
+                                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                                      {t("insightsTabs.markingDone")}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5 shrink-0" aria-hidden>
+                                        <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                                      </svg>
+                                      {t("insightsTabs.stageExploit")}
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
