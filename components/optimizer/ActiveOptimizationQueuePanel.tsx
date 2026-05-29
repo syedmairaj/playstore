@@ -178,6 +178,38 @@ export function ActiveOptimizationQueuePanel({
     }, 600);
   }
 
+  // ── Generating state: collapse the panel to a minimal inline strip ───────────
+  // The Sonner toast at the top already communicates "generation in progress".
+  // Showing a full bordered card + amber banner on top of that creates double
+  // containers and visual anxiety. During generation: no card, no banner —
+  // just a quiet label + dimmed pills so the user knows what's being used.
+  if (isGenerating && items.length > 0) {
+    return (
+      <motion.div
+        layout
+        className={cn("mb-2", className)}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      >
+        <div className="mb-2 flex items-center gap-1.5 text-xs text-zinc-500">
+          <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
+          <span>{t("processingBanner")}</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5 pointer-events-none">
+          {items.map((item) => (
+            <span
+              key={item.id}
+              className="inline-flex cursor-default items-center gap-1.5 rounded-lg border border-zinc-700/50 bg-zinc-800/40 px-2.5 py-1 text-xs font-medium text-zinc-500"
+            >
+              <CheckCircle2 className="size-3 shrink-0 text-zinc-600" aria-hidden />
+              {queueImprovementBadgeLabel(item)}
+            </span>
+          ))}
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
         layout
@@ -269,24 +301,9 @@ export function ActiveOptimizationQueuePanel({
             </motion.div>
           ) : items.length > 0 ? (
             <TooltipProvider>
-              {/* Optimistic "Processing" banner — shown while Gemini generation is running.
-                  Locks the entire pill list so the user can't mutate the queue mid-flight. */}
-              {isGenerating && (
-                <motion.div
-                  className="mb-3 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400"
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                >
-                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-                  <span>{t("processingBanner")}</span>
-                </motion.div>
-              )}
               <motion.div
                 layout
-                className={cn(
-                  "flex flex-wrap gap-2",
-                  isGenerating && "pointer-events-none opacity-50",
-                )}
+                className="flex flex-wrap gap-2"
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
@@ -308,29 +325,17 @@ export function ActiveOptimizationQueuePanel({
                           content={<PillTooltipContent item={item} ownPackageName={ownPackageName} t={t} />}
                           asChild
                         >
-                          {/* Pill wrapper — no native `title` attr to avoid double tooltip */}
                           <span
                             tabIndex={0}
-                            className={cn(
-                              "group inline-flex cursor-default items-center gap-1.5 rounded-lg border bg-slate-800/70 ps-3 pe-1.5 py-1.5 text-xs font-medium ring-1 ring-inset ring-slate-700/40 transition-colors",
-                              isGenerating
-                                ? "border-amber-500/20 text-amber-300/70"
-                                : "border-emerald-500/20 text-slate-200 hover:border-emerald-500/30 hover:bg-slate-800",
-                            )}
+                            className="group inline-flex cursor-default items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-slate-800/70 ps-3 pe-1.5 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-inset ring-slate-700/40 transition-colors hover:border-emerald-500/30 hover:bg-slate-800"
                           >
-                            {/* Single check icon — no per-pill spinner during generation.
-                                The amber banner above is the one and only loading indicator. */}
                             <CheckCircle2
-                              className={cn(
-                                "size-3 shrink-0",
-                                isGenerating ? "text-amber-400/50" : "text-emerald-400",
-                              )}
+                              className="size-3 shrink-0 text-emerald-400"
                               aria-hidden
                             />
                             {queueImprovementBadgeLabel(item)}
 
-                            {/* Delete (×) button — hidden during generation to prevent mid-flight mutations */}
-                            {onRemoveItem && !isGenerating && (
+                            {onRemoveItem && (
                               <button
                                 type="button"
                                 disabled={isDeleting}

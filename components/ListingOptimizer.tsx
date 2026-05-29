@@ -28,7 +28,7 @@ import {
   type OptimizerWizardStep,
 } from "@/components/listing/optimizer/optimizer-stepper";
 import { OptimizerCreditsConfirmDialog } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
-import { Info } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
 import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog";
@@ -2984,13 +2984,18 @@ export function ListingOptimizer({
                           type="submit"
                           disabled={!canSubmit || isProcessingCredits || loading}
                           aria-busy={loading ? true : undefined}
-                          className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
+                          className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
                         >
-                          {loading
-                            ? t("form.generating")
-                            : t("form.generate", {
-                                credits: AI_CREDIT_COSTS.listing_generation,
-                              })}
+                          {loading ? (
+                            <>
+                              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                              {t("form.generating")}
+                            </>
+                          ) : (
+                            t("form.generate", {
+                              credits: AI_CREDIT_COSTS.listing_generation,
+                            })
+                          )}
                         </button>
                         <p className="text-center text-sm font-medium text-emerald-300/90 sm:text-start">
                           {t("form.generateValueMicrocopy")}
