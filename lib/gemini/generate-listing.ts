@@ -55,6 +55,20 @@ const LISTING_RESPONSE_SCHEMA = {
       type: SchemaType.ARRAY,
       items: { type: SchemaType.STRING },
     },
+    // ── v8 fields ─────────────────────────────────────────────────────────
+    whatsNew: { type: SchemaType.STRING },
+    screenshotCaptions: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+    },
+    abTestVariant: {
+      type: SchemaType.OBJECT,
+      properties: {
+        titleB: { type: SchemaType.STRING },
+        hypothesis: { type: SchemaType.STRING },
+      },
+      required: ["titleB", "hypothesis"],
+    },
   },
   required: ["title", "shortDescription", "fullDescription", "keywordSuggestions", "ctaSuggestions"],
 };
@@ -69,7 +83,11 @@ const STRICT_RETRY_ADDENDUM =
   "ctaSuggestions (4–8 strings — first item MUST start with 'WHY THIS RANKS: '), " +
   "asoScore (integer 0–100 = exact sum of scoreBreakdown), " +
   "scoreBreakdown.title (0–30) + shortDescription (0–20) + longDescription (0–40) + persuasiveness (0–10), " +
-  "improvementTips (2–8 strings). Return ONLY the JSON object — no prose, no markdown.";
+  "improvementTips (2–8 strings), " +
+  "whatsNew (≤500 chars — Play Store release notes, opens with pain point resolved, keywords woven in), " +
+  "screenshotCaptions (exactly 5 strings each ≤80 chars — screenshot overlay headlines ordered by conversion priority), " +
+  "abTestVariant (object with titleB ≤30 chars + hypothesis ≤300 chars — A/B title test for Play Store Experiments). " +
+  "Return ONLY the JSON object — no prose, no markdown.";
 
 export type GenerateListingWithGeminiResult = {
   data: ListingGenerationOutput;

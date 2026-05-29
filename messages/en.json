@@ -1677,7 +1677,26 @@
         "fieldPillLong": "Long",
         "fieldPillKeywords": "Keywords"
       },
-      "longBlock": "Long Description"
+      "longBlock": "Long Description",
+      "whatsNew": {
+        "label": "What's New",
+        "hint": "Play Store release notes — opens with the pain point resolved, weaves in 1–2 keywords, ends with an install nudge.",
+        "copy": "Copy What's New",
+        "charCount": "{current} / 500"
+      },
+      "screenshotCaptions": {
+        "label": "Screenshot Captions",
+        "hint": "Conversion-priority overlay headlines — slot 1 is your strongest hook, slot 5 is the CTA.",
+        "copyAll": "Copy All Captions",
+        "itemLabel": "Screenshot {n}"
+      },
+      "abTestVariant": {
+        "label": "A/B Title Variant",
+        "hint": "Test this alternate title against your current title using Play Store Listing Experiments.",
+        "titleBLabel": "Variant B Title",
+        "hypothesisLabel": "Hypothesis",
+        "copy": "Copy Variant B"
+      }
     },
     "empty": {
       "body": "Results appear here after you generate. Everything stays editable in the Play Console—use this as a strong first draft.",

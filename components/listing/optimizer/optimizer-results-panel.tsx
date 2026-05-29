@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Copy } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
@@ -586,6 +586,111 @@ export function OptimizerResultsPanel({
           copyLabel={t("results.copyAll")}
           onCopyAll={onCopyCtasList}
         />
+
+        {/* ── v8: What's New ── */}
+        {result.whatsNew ? (
+          <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/50 px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-[13px] font-semibold uppercase tracking-wide text-zinc-300/80">
+                {t("results.whatsNew.label")}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(result.whatsNew ?? "");
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300/90 underline-offset-4 hover:underline"
+              >
+                <Copy className="size-3.5 shrink-0" aria-hidden />
+                {t("results.whatsNew.copy")}
+              </button>
+            </div>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200/90">
+              {result.whatsNew}
+            </p>
+            <p className="mt-3 text-[11px] text-zinc-500">
+              {t("results.whatsNew.hint")}
+            </p>
+          </div>
+        ) : null}
+
+        {/* ── v8: Screenshot Captions ── */}
+        {result.screenshotCaptions && result.screenshotCaptions.length > 0 ? (
+          <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/50 px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-[13px] font-semibold uppercase tracking-wide text-zinc-300/80">
+                {t("results.screenshotCaptions.label")}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(
+                    (result.screenshotCaptions ?? []).join("\n"),
+                  );
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300/90 underline-offset-4 hover:underline"
+              >
+                <Copy className="size-3.5 shrink-0" aria-hidden />
+                {t("results.screenshotCaptions.copyAll")}
+              </button>
+            </div>
+            <ol className={cn("space-y-2", isRtl && "text-end")}>
+              {result.screenshotCaptions.map((caption, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <span className="mt-0.5 shrink-0 rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-zinc-400">
+                    {i + 1}
+                  </span>
+                  <span className="text-sm leading-relaxed text-zinc-200/90">{caption}</span>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-3 text-[11px] text-zinc-500">
+              {t("results.screenshotCaptions.hint")}
+            </p>
+          </div>
+        ) : null}
+
+        {/* ── v8: A/B Title Variant ── */}
+        {result.abTestVariant ? (
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-[13px] font-semibold uppercase tracking-wide text-violet-300/80">
+                {t("results.abTestVariant.label")}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(result.abTestVariant?.titleB ?? "");
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-300/90 underline-offset-4 hover:underline"
+              >
+                <Copy className="size-3.5 shrink-0" aria-hidden />
+                {t("results.abTestVariant.copy")}
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                  {t("results.abTestVariant.titleBLabel")}
+                </p>
+                <p className="rounded-lg border border-zinc-700/50 bg-zinc-900/60 px-3 py-2 text-sm font-semibold text-white/95">
+                  {result.abTestVariant.titleB}
+                </p>
+              </div>
+              <div>
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                  {t("results.abTestVariant.hypothesisLabel")}
+                </p>
+                <p className="text-sm leading-relaxed text-zinc-200/85">
+                  {result.abTestVariant.hypothesis}
+                </p>
+              </div>
+            </div>
+            <p className="mt-3 text-[11px] text-zinc-500">
+              {t("results.abTestVariant.hint")}
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <div

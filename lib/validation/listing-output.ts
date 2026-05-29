@@ -41,8 +41,8 @@ const listingAsoBundleSchema = z.object({
 export type ListingAsoBundle = z.infer<typeof listingAsoBundleSchema>;
 
 /**
- * Full listing payload (Play fields + optional Certified ASO Score block).
- * ASO fields are optional for backward compatibility with stored rows.
+ * Full listing payload (Play fields + optional Certified ASO Score block + v8 fields).
+ * All optional fields maintain backward compatibility with stored rows.
  */
 export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
   z.object({
@@ -51,6 +51,19 @@ export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
     improvementTips: z.array(z.string().min(1)).max(25).optional(),
     /** Set when the model returned unusable ASO metadata after a successful listing parse. */
     asoScoreDegraded: z.literal(true).optional(),
+
+    // ── v8 fields ──────────────────────────────────────────────────────────
+    /** "What's New" copy for Play Store release notes (≤500 chars). Indexed by Google. */
+    whatsNew: z.string().min(1).max(500).optional(),
+    /** Screenshot caption lines — one per slot (4–5). Tone-differentiated overlay copy. */
+    screenshotCaptions: z.array(z.string().min(1).max(80)).min(3).max(6).optional(),
+    /** A/B title variant for Play Store Listing Experiments. */
+    abTestVariant: z
+      .object({
+        titleB: z.string().min(1).max(30),
+        hypothesis: z.string().min(1).max(300),
+      })
+      .optional(),
   }),
 );
 

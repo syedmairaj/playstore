@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v7.1";
+const PROMPT_VERSION = "listing-optimizer-v8";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -197,6 +197,35 @@ function buildSystemMessage(targetArabic: boolean): string {
       "Sum MUST equal asoScore.",
     "  improvementTips: array of 2-8 short actionable ASO tips specific to THIS listing (no generic advice).",
 
+    // ── v8 fields ────────────────────────────────────────────────────────────
+    "  whatsNew: string — ≤500 chars. Play Store 'What's New' release notes copy. " +
+      "Rules: (1) Open with the primary pain point resolved (e.g. 'No more crashes — v2 rebuilds core stability from the ground up'). " +
+      "(2) List 2-3 key improvements as tight benefit statements. " +
+      "(3) Close with a one-line install/update nudge. " +
+      "(4) Must be tone-consistent with the rest of the listing. " +
+      "(5) Weave in 1-2 primary keywords naturally — this field IS indexed by Google Play. " +
+      "Do NOT write generic changelogs like 'bug fixes and performance improvements'.",
+
+    "  screenshotCaptions: array of exactly 5 strings, each ≤80 chars. " +
+      "These are the caption/overlay lines for the app's Play Store screenshots — shown directly on the graphic. " +
+      "Rules: (1) Each caption = one specific feature benefit, written as a short punchy headline. " +
+      "(2) Order them by conversion priority: screenshot 1 = strongest hook addressing the primary pain point, " +
+      "screenshot 2 = most-used feature, screenshot 3 = social proof or data claim, " +
+      "screenshot 4 = secondary differentiator, screenshot 5 = CTA / download nudge. " +
+      "(3) Every caption must be tone-consistent — professional captions are data-led, friendly captions are habit-led, " +
+      "bold captions use power words, minimal captions state the feature only. " +
+      "(4) No generic captions like 'Easy to use' or 'Track everything' — be specific to this app's USP.",
+
+    "  abTestVariant: object with two keys. Use this to generate a Play Store Listing Experiment hypothesis. " +
+      "  titleB: string ≤30 chars — an alternative title to A/B test against the primary title. " +
+      "    titleB must test a DIFFERENT angle: if titleA is keyword-first, titleB should be benefit-first (or vice versa). " +
+      "    Both must include a primary keyword. Both must be ≤30 chars exactly. " +
+      "  hypothesis: string ≤300 chars — one paragraph explaining: " +
+      "    (a) what angle titleA tests vs what angle titleB tests, " +
+      "    (b) which user segment each is likely to convert better with, " +
+      "    (c) what metric to watch (CVR or installs) and for how long (minimum 2 weeks). " +
+      "    Written for a non-technical app owner who is new to A/B testing.",
+
     // ── ASO quality rules ────────────────────────────────────────────────────
     "ASO QUALITY RULES:",
     "  • Never keyword-stuff. Keywords must read naturally in copy.",
@@ -293,6 +322,9 @@ function buildUserMessage(
       "professional=clinical complaint, friendly=frustrated user, bold=lost-results anger, minimal=functional failure?",
     "5. ctaSuggestions[0]: starts with 'WHY THIS RANKS: '?",
     "6. asoScore = sum of scoreBreakdown values?",
+    "7. whatsNew: ≤500 chars? Opens with pain point resolved? 1-2 keywords woven in naturally? Tone-consistent?",
+    "8. screenshotCaptions: exactly 5 items? Each ≤80 chars? Ordered by conversion priority? Tone-specific?",
+    "9. abTestVariant: titleB ≤30 chars AND different angle from titleA? hypothesis explains what each tests?",
     "Now output the single JSON object.",
   ].join("\n");
 

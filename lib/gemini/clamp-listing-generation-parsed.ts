@@ -7,6 +7,11 @@ export const LISTING_GEN_LONG_MAX = 4000;
 // ctaSuggestions[0] is the "WHY THIS RANKS:" rationale (v6 prompt) — allow
 // up to 500 chars to match the Zod schema cap.
 export const LISTING_GEN_CTA_ITEM_MAX = 500;
+// v8 field caps — match Zod schema limits exactly.
+export const LISTING_GEN_WHATS_NEW_MAX = 500;
+export const LISTING_GEN_SCREENSHOT_CAPTION_MAX = 80;
+export const LISTING_GEN_AB_TITLE_MAX = 30;
+export const LISTING_GEN_AB_HYPOTHESIS_MAX = 300;
 
 const ELLIPSIS = "\u2026";
 
@@ -112,6 +117,31 @@ export function clampListingGenerationParsed(parsed: unknown): unknown {
         ? item.slice(0, LISTING_GEN_CTA_ITEM_MAX)
         : item,
     );
+  }
+
+  // ── v8 field clamps ─────────────────────────────────────────────────────
+  if (typeof o.whatsNew === "string" && o.whatsNew.length > LISTING_GEN_WHATS_NEW_MAX) {
+    o.whatsNew = o.whatsNew.slice(0, LISTING_GEN_WHATS_NEW_MAX);
+  }
+  if (Array.isArray(o.screenshotCaptions)) {
+    o.screenshotCaptions = (o.screenshotCaptions as unknown[]).map((item) =>
+      typeof item === "string" && item.length > LISTING_GEN_SCREENSHOT_CAPTION_MAX
+        ? item.slice(0, LISTING_GEN_SCREENSHOT_CAPTION_MAX)
+        : item,
+    );
+  }
+  if (
+    o.abTestVariant !== null &&
+    typeof o.abTestVariant === "object" &&
+    !Array.isArray(o.abTestVariant)
+  ) {
+    const ab = o.abTestVariant as Record<string, unknown>;
+    if (typeof ab.titleB === "string" && ab.titleB.length > LISTING_GEN_AB_TITLE_MAX) {
+      ab.titleB = ab.titleB.slice(0, LISTING_GEN_AB_TITLE_MAX);
+    }
+    if (typeof ab.hypothesis === "string" && ab.hypothesis.length > LISTING_GEN_AB_HYPOTHESIS_MAX) {
+      ab.hypothesis = ab.hypothesis.slice(0, LISTING_GEN_AB_HYPOTHESIS_MAX);
+    }
   }
 
   if (
