@@ -1060,12 +1060,12 @@
     "insightsTabs": {
       "activeInsights": "الرؤى النشطة",
       "historyArchive": "أرشيف سجل التحسينات",
-      "exploitedCount": "{count} {count, plural, one {مشكلة مستغلة} other {مشكلات مستغلة}} — استعد أيًا منها للاستهداف مجددًا",
+      "exploitedCount": "{count} {count, plural, one {مشكلة محسَّنة} other {مشكلات محسَّنة}} — استعد أيًا منها للطابور",
       "archiveBadge": "أرشيف التحسينات",
       "emptyActive": "لا رؤى نشطة بعد. أضف المشكلات الشائعة أعلاه لبناء قائمتك.",
-      "emptyArchive": "لا مشكلات مستغلة بعد. ضع علامة تم على المشكلات من تبويب الرؤى النشطة.",
-      "counterAttacked": "تمت مواجهة المنافس بنجاح",
-      "exploitedOn": "استُغل في {date}",
+      "emptyArchive": "لا مشكلات محسَّنة بعد. تنتقل المشكلات إلى هنا تلقائيًا بعد توليد القائمة.",
+      "counterAttacked": "تم تحديث القائمة",
+      "exploitedOn": "حُسِّن في {date}",
       "restoreToActive": "إرجاع إلى النشط",
       "restoring": "جارٍ الإرجاع…",
       "impact": "التأثير: {pct}%",
@@ -1075,7 +1075,9 @@
       "sourceCompetitor": "منافس",
       "queueSectionLabel": "في قائمة انتظار تحسين القائمة",
       "openInOptimizer": "فتح في محسّن القائمة ←",
-      "dismissItem": "رفض — إزالة من القائمة"
+      "dismissItem": "رفض — إزالة من القائمة",
+      "deleteFromArchive": "إزالة من الأرشيف",
+      "deletingArchive": "جارٍ الإزالة…"
     },
     "activeQueue": {
       "kicker": "نشط",

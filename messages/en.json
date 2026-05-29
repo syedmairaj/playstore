@@ -1060,12 +1060,12 @@
     "insightsTabs": {
       "activeInsights": "Active Insights",
       "historyArchive": "Optimization History Archive",
-      "exploitedCount": "{count} exploited {count, plural, one {issue} other {issues}} — restore any to re-target",
+      "exploitedCount": "{count} {count, plural, one {issue} other {issues}} optimized — restore any to re-queue",
       "archiveBadge": "Optimization archive",
       "emptyActive": "No active insights yet. Add common issues above to build your queue.",
-      "emptyArchive": "No exploited issues yet. Mark issues as done from the Active Insights tab.",
-      "counterAttacked": "Successfully Counter-Attacked",
-      "exploitedOn": "Exploited on {date}",
+      "emptyArchive": "No optimized issues yet. Issues move here automatically after a listing is generated.",
+      "counterAttacked": "Listing Updated",
+      "exploitedOn": "Optimized on {date}",
       "restoreToActive": "Restore to Active",
       "restoring": "Restoring…",
       "impact": "Impact: {pct}%",
@@ -1075,7 +1075,9 @@
       "sourceCompetitor": "Competitor",
       "queueSectionLabel": "Queued for listing optimization",
       "openInOptimizer": "Open in Listing Optimizer →",
-      "dismissItem": "Dismiss — remove from queue"
+      "dismissItem": "Dismiss — remove from queue",
+      "deleteFromArchive": "Remove from archive",
+      "deletingArchive": "Removing…"
     },
     "activeQueue": {
       "kicker": "Active",

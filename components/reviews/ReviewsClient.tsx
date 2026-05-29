@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, ArrowUp, Calendar, Inbox, Info, Loader2, MessageSquareQuote, RefreshCw, Sparkles, Zap } from "lucide-react";
+import { ArrowRight, ArrowUp, Calendar, Inbox, Info, Loader2, MessageSquareQuote, RefreshCw, Sparkles, Trash2, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
@@ -2078,27 +2078,50 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                                 )}
                               </div>
 
-                              {/* Restore CTA */}
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={() => revertToActive(item.id)}
-                                className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-800/80 border border-zinc-700 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-zinc-700/80 hover:text-sky-300 transition-colors disabled:opacity-50"
-                              >
-                                {isBusy ? (
-                                  <>
-                                    <Loader2 className="size-3 animate-spin shrink-0" aria-hidden />
-                                    {t("insightsTabs.restoring")}
-                                  </>
-                                ) : (
-                                  <>
-                                    <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5 shrink-0" aria-hidden>
-                                      <path fillRule="evenodd" d="M7.793 2.232a.75.75 0 01-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 010 10.75H10.75a.75.75 0 010-1.5h2.875a3.875 3.875 0 000-7.75H3.622l4.146 3.957a.75.75 0 01-1.036 1.085l-5.5-5.25a.75.75 0 010-1.085l5.5-5.25a.75.75 0 011.061.025z" clipRule="evenodd" />
-                                    </svg>
-                                    {t("insightsTabs.restoreToActive")}
-                                  </>
-                                )}
-                              </button>
+                              {/* Optimized-on date */}
+                              {item.updatedAt && (
+                                <p className="text-[10px] text-zinc-600">
+                                  {t("insightsTabs.exploitedOn", {
+                                    date: new Date(item.updatedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }),
+                                  })}
+                                </p>
+                              )}
+
+                              {/* Action row — Restore + Delete */}
+                              <div className="mt-1 flex items-center gap-2">
+                                {/* Restore CTA */}
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => revertToActive(item.id)}
+                                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-zinc-800/80 border border-zinc-700 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-zinc-700/80 hover:text-sky-300 transition-colors disabled:opacity-50"
+                                >
+                                  {isBusy ? (
+                                    <>
+                                      <Loader2 className="size-3 animate-spin shrink-0" aria-hidden />
+                                      {t("insightsTabs.restoring")}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5 shrink-0" aria-hidden>
+                                        <path fillRule="evenodd" d="M7.793 2.232a.75.75 0 01-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 010 10.75H10.75a.75.75 0 010-1.5h2.875a3.875 3.875 0 000-7.75H3.622l4.146 3.957a.75.75 0 01-1.036 1.085l-5.5-5.25a.75.75 0 010-1.085l5.5-5.25a.75.75 0 011.061.025z" clipRule="evenodd" />
+                                      </svg>
+                                      {t("insightsTabs.restoreToActive")}
+                                    </>
+                                  )}
+                                </button>
+
+                                {/* Delete — permanently removes from archive */}
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  aria-label={t("insightsTabs.deleteFromArchive")}
+                                  onClick={() => void dismissItem(item.id)}
+                                  className="flex size-7 shrink-0 items-center justify-center rounded-md border border-zinc-700 bg-zinc-800/80 text-zinc-500 transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-50"
+                                >
+                                  <Trash2 className="size-3.5" aria-hidden />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );
