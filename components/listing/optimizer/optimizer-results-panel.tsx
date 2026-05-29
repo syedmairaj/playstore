@@ -56,6 +56,13 @@ export function OptimizerResultsGeneratingView({ isRtl = false }: { isRtl?: bool
       </div>
       <div className="mt-2">
         <OptimizerListingSkeleton isRtl={isRtl} />
+        <div className={cn(
+          "mt-5 flex flex-col items-center gap-1 text-center",
+          isRtl && "font-arabic",
+        )}>
+          <p className="text-sm text-white/55">{t("results.generatingPreview")}</p>
+          <p className="text-xs text-white/30">{t("form.generatingHint")}</p>
+        </div>
       </div>
     </>
   );

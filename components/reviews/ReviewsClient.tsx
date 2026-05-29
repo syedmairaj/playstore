@@ -136,6 +136,13 @@ type CommonIssuesPanelProps = {
    */
   isSyncLoading: boolean;
   improvementIds: string[];
+  /**
+   * Titles of backlog items that are already archived (isImplemented=true).
+   * IssueCards whose title matches one of these will be hidden from the grid
+   * so there is no duplication between Active Insights and History Archive.
+   * On restore (isImplemented→false) the title is removed and the card reappears.
+   */
+  excludeTitles?: ReadonlySet<string>;
   /** Called with the dedup key AND the full IssueItem so the parent can POST to the backlog API.
    *  Returns true on success so IssueCard can advance its pipeline state. */
   onAddImprovement: (id: string, issue: IssueItem) => Promise<boolean>;
@@ -198,6 +205,7 @@ function CommonIssuesPanel({
   rawReviewCount,
   isSyncLoading,
   improvementIds,
+  excludeTitles,
   onAddImprovement,
 }: CommonIssuesPanelProps) {
   const [isLoading, setIsLoading]               = useState<boolean>(true);
@@ -580,10 +588,43 @@ function CommonIssuesPanel({
 
   // ── STATE D: hasBeenAnalyzed === true AND insights.length > 0 ─────────────
   // Full IssueCard grid — titles, descriptions, severity badges, impact metrics.
+  //
+  // excludeTitles filters out insights whose title matches an archived backlog
+  // item so there is no duplication between Active Insights and History Archive.
+  // When the user restores from archive the title disappears from excludeTitles
+  // and the card reappears here automatically.
+  const visibleInsights = excludeTitles && excludeTitles.size > 0
+    ? insights.filter((issue) => !excludeTitles.has(issue.title))
+    : insights;
+
+  if (visibleInsights.length === 0) {
+    // All insights are currently in the archive — show a gentle nudge.
+    return (
+      <div>
+        <div className="flex flex-col items-center gap-3 rounded-t-2xl border border-b-0 border-zinc-800 bg-zinc-900/50 px-6 py-10 text-center">
+          <div className="flex size-12 items-center justify-center rounded-2xl border border-zinc-700/60 bg-zinc-800/80 text-emerald-500">
+            <Inbox className="size-6" aria-hidden />
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-sm font-semibold text-zinc-200">
+              All Insights Moved to History Archive
+            </p>
+            <p className="max-w-md text-xs leading-relaxed text-zinc-500">
+              Every identified pain point has been exploited and moved to your
+              Optimization History Archive. Switch to the archive tab to review
+              or restore any item.
+            </p>
+          </div>
+        </div>
+        {FreshnessFooter}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {insights.map((issue, idx) => {
+        {visibleInsights.map((issue, idx) => {
           // Key is scoped to package + country + position so it is unique across
           // all tabs and survives re-ordering in future without collisions.
           const issueId = `${packageName}:${countryCode}:${idx}`;
@@ -1152,6 +1193,11 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   }, [workspaceId]);
 
   // ── Revert item back to active (history → active) ────────────────────────
+  //
+  // On success:
+  //   1. isImplemented → false   (item reappears in active backlog queue)
+  //   2. excludeTitles shrinks   (IssueCard with matching title reappears in Active Insights)
+  //   3. improvementIds cleaned  (IssueCard resets to AVAILABLE so user can re-add if needed)
   const revertToActive = useCallback(async (itemId: string) => {
     setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
     try {
@@ -1166,9 +1212,28 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
       );
       const json = (await res.json()) as { success: boolean };
       if (json.success) {
-        setBacklogItems((prev) =>
-          prev.map((i) => (i.id === itemId ? { ...i, isImplemented: false } : i)),
-        );
+        setBacklogItems((prev) => {
+          const restored = prev.find((i) => i.id === itemId);
+          // Remove matching improvementIds so the IssueCard reverts to AVAILABLE
+          if (restored) {
+            setImprovementIds((ids) =>
+              ids.filter((id) => {
+                // issueId format: "<packageName>:<countryCode>:<idx>"
+                // We match on title via the backlog item — strip by scanning
+                // all backlog-source issue IDs that share the same title.
+                // Simpler: just keep only IDs whose corresponding IssueCard
+                // title does NOT match the restored item's issueTitle.
+                // Since improvementIds don't embed the title we can't do a
+                // precise match here — instead we clear ALL improvementIds
+                // for the restored item's package+country combination so the
+                // full grid refreshes cleanly for that source.
+                const [pkg, cc] = id.split(":");
+                return !(pkg === restored.packageName && cc === restored.countryCode);
+              }),
+            );
+          }
+          return prev.map((i) => (i.id === itemId ? { ...i, isImplemented: false } : i));
+        });
       }
     } catch {
       // silent
@@ -1425,6 +1490,18 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
         .map((r) => r.text.trim())
         .slice(0, 80),
     [reviewsBySource, selectedAppFilter],
+  );
+
+  /**
+   * Set of issue titles that have been archived (isImplemented=true).
+   * Passed to CommonIssuesPanel as excludeTitles so IssueCards whose title
+   * matches an archived item are hidden from Active Insights — no duplicates.
+   * When the user restores an item (isImplemented→false) the title drops from
+   * this set and the IssueCard reappears automatically.
+   */
+  const archivedTitles = useMemo(
+    () => new Set(backlogItems.filter((i) => i.isImplemented).map((i) => i.issueTitle)),
+    [backlogItems],
   );
 
   if (blockingError) {
@@ -1813,6 +1890,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                   rawReviewCount={activeLowRatingTexts.length}
                   isSyncLoading={activeLoading}
                   improvementIds={improvementIds}
+                  excludeTitles={archivedTitles}
                   onAddImprovement={addImprovement}
                 />
 
@@ -1922,7 +2000,8 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
             {insightsTab === "archive" && (() => {
               const doneItems = backlogItems.filter((i) => i.isImplemented);
               return (
-                <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Header row */}
                   <div className="flex items-center justify-between gap-2">
                     {doneItems.length > 0 ? (
                       <p className="text-sm text-zinc-400">
@@ -1944,109 +2023,127 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                     <p className="text-sm text-zinc-500">{t("insightsTabs.emptyArchive")}</p>
                   )}
 
-                  {!backlogLoading && doneItems.map((item) => {
-                    const severityStyles: Record<string, string> = {
-                      CRITICAL: "bg-red-500/10 text-red-400 border border-red-500/20",
-                      MEDIUM:   "bg-amber-500/10 text-amber-400 border border-amber-500/20",
-                      LOW:      "bg-blue-500/10 text-blue-400 border border-blue-500/20",
-                    };
-                    const isBusy = backlogBusy[item.id] ?? false;
-                    const exploitedDate = new Intl.DateTimeFormat(undefined, {
-                      day: "numeric",
-                      month: "long",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }).format(new Date(item.updatedAt));
+                  {/* ── Compact IssueCard-style grid ── */}
+                  {!backlogLoading && doneItems.length > 0 && (
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {doneItems.map((item) => {
+                        const severityBadge: Record<string, string> = {
+                          CRITICAL: "bg-red-500/10 text-red-500 border border-red-500/20",
+                          MEDIUM:   "bg-amber-500/10 text-amber-500 border border-amber-500/20",
+                          LOW:      "bg-blue-500/10 text-blue-500 border border-blue-500/20",
+                        };
+                        const accentBar: Record<string, string> = {
+                          CRITICAL: "bg-red-500",
+                          MEDIUM:   "bg-amber-500",
+                          LOW:      "bg-blue-500",
+                        };
+                        const impactColor: Record<string, string> = {
+                          CRITICAL: "text-red-400",
+                          MEDIUM:   "text-amber-400",
+                          LOW:      "text-blue-400",
+                        };
+                        const severityLabel: Record<string, string> = {
+                          CRITICAL: "Critical",
+                          MEDIUM:   "Medium",
+                          LOW:      "Low",
+                        };
+                        const isBusy = backlogBusy[item.id] ?? false;
 
-                    // ── Resolve competitor source label for archive cards ────────
-                    const ownPackage = apps[0]?.package_name?.trim() ?? "";
-                    const isOwnApp = ownPackage && item.packageName?.trim() === ownPackage;
-                    const matchedCompetitor = competitorOptions.find(
-                      (c) => c.packageId === item.packageName?.trim(),
-                    );
-                    const sourceLabel = isOwnApp
-                      ? t("insightsTabs.sourceOwnApp")
-                      : matchedCompetitor?.label ?? item.packageName ?? null;
-                    const isCompetitorSource = !isOwnApp && sourceLabel !== null;
+                        // ── Source label for competitor pill ──────────────────
+                        const ownPackage = apps[0]?.package_name?.trim() ?? "";
+                        const isOwnApp = ownPackage && item.packageName?.trim() === ownPackage;
+                        const matchedCompetitor = competitorOptions.find(
+                          (c) => c.packageId === item.packageName?.trim(),
+                        );
+                        const sourceLabel = isOwnApp
+                          ? t("insightsTabs.sourceOwnApp")
+                          : matchedCompetitor?.label ?? item.packageName ?? null;
+                        const isCompetitorSource = !isOwnApp && sourceLabel !== null;
 
-                    return (
-                      <div
-                        key={item.id}
-                        className="rounded-xl border border-white/[0.08] bg-zinc-900/60 px-4 py-4 space-y-3"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${severityStyles[item.severity] ?? ""}`}>
-                            {item.severity}
-                          </span>
-                          <span className="text-xs text-amber-400/80">
-                            {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
-                          </span>
-                          {/* Source pill — competitor name or "Your App" */}
-                          {sourceLabel && (
-                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${isCompetitorSource ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "bg-sky-500/10 border border-sky-500/20 text-sky-400"}`}>
-                              {isCompetitorSource ? (
-                                <svg viewBox="0 0 16 16" fill="currentColor" className="size-2.5 shrink-0" aria-hidden>
-                                  <path d="M8 1a5 5 0 100 10A5 5 0 008 1zM0 8a8 8 0 1116 0A8 8 0 010 8z"/>
-                                  <path d="M7 5.5a.5.5 0 011 0V8h1.5a.5.5 0 010 1H7.5A.5.5 0 017 8.5v-3z"/>
-                                </svg>
-                              ) : (
-                                <svg viewBox="0 0 16 16" fill="currentColor" className="size-2.5 shrink-0" aria-hidden>
-                                  <path d="M8 8a3 3 0 100-6 3 3 0 000 6zm-5 6s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3z"/>
-                                </svg>
-                              )}
-                              <span className="max-w-[90px] truncate">{sourceLabel}</span>
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            aria-label={t("insightsTabs.deleteItem")}
-                            onClick={() => setBacklogItems((prev) => prev.filter((i) => i.id !== item.id))}
-                            className="ms-auto text-zinc-600 hover:text-red-400 transition-colors"
+                        return (
+                          <div
+                            key={item.id}
+                            className="relative overflow-visible rounded-xl border border-zinc-800 bg-zinc-900/50 shadow-[0_0_0_1px_rgba(16,185,129,0.06)] transition-shadow hover:shadow-[0_0_0_1px_rgba(16,185,129,0.14)]"
                           >
-                            <svg viewBox="0 0 20 20" fill="currentColor" className="size-4" aria-hidden>
-                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                            </svg>
-                          </button>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-zinc-100">{item.issueTitle}</p>
-                          <p className="mt-1 text-sm text-zinc-400">{item.issueDescription}</p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
-                            <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
-                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
-                            </svg>
-                            {t("insightsTabs.counterAttacked")}
-                          </span>
-                          <span className="text-xs text-zinc-500">
-                            {t("insightsTabs.exploitedOn", { date: exploitedDate })}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => revertToActive(item.id)}
-                          className="w-full flex items-center justify-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.03] py-2 text-sm text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors disabled:opacity-50"
-                        >
-                          {isBusy ? (
-                            <>
-                              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                              {t("insightsTabs.restoring")}
-                            </>
-                          ) : (
-                            <>
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
-                                <path fillRule="evenodd" d="M7.793 2.232a.75.75 0 01-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 010 10.75H10.75a.75.75 0 010-1.5h2.875a3.875 3.875 0 000-7.75H3.622l4.146 3.957a.75.75 0 01-1.036 1.085l-5.5-5.25a.75.75 0 010-1.085l5.5-5.25a.75.75 0 011.061.025z" clipRule="evenodd" />
-                              </svg>
-                              {t("insightsTabs.restoreToActive")}
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    );
-                  })}
+                            {/* Left accent stripe */}
+                            <div
+                              className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${accentBar[item.severity] ?? "bg-zinc-500"}`}
+                              aria-hidden
+                            />
+
+                            {/* Impact % — top-right */}
+                            <span className={`absolute right-3 top-3 text-[11px] font-medium tabular-nums whitespace-nowrap ${impactColor[item.severity] ?? "text-zinc-400"}`}>
+                              {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
+                            </span>
+
+                            {/* Card body */}
+                            <div className="space-y-2.5 pb-3 pl-6 pr-14 pt-3">
+                              {/* Severity badge */}
+                              <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${severityBadge[item.severity] ?? ""}`}>
+                                {severityLabel[item.severity] ?? item.severity}
+                              </span>
+
+                              {/* Title */}
+                              <p className="text-sm font-semibold leading-snug text-white">{item.issueTitle}</p>
+
+                              {/* Description */}
+                              <p className="text-xs leading-relaxed text-zinc-400">{item.issueDescription}</p>
+
+                              {/* Metadata row — source pill + counter-attacked badge */}
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {/* Counter-attacked badge */}
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                                  <svg viewBox="0 0 20 20" fill="currentColor" className="size-3 shrink-0" aria-hidden>
+                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                                  </svg>
+                                  {t("insightsTabs.counterAttacked")}
+                                </span>
+
+                                {/* Source pill */}
+                                {sourceLabel && (
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${isCompetitorSource ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "bg-sky-500/10 border border-sky-500/20 text-sky-400"}`}>
+                                    {isCompetitorSource ? (
+                                      <svg viewBox="0 0 16 16" fill="currentColor" className="size-2.5 shrink-0" aria-hidden>
+                                        <path d="M8 1a5 5 0 100 10A5 5 0 008 1zM0 8a8 8 0 1116 0A8 8 0 010 8z"/>
+                                        <path d="M7 5.5a.5.5 0 011 0V8h1.5a.5.5 0 010 1H7.5A.5.5 0 017 8.5v-3z"/>
+                                      </svg>
+                                    ) : (
+                                      <svg viewBox="0 0 16 16" fill="currentColor" className="size-2.5 shrink-0" aria-hidden>
+                                        <path d="M8 8a3 3 0 100-6 3 3 0 000 6zm-5 6s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3z"/>
+                                      </svg>
+                                    )}
+                                    <span className="max-w-[90px] truncate">{sourceLabel}</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Restore CTA */}
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => revertToActive(item.id)}
+                                className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-800/80 border border-zinc-700 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-zinc-700/80 hover:text-sky-300 transition-colors disabled:opacity-50"
+                              >
+                                {isBusy ? (
+                                  <>
+                                    <Loader2 className="size-3 animate-spin shrink-0" aria-hidden />
+                                    {t("insightsTabs.restoring")}
+                                  </>
+                                ) : (
+                                  <>
+                                    <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5 shrink-0" aria-hidden>
+                                      <path fillRule="evenodd" d="M7.793 2.232a.75.75 0 01-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 010 10.75H10.75a.75.75 0 010-1.5h2.875a3.875 3.875 0 000-7.75H3.622l4.146 3.957a.75.75 0 01-1.036 1.085l-5.5-5.25a.75.75 0 010-1.085l5.5-5.25a.75.75 0 011.061.025z" clipRule="evenodd" />
+                                    </svg>
+                                    {t("insightsTabs.restoreToActive")}
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })()}
