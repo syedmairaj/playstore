@@ -1794,6 +1794,8 @@ export function ListingOptimizer({
     targetArabicOverride?: boolean;
     /** Internal: at most one automatic retry after `invalid_model_output` / 422. */
     _listingGenRetry?: boolean;
+    /** Internal: reuse the caller's toast ID so a second toast never spawns on retry. */
+    _toastId?: string | number;
   }) {
     if (!workspaceId) {
       setError(t("appContext.missingWorkspaceId"));
@@ -1815,7 +1817,9 @@ export function ListingOptimizer({
     ) {
       return;
     }
-    if (loading) return;
+    // Allow the internal retry to bypass the `loading` guard — it inherits the
+    // already-running loading state from the outer call.
+    if (loading && !opts._listingGenRetry) return;
     // Hard debounce: block re-entry even before React flushes the `loading` state update.
     if (isProcessingCredits && !opts._listingGenRetry) return;
     if (!opts._listingGenRetry) setIsProcessingCredits(true);
@@ -1841,12 +1845,13 @@ export function ListingOptimizer({
       setUpgradeOpen(true);
       return;
     }
-    const runToastId = toast.loading(
+    // Retry reuses the caller's toast so only one loading toast is ever visible.
+    const runToastId = opts._toastId ?? toast.loading(
       t("form.generateStarting", {
         credits: AI_CREDIT_COSTS.listing_generation,
       }),
     );
-    setLoading(true);
+    if (!opts._listingGenRetry) setLoading(true);
     try {
       // ── Competitor inversion directive ────────────────────────────────────
       // If the Exploit bridge injected competitor pain-points, prepend a
@@ -1919,6 +1924,7 @@ export function ListingOptimizer({
               opts.userInstruction,
             ),
             _listingGenRetry: true,
+            _toastId: runToastId,
           });
         } else {
           setError(json.error.message || t("form.networkError"));
@@ -1954,6 +1960,26 @@ export function ListingOptimizer({
       }
       if (freshFeatures && freshFeatures !== features.trim()) {
         setFeatures(freshFeatures);
+      }
+      // ── Atomic queue → archive transition ────────────────────────────────
+      // Snapshot which backlog items were in the queue at success time (before
+      // clearing), then fire-and-forget PATCH each one to is_implemented=true.
+      // This is atomic from the user's perspective: state clears in the same
+      // React batch as the success flags, and the DB writes are best-effort
+      // (the Reviews page re-fetches on mount so eventual consistency is fine).
+      const backlogIdsToArchive = queuedImprovements
+        .filter((item) => item.id.startsWith("backlog-"))
+        .map((item) => item.id.replace(/^backlog-/, ""));
+      if (workspaceId && backlogIdsToArchive.length > 0) {
+        // Fire individually — the PATCH endpoint handles one item at a time.
+        for (const realId of backlogIdsToArchive) {
+          void fetch(`/api/workspaces/${workspaceId}/backlog/${realId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_implemented: true }),
+            credentials: "same-origin",
+          }).catch(() => { /* best-effort — Reviews page re-fetches on mount */ });
+        }
       }
       // Clear the staging queue — provides clean confirmation state now that
       // the AI has consumed all queued improvements.
@@ -2031,9 +2057,13 @@ export function ListingOptimizer({
       toast.dismiss(runToastId);
       setError(t("form.networkError"));
     } finally {
-      setLoading(false);
-      // Always release the debounce lock so the user can retry after an error.
-      if (!opts._listingGenRetry) setIsProcessingCredits(false);
+      // Only the top-level call owns loading/isProcessingCredits lifecycle.
+      // The internal retry reuses the outer call's state and must NOT release
+      // them — the outer finally handles teardown once the await resolves.
+      if (!opts._listingGenRetry) {
+        setLoading(false);
+        setIsProcessingCredits(false);
+      }
     }
   }
 
@@ -2947,6 +2977,7 @@ export function ListingOptimizer({
                       <ActiveOptimizationQueuePanel
                         items={queuedImprovements}
                         loading={queuedImprovementsLoading}
+                        isGenerating={loading}
                         className="mb-0"
                         isRtl={isRtl}
                         credits={AI_CREDIT_COSTS.listing_generation}
@@ -2977,13 +3008,12 @@ export function ListingOptimizer({
                       </select>
                     </div>
 
-                    {error && !result ? (
+                    {error && !result && !loading ? (
                       <div
                         className="rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white/80"
                         role="alert"
                       >
-                        <p className="font-medium text-emerald-400">{t("form.refiningTitle")}</p>
-                        <p className="mt-1 text-xs leading-relaxed text-white/50">{t("form.refiningHint")}</p>
+                        <p className="font-medium text-red-400">{t("form.generateError")}</p>
                         <p className="mt-2 text-sm text-white/70">{error}</p>
                       </div>
                     ) : null}
@@ -3011,11 +3041,9 @@ export function ListingOptimizer({
                           })}
                         </p>
                       </div>
-                      {loading ? (
-                        <span className="self-center text-sm text-white/45 sm:self-center">
-                          {t("form.generatingHint")}
-                        </span>
-                      ) : null}
+                      {/* "This can take a few seconds" moved into the
+                          OptimizerResultsGeneratingView skeleton below so it
+                          appears in context rather than floating next to the button */}
                     </div>
                   </div>
                   {wizardStep === 2 ? (
