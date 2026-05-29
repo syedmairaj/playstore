@@ -10,7 +10,9 @@ import {
   normalizeListingGenerationParsed,
   rawListingHadAsoScoreKeys,
 } from "@/lib/gemini/normalize-listing-generation-parsed";
-import { buildListingOptimizerMessages } from "@/lib/prompts/listing-optimizer";
+import {
+  buildListingOptimizerMessages,
+} from "@/lib/prompts/listing-optimizer";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 import {
   listingGenerationCoreSchema,
@@ -19,10 +21,9 @@ import {
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
 
-// ── Structured-output schema ─────────────────────────────────────────────────
-// Mirrors listingGenerationOutputSchema + the optional ASO bundle.
-// Using responseSchema forces Gemini to emit valid JSON matching this shape,
-// eliminating "Model returned invalid JSON" transient failures entirely.
+// ── Structured-output schema ──────────────────────────────────────────────────
+// All keys are camelCase — matching the system prompt exactly (v5) so Gemini
+// never sees a contradiction between responseSchema and the text instructions.
 const LISTING_RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -43,6 +44,8 @@ const LISTING_RESPONSE_SCHEMA = {
       properties: {
         title: { type: SchemaType.INTEGER },
         shortDescription: { type: SchemaType.INTEGER },
+        // "longDescription" is the scoring-dimension name (0–40 pts),
+        // NOT a field alias. The top-level description field is "fullDescription".
         longDescription: { type: SchemaType.INTEGER },
         persuasiveness: { type: SchemaType.INTEGER },
       },
@@ -56,25 +59,41 @@ const LISTING_RESPONSE_SCHEMA = {
   required: ["title", "shortDescription", "fullDescription", "keywordSuggestions", "ctaSuggestions"],
 };
 
+// ── Server-side retry instruction ─────────────────────────────────────────────
+// Appended to the user message on the single automatic server-side retry.
+// Kept English-only (model instruction, not UI copy).
+const STRICT_RETRY_ADDENDUM =
+  "STRICT RETRY — previous attempt failed schema validation. You MUST return every required key: " +
+  "title (≤30 chars), shortDescription (≤74 chars), fullDescription (≤4000 chars), " +
+  "keywordSuggestions (8–20 strings), ctaSuggestions (3–8 strings), " +
+  "asoScore (integer 0–100 = sum of scoreBreakdown), " +
+  "scoreBreakdown.title (0–30) + shortDescription (0–20) + longDescription (0–40) + persuasiveness (0–10), " +
+  "improvementTips (2–8 strings). Return ONLY the JSON object — no prose, no markdown.";
+
 export type GenerateListingWithGeminiResult = {
   data: ListingGenerationOutput;
-  /** Model attempted ASO scoring but output failed validation; listing copy is still valid. */
+  /** True when ASO scoring was attempted but failed validation — copy is still valid. */
   asoScorePartial: boolean;
+  /** True when the first attempt failed and a server-side retry succeeded. */
+  retried: boolean;
 };
 
-export async function generateListingWithGemini(
+// ── Core generation (single attempt) ─────────────────────────────────────────
+async function attemptGeneration(
   input: ListingOptimizerInput,
+  isRetry: boolean,
 ): Promise<GenerateListingWithGeminiResult> {
   const apiKey = assertGeminiApiKey();
   const modelName = resolveGeminiModel();
 
-  const { system, user } = buildListingOptimizerMessages(input);
-  // generationConfig is passed inline on generateContent (not on the model
-  // constructor) — the same pattern used in generate-review-analysis.ts.
-  // Passing responseSchema on the model constructor via mergeGeminiGenerationConfig
-  // does NOT work with SDK ^0.21.0 because the constructor strips unknown keys
-  // before the request is built. It must be inline on generateContent.
+  const { system, user: baseUser } = buildListingOptimizerMessages(input);
+  // On retry: append the strict-format addendum to the user message so the
+  // model gets an explicit re-statement of every required field + constraint.
+  const user = isRetry ? `${baseUser}\n\n${STRICT_RETRY_ADDENDUM}` : baseUser;
+
   const genAI = new GoogleGenerativeAI(apiKey);
+  // generationConfig MUST be inline on generateContent, NOT on getGenerativeModel —
+  // SDK ^0.21.0 strips unknown keys from the constructor before the request is built.
   const model = genAI.getGenerativeModel({
     model: modelName,
     systemInstruction: system,
@@ -83,120 +102,91 @@ export async function generateListingWithGemini(
   const result = await model.generateContent({
     contents: [{ role: "user", parts: [{ text: user }] }],
     generationConfig: {
-      // responseSchema forces the model to emit JSON matching this shape exactly,
-      // eliminating transient "Model returned invalid JSON" / 422 failures.
       responseMimeType: "application/json",
       responseSchema: LISTING_RESPONSE_SCHEMA,
-      // Lower temperature for deterministic structured output — reduces inflated
-      // self-scoring and produces more consistent keyword/CTA lists. Creative copy
-      // quality is not meaningfully affected at 0.35 because the constraint lives
-      // in the content (displacement directives, tone), not the sampling entropy.
-      temperature: 0.35,
+      // 0.35 keeps copy creative while making structured fields (scores, arrays)
+      // deterministic. High temperature (0.7) caused inflated self-scores and
+      // inconsistent key counts that drove most schema-validation failures.
+      temperature: isRetry ? 0.2 : 0.35,
       topP: 0.95,
-      // 4096 tokens gives comfortable headroom for a full 4000-char long description
-      // (~1000 tokens) + title, short, 20 keywords, 8 CTAs, 8 tips, score breakdown
-      // (~600 tokens) without risking the truncation-recovery guard firing in prod.
-      // The previous 2540 limit was dangerously close to real-world output sizes.
+      // 4096 gives comfortable headroom: ~1000 tokens for 4000-char description +
+      // ~600 for remaining fields. Previous 2540 was dangerously close to real
+      // output sizes and triggered the truncation-recovery guard in production.
       maxOutputTokens: 4096,
     },
   });
 
   // ── Finish-reason guard ───────────────────────────────────────────────────
-  // The SDK's response.text() throws a generic Error (not InvalidModelOutputError)
-  // when finishReason is MAX_TOKENS, SAFETY, RECITATION, or OTHER. Inspect the
-  // candidate directly first so we can throw the right error type and trigger the
-  // 422 retry path rather than falling through to a 500.
+  // response.text() throws a generic Error when finishReason is MAX_TOKENS,
+  // SAFETY, etc. Inspect the candidate first so we throw InvalidModelOutputError
+  // (which triggers a credit refund + 422) rather than an unclassified 500.
   const candidate = result.response.candidates?.[0];
   const finishReason = candidate?.finishReason as string | undefined;
-  const isBlocked =
-    finishReason && finishReason !== "STOP" && finishReason !== "1";
+  const isBlocked = finishReason && finishReason !== "STOP" && finishReason !== "1";
 
-  // Always log in debug mode so you can see exactly what Gemini returned.
-  if (
-    process.env.DEBUG_GEMINI === "1" ||
-    process.env.NODE_ENV !== "production"
-  ) {
-    console.log("[listing-generate] finishReason:", finishReason ?? "unknown");
-    console.log(
-      "[listing-generate] raw candidate text:",
-      candidate?.content?.parts?.[0]?.text?.slice(0, 400) ?? "(empty)",
-    );
+  if (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1") {
+    console.log(`[listing-generate${isRetry ? "/retry" : ""}] finishReason:`, finishReason ?? "unknown");
+    console.log(`[listing-generate${isRetry ? "/retry" : ""}] raw preview:`, candidate?.content?.parts?.[0]?.text?.slice(0, 300) ?? "(empty)");
   }
 
   if (isBlocked) {
     throw new InvalidModelOutputError(
-      `Model response was blocked or truncated (finishReason: ${finishReason ?? "unknown"}). This is a transient Gemini issue — please try again.`,
-      undefined,
+      `Model response blocked (finishReason: ${finishReason ?? "unknown"}). Please try again.`,
     );
   }
 
-  // ── Extract raw text ──────────────────────────────────────────────────────
-  // response.text() can still throw even with STOP if parts is empty.
-  // Wrap it so the error becomes an InvalidModelOutputError (422) not a 500.
+  // ── Extract text ──────────────────────────────────────────────────────────
   let rawText: string;
   try {
     rawText = result.response.text();
   } catch (textErr) {
-    const msg = textErr instanceof Error ? textErr.message : String(textErr);
     throw new InvalidModelOutputError(
-      `Model returned an empty or unreadable response: ${msg}. Please try again.`,
-      undefined,
+      `Model returned empty/unreadable response: ${textErr instanceof Error ? textErr.message : String(textErr)}`,
     );
   }
 
-  // ── Truncation recovery guard ─────────────────────────────────────────────
-  // Even with responseSchema, a network timeout or TPM spike can truncate the
-  // output mid-object. Heal the three most common truncation patterns before
-  // hitting JSON.parse so a partial response doesn't throw an unrecoverable error.
+  // ── Truncation recovery ───────────────────────────────────────────────────
+  // Heals the most common truncation pattern (open braces > close braces) so
+  // a network-truncated response doesn't throw a hard JSON.parse error.
   let text = rawText?.trim() ?? "";
-  if (process.env.DEBUG_GEMINI === "1" || process.env.NODE_ENV !== "production") {
-    console.log("[listing-generate] raw text length:", text.length);
-    console.log("[listing-generate] raw text preview:", text.slice(0, 500));
-  }
   if (text.startsWith("{") && !text.endsWith("}")) {
-    // Trailing comma after last key → strip it
     text = text.replace(/,\s*$/, "");
-    // Count braces — append closing braces if needed
     const opens = (text.match(/\{/g) ?? []).length;
     const closes = (text.match(/\}/g) ?? []).length;
     text += "}".repeat(Math.max(0, opens - closes));
   }
 
+  // ── Parse ─────────────────────────────────────────────────────────────────
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    throw new InvalidModelOutputError(
-      "Model returned invalid JSON. This is a transient Gemini issue — please try again.",
-      undefined,
-    );
+    throw new InvalidModelOutputError("Model returned malformed JSON. Please try again.");
   }
 
+  // ── Normalize + clamp ─────────────────────────────────────────────────────
+  // normalizeListingGenerationParsed handles snake_case legacy keys and the
+  // longDescription→fullDescription alias. clampListingGenerationParsed enforces
+  // Play Store hard limits before Zod validation so minor overruns don't fail.
   const normalized = normalizeListingGenerationParsed(parsed);
   const clamped = clampListingGenerationParsed(normalized);
 
-  if (process.env.DEBUG_GEMINI === "1" || process.env.NODE_ENV !== "production") {
-    const rec = clamped as Record<string, unknown>;
-    console.log("[listing-generate] parsed keys:", Object.keys(rec));
-    console.log("[listing-generate] title:", rec.title);
-    console.log("[listing-generate] shortDescription len:", typeof rec.shortDescription === "string" ? rec.shortDescription.length : "N/A");
-    console.log("[listing-generate] fullDescription len:", typeof rec.fullDescription === "string" ? rec.fullDescription.length : "N/A");
-    console.log("[listing-generate] keywordSuggestions count:", Array.isArray(rec.keywordSuggestions) ? rec.keywordSuggestions.length : "N/A");
-    console.log("[listing-generate] asoScore:", rec.asoScore);
-    console.log("[listing-generate] scoreBreakdown:", JSON.stringify(rec.scoreBreakdown));
-  }
-
+  // ── Core validation ───────────────────────────────────────────────────────
   const coreResult = listingGenerationCoreSchema.safeParse(clamped);
   if (!coreResult.success) {
-    if (process.env.DEBUG_GEMINI === "1" || process.env.NODE_ENV !== "production") {
-      console.error("[listing-generate] coreSchema failure:", JSON.stringify(coreResult.error.flatten(), null, 2));
+    if (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1") {
+      console.error(
+        `[listing-generate${isRetry ? "/retry" : ""}] coreSchema failure:`,
+        JSON.stringify(coreResult.error.flatten(), null, 2),
+      );
     }
     throw new InvalidModelOutputError(
-      "The model returned listing data that could not be validated after applying Play Store length limits. Try Regenerate.",
+      "Model output failed Play Store schema validation. Please try again.",
       coreResult.error,
     );
   }
 
+  // ── ASO bundle (optional) ─────────────────────────────────────────────────
   const clampedRecord =
     typeof clamped === "object" && clamped !== null && !Array.isArray(clamped)
       ? (clamped as Record<string, unknown>)
@@ -218,12 +208,48 @@ export async function generateListingWithGemini(
     data = { ...data, asoScoreDegraded: true };
   }
 
+  // ── Final validation ──────────────────────────────────────────────────────
   const final = listingGenerationOutputSchema.safeParse(data);
   if (!final.success) {
     throw new InvalidModelOutputError(
-      "The model returned listing data that could not be validated after applying Play Store length limits. Try Regenerate.",
+      "Model output failed final schema validation. Please try again.",
       final.error,
     );
   }
-  return { data: final.data, asoScorePartial };
+
+  return { data: final.data, asoScorePartial, retried: isRetry };
+}
+
+// ── Public entry point — with one automatic server-side retry ────────────────
+/**
+ * Calls Gemini to generate a full Play Store listing.
+ *
+ * If the first attempt fails schema validation (InvalidModelOutputError), a
+ * second attempt is made automatically on the server — same HTTP request, no
+ * extra credit charge, no client-visible toast. Only a persistent second failure
+ * surfaces as a 422 to the client.
+ *
+ * This replaces the previous client-side retry in ListingOptimizer.tsx which
+ * caused: (a) two credit deductions, (b) idempotency-lock conflicts, (c) stale
+ * "retrying" toasts appearing alongside the success confirmation.
+ */
+export async function generateListingWithGemini(
+  input: ListingOptimizerInput,
+): Promise<GenerateListingWithGeminiResult> {
+  try {
+    return await attemptGeneration(input, false);
+  } catch (firstErr) {
+    // Only retry on schema/parse failures — not on auth errors, blocked safety
+    // responses, or network errors (those are permanent for this request).
+    if (!(firstErr instanceof InvalidModelOutputError)) {
+      throw firstErr;
+    }
+    if (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1") {
+      console.warn("[listing-generate] first attempt failed, retrying once:", firstErr.message);
+    }
+    // Second attempt: lower temperature (0.2) + strict-format addendum.
+    // If this also fails, the InvalidModelOutputError propagates to the API
+    // route which refunds credits and returns 422 to the client.
+    return await attemptGeneration(input, true);
+  }
 }

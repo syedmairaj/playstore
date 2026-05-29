@@ -90,6 +90,8 @@ type ApiSuccess = {
     savedAt?: string;
     /** Server could not validate ASO scoring; listing fields are still valid. */
     asoScorePartial?: boolean;
+    /** Server performed an automatic retry — first attempt failed schema validation. */
+    retried?: boolean;
   };
 };
 
@@ -122,18 +124,6 @@ type AutofillApiSuccess = {
     savedAt?: string;
   };
 };
-
-/** Appended on one automatic retry when the API returns invalid model output (422). */
-const LISTING_GENERATE_STRICT_RETRY_INSTRUCTION =
-  "CRITICAL — Google Play HARD limits (count every character, including spaces): title ≤30, shortDescription ≤80 (never 81+), longDescription or fullDescription for the long body ≤4000. You MUST return valid ASO scoring: integer aso_score (0–100), score_breakdown with integers title (0–30), shortDescription (0–20), longDescription (0–40), persuasiveness (0–10) that sum to aso_score, and improvement_tips (array of at least 2 strings). Return only valid JSON with all required keys.";
-
-function mergeListingGenerateRetryInstruction(existing?: string): string {
-  const trimmed = existing?.trim();
-  if (trimmed) {
-    return `${LISTING_GENERATE_STRICT_RETRY_INSTRUCTION}\n\n${trimmed}`;
-  }
-  return LISTING_GENERATE_STRICT_RETRY_INSTRUCTION;
-}
 
 /** English instructions for Gemini (stable regardless of UI locale). */
 const REGENERATE_MODEL_INSTRUCTIONS = {
@@ -1792,10 +1782,6 @@ export function ListingOptimizer({
     mode: "fresh" | "regenerate";
     userInstruction?: string;
     targetArabicOverride?: boolean;
-    /** Internal: at most one automatic retry after `invalid_model_output` / 422. */
-    _listingGenRetry?: boolean;
-    /** Internal: reuse the caller's toast ID so a second toast never spawns on retry. */
-    _toastId?: string | number;
   }) {
     if (!workspaceId) {
       setError(t("appContext.missingWorkspaceId"));
@@ -1817,12 +1803,10 @@ export function ListingOptimizer({
     ) {
       return;
     }
-    // Allow the internal retry to bypass the `loading` guard — it inherits the
-    // already-running loading state from the outer call.
-    if (loading && !opts._listingGenRetry) return;
+    if (loading) return;
     // Hard debounce: block re-entry even before React flushes the `loading` state update.
-    if (isProcessingCredits && !opts._listingGenRetry) return;
-    if (!opts._listingGenRetry) setIsProcessingCredits(true);
+    if (isProcessingCredits) return;
+    setIsProcessingCredits(true);
 
     setError(null);
     if (opts.mode === "fresh") {
@@ -1843,15 +1827,15 @@ export function ListingOptimizer({
         })}${t("form.creditsSuffix")}`,
       });
       setUpgradeOpen(true);
+      setIsProcessingCredits(false);
       return;
     }
-    // Retry reuses the caller's toast so only one loading toast is ever visible.
-    const runToastId = opts._toastId ?? toast.loading(
+    const runToastId = toast.loading(
       t("form.generateStarting", {
         credits: AI_CREDIT_COSTS.listing_generation,
       }),
     );
-    if (!opts._listingGenRetry) setLoading(true);
+    setLoading(true);
     try {
       // ── Competitor inversion directive ────────────────────────────────────
       // If the Exploit bridge injected competitor pain-points, prepend a
@@ -1912,33 +1896,13 @@ export function ListingOptimizer({
           if (typeof rem === "number") {
             setAiCreditsRemaining(rem);
           }
-        } else if (
-          (json.error.code === "invalid_model_output" ||
-            res.status === 422) &&
-          !opts._listingGenRetry
-        ) {
-          toast.message(t("form.invalidModelOutputRegenerating"));
-          await runListingGeneration({
-            ...opts,
-            userInstruction: mergeListingGenerateRetryInstruction(
-              opts.userInstruction,
-            ),
-            _listingGenRetry: true,
-            _toastId: runToastId,
-          });
         } else {
           setError(json.error.message || t("form.networkError"));
         }
         return;
       }
       const d = json.data;
-      // ── Explicit error clear-down on every successful payload delivery ──────
-      // Wipes any stale error string (e.g. a previous duplicate_request 429,
-      // refining notice, or network warning) that may have accumulated before
-      // this generation succeeded — including on the automatic retry path where
-      // the top-of-function setError(null) guard was bypassed.
       setError(null);
-      // ─────────────────────────────────────────────────────────────────────────
       suppressListingHydrationRef.current = false;
       setPurgedAwaitingGenerate(false);
       setResult(d);
@@ -2057,13 +2021,8 @@ export function ListingOptimizer({
       toast.dismiss(runToastId);
       setError(t("form.networkError"));
     } finally {
-      // Only the top-level call owns loading/isProcessingCredits lifecycle.
-      // The internal retry reuses the outer call's state and must NOT release
-      // them — the outer finally handles teardown once the await resolves.
-      if (!opts._listingGenRetry) {
-        setLoading(false);
-        setIsProcessingCredits(false);
-      }
+      setLoading(false);
+      setIsProcessingCredits(false);
     }
   }
 
