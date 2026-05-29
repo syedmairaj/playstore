@@ -1,27 +1,52 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v6";
+const PROMPT_VERSION = "listing-optimizer-v7";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
 }
 
-// ── Tone psychology — behaviourally differentiated (v6) ───────────────────────
-// Each entry is a precise behavioural brief, not just an adjective.
-// The model is instructed to apply the psychology throughout ALL fields.
+// ── Tone psychology — behaviourally differentiated (v7) ───────────────────────
+// Each entry has two parts:
+//   COPY: how to write the title, descriptions, CTAs, and improvement tips.
+//   KEYWORDS: the vocabulary register to use when selecting keywordSuggestions.
+// Both parts are applied throughout ALL fields.
+// Keeping copy tone and keyword vocabulary aligned means Professional users
+// and Friendly users reach the app through different search intents — the two
+// tones create distinct "search nets" rather than competing for the same queries.
 const TONE_BRIEF: Record<ToneStyle, string> = {
   professional:
-    "Professional / Data-authoritative: Use precise metrics, clinical language, and factual benefit statements. " +
-    "Lead with measurable outcomes (e.g. 'tracks 50+ nutrients'). Avoid hyperbole. Trust is built through specificity.",
+    "Professional / Data-authoritative — COPY: Use precise metrics, clinical language, and factual benefit statements. " +
+    "Lead with measurable outcomes (e.g. 'tracks 50+ nutrients'). Avoid hyperbole. Trust is built through specificity. " +
+    "KEYWORDS: Choose high-authority, data-specific vocabulary. Favour clinical and technical search terms " +
+    "(e.g. 'sodium intake monitor', 'nutrient tracking app', 'dietary compliance tool'). " +
+    "Your [competitive] keywords should reflect what a health professional or data-driven user types. " +
+    "Your [intent] keywords should reflect goal-oriented, outcome-specific queries. " +
+    "Your [gap] keywords should expose clinical shortcomings of rival apps.",
   friendly:
-    "Friendly / Habit-empathetic: Write in second-person ('you'), use warm inclusive language, and frame features as " +
-    "daily habit wins. Celebrate small progress. Avoid intimidating numbers — make the app feel like a supportive companion.",
+    "Friendly / Habit-empathetic — COPY: Write in second-person ('you'), use warm inclusive language, and frame features as " +
+    "daily habit wins. Celebrate small progress. Avoid intimidating numbers — make the app feel like a supportive companion. " +
+    "KEYWORDS: Choose lifestyle, habit-building, and supportive-intent vocabulary. Favour conversational search terms " +
+    "(e.g. 'easy salt tracker', 'healthy eating habits app', 'daily wellness tracker'). " +
+    "Your [competitive] keywords should reflect what a motivation-seeking everyday user types. " +
+    "Your [intent] keywords should reflect journey-based, emotional, or habit-forming queries. " +
+    "Your [gap] keywords should highlight the frustration or complexity users feel with rival apps.",
   bold:
-    "Bold / Result-driven: Use imperative verbs, short punchy sentences, and power words (Crush, Master, Dominate, Zero). " +
-    "Every sentence must earn its place — cut anything that doesn't push urgency or outcome. High energy throughout.",
+    "Bold / Result-driven — COPY: Use imperative verbs, short punchy sentences, and power words (Crush, Master, Dominate, Zero). " +
+    "Every sentence must earn its place — cut anything that doesn't push urgency or outcome. High energy throughout. " +
+    "KEYWORDS: Choose action-oriented, outcome-specific vocabulary. Favour transformation and achievement terms " +
+    "(e.g. 'crush your diet goals', 'master calorie tracking', 'dominate your nutrition'). " +
+    "Your [competitive] keywords should reflect ambitious, result-focused search queries. " +
+    "Your [intent] keywords should reflect urgency and performance (e.g. 'lose weight fast tracker'). " +
+    "Your [gap] keywords should name the failure state competitors leave users in.",
   minimal:
-    "Minimal / Feature-first: Zero fluff. State each feature once, precisely. No exclamation marks, no filler adjectives. " +
-    "Bullet points preferred over prose. If a word can be cut without losing meaning, cut it.",
+    "Minimal / Feature-first — COPY: Zero fluff. State each feature once, precisely. No exclamation marks, no filler adjectives. " +
+    "Bullet points preferred over prose. If a word can be cut without losing meaning, cut it. " +
+    "KEYWORDS: Choose precise, function-specific vocabulary with no marketing language. Favour direct feature terms " +
+    "(e.g. 'food log app', 'macro tracker', 'barcode nutrition scanner'). " +
+    "Your [competitive] keywords should be exact-match functional queries. " +
+    "Your [intent] keywords should describe a specific task a user wants to complete. " +
+    "Your [gap] keywords should name a specific missing feature users complain about in rivals.",
 };
 
 // ── Prompt token-budget constants ─────────────────────────────────────────────
@@ -112,7 +137,12 @@ function buildSystemMessage(targetArabic: boolean): string {
       "Include: 8 high-volume competitive keywords marked [competitive], " +
       "7 long-tail intent-based keywords that match what a user with the target pain point would search marked [intent], " +
       "5 competitor-gap keywords (terms users search when unhappy with top competitors) marked [gap]. " +
-      "Example: '[competitive] calorie tracker', '[intent] track food without ads', '[gap] myfitnesspal alternative free'.",
+      "CRITICAL — Tone-differentiated vocabulary: the TONE PSYCHOLOGY block in the user message defines the exact " +
+      "vocabulary register you must use for keywords. Professional tone = clinical/data vocabulary. " +
+      "Friendly tone = lifestyle/habit vocabulary. Bold tone = action/outcome vocabulary. Minimal tone = feature-precise vocabulary. " +
+      "The keyword list must read as if written by the same person who wrote the copy — never mix registers. " +
+      "Example professional: '[competitive] sodium intake monitor', '[intent] clinical nutrition tracker app'. " +
+      "Example friendly: '[competitive] easy salt tracker', '[intent] daily healthy habit app'.",
     "  ctaSuggestions: array of 4-8 items. The FIRST item must be a 'visibility_rationale' string starting with " +
       "'WHY THIS RANKS: ' — explain in 1-2 sentences exactly why the chosen title keyword + displacement angle " +
       "will push this app toward first-page results for the target audience. " +
@@ -205,7 +235,7 @@ function buildUserMessage(
     "1. title: ≤30 chars? Includes primary keyword? Tone-consistent?",
     "2. shortDescription: ≤74 chars? (count manually) Single hook? Answers 'why install NOW'?",
     "3. fullDescription: Hook → Features (bullets+emojis) → CTA? ≤4000 chars? Pain point addressed in first 2 sentences?",
-    "4. keywordSuggestions: exactly 20 items? 8 [competitive] + 7 [intent] + 5 [gap]? Each prefixed with category tag?",
+    "4. keywordSuggestions: exactly 20 items? 8 [competitive] + 7 [intent] + 5 [gap]? Each prefixed with category tag? Vocabulary matches the tone register (clinical vs lifestyle vs action vs feature-precise)?",
     "5. ctaSuggestions[0]: starts with 'WHY THIS RANKS: '?",
     "6. asoScore = sum of scoreBreakdown values?",
     "Now output the single JSON object.",
@@ -216,16 +246,24 @@ function buildUserMessage(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 /**
- * Builds system + user messages for the Gemini listing generation call (v6).
+ * Builds system + user messages for the Gemini listing generation call (v7).
  *
- * v6 improvements over v5:
- * - Lead ASO Strategist role with explicit First-Page Visibility framing
- * - Behaviourally differentiated tone psychology (not just adjectives)
- * - keywordSuggestions now requires exactly 20 categorised phrases:
- *     8 [competitive] + 7 [intent] + 5 [gap]
- * - ctaSuggestions[0] is a mandatory visibility_rationale ("WHY THIS RANKS:")
- * - fullDescription structure enforced: Hook → Features → CTA
- * - Safe-Passage Strategy for displacement campaigns (USP against ad-heavy/buggy rivals)
+ * v7 improvements over v6:
+ * - TONE_BRIEF now has two explicit parts per tone: COPY psychology + KEYWORD vocabulary register.
+ *   Professional = clinical/data keywords. Friendly = lifestyle/habit keywords.
+ *   Bold = action/outcome keywords. Minimal = feature-precise keywords.
+ *   This prevents the model generating identical keyword lists across tones, creating
+ *   genuinely distinct "search nets" for each audience segment.
+ * - keywordSuggestions system instruction now explicitly references tone-differentiated
+ *   vocabulary with concrete examples per tone.
+ * - Final checklist reinforces vocabulary-register check for keywords.
+ *
+ * v6 foundation (unchanged):
+ * - Lead ASO Strategist role with First-Page Visibility framing
+ * - keywordSuggestions: exactly 20 categorised phrases (8 [competitive] + 7 [intent] + 5 [gap])
+ * - ctaSuggestions[0] = mandatory "WHY THIS RANKS:" visibility rationale
+ * - fullDescription structure: Hook → Features (bullets+emojis) → CTA
+ * - Safe-Passage displacement strategy for pain-point campaigns
  * - Final checklist in user message to reduce schema failures
  */
 export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
