@@ -1202,9 +1202,11 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   // ── Revert item back to active (history → active) ────────────────────────
   //
   // On success:
-  //   1. isImplemented → false   (item reappears in active backlog queue)
-  //   2. excludeTitles shrinks   (IssueCard with matching title reappears in Active Insights)
-  //   3. improvementIds cleaned  (IssueCard resets to AVAILABLE so user can re-add if needed)
+  //   1. isImplemented → false   (item moves from History Archive back to active queue)
+  //   2. Title stays in archivedTitles (all backlogItems titles are excluded from
+  //      Active Insights — the card does NOT reappear; it lives in the queue)
+  //   3. improvementIds cleaned  (IssueCard resets to AVAILABLE in case the item
+  //      is later fully deleted from the backlog and reappears in Active Insights)
   const revertToActive = useCallback(async (itemId: string) => {
     setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
     try {
@@ -1500,14 +1502,18 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   );
 
   /**
-   * Set of issue titles that have been archived (isImplemented=true).
-   * Passed to CommonIssuesPanel as excludeTitles so IssueCards whose title
-   * matches an archived item are hidden from Active Insights — no duplicates.
-   * When the user restores an item (isImplemented→false) the title drops from
-   * this set and the IssueCard reappears automatically.
+   * Set of issue titles that should be hidden from Active Insights.
+   * Covers BOTH:
+   *   - Staged (isImplemented=false): already in the queue — user is handling it
+   *   - Archived (isImplemented=true): already implemented — lives in History Archive
+   *
+   * This means once a user adds an issue to the queue it disappears from Active
+   * Insights immediately (no duplicate). Restoring from archive re-adds it to the
+   * queue (isImplemented=false) but keeps it hidden until explicitly removed from
+   * the backlog entirely.
    */
   const archivedTitles = useMemo(
-    () => new Set(backlogItems.filter((i) => i.isImplemented).map((i) => i.issueTitle)),
+    () => new Set(backlogItems.map((i) => i.issueTitle)),
     [backlogItems],
   );
 
