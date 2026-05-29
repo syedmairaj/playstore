@@ -5,7 +5,10 @@ export const listingGenerationCoreSchema = z.object({
   shortDescription: z.string().min(1).max(80),
   fullDescription: z.string().min(1).max(4000),
   keywordSuggestions: z.array(z.string().min(1).max(80)).min(3).max(30),
-  ctaSuggestions: z.array(z.string().min(1).max(200)).min(2).max(12),
+  // ctaSuggestions[0] is a "WHY THIS RANKS:" visibility rationale (v6 prompt)
+  // which can be 200–400 chars. Raise the per-item cap to 500 so it never
+  // causes a schema validation failure on a fully valid generation.
+  ctaSuggestions: z.array(z.string().min(1).max(500)).min(2).max(12),
 });
 
 export type ListingGenerationCore = z.infer<typeof listingGenerationCoreSchema>;

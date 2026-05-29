@@ -4,6 +4,9 @@ import { shouldLogGeminiDebug } from "@/lib/gemini/log-gemini-env";
 export const LISTING_GEN_TITLE_MAX = 30;
 export const LISTING_GEN_SHORT_MAX = 80;
 export const LISTING_GEN_LONG_MAX = 4000;
+// ctaSuggestions[0] is the "WHY THIS RANKS:" rationale (v6 prompt) — allow
+// up to 500 chars to match the Zod schema cap.
+export const LISTING_GEN_CTA_ITEM_MAX = 500;
 
 const ELLIPSIS = "\u2026";
 
@@ -100,6 +103,15 @@ export function clampListingGenerationParsed(parsed: unknown): unknown {
     o.fullDescription = r.text;
     longClamped = r.clamped;
     longOrigLen = r.originalLen;
+  }
+  // Clamp individual ctaSuggestions items — ctaSuggestions[0] is the
+  // "WHY THIS RANKS:" rationale which can exceed the old 200-char limit.
+  if (Array.isArray(o.ctaSuggestions)) {
+    o.ctaSuggestions = (o.ctaSuggestions as unknown[]).map((item) =>
+      typeof item === "string" && item.length > LISTING_GEN_CTA_ITEM_MAX
+        ? item.slice(0, LISTING_GEN_CTA_ITEM_MAX)
+        : item,
+    );
   }
 
   if (
