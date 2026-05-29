@@ -1,52 +1,90 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v7";
+const PROMPT_VERSION = "listing-optimizer-v7.1";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
 }
 
-// ── Tone psychology — behaviourally differentiated (v7) ───────────────────────
-// Each entry has two parts:
+// ── Tone psychology — behaviourally differentiated (v7.1) ────────────────────
+// Each entry has THREE parts:
 //   COPY: how to write the title, descriptions, CTAs, and improvement tips.
-//   KEYWORDS: the vocabulary register to use when selecting keywordSuggestions.
-// Both parts are applied throughout ALL fields.
-// Keeping copy tone and keyword vocabulary aligned means Professional users
-// and Friendly users reach the app through different search intents — the two
-// tones create distinct "search nets" rather than competing for the same queries.
+//   BULLETS: how each feature bullet in fullDescription must be structured per tone.
+//   KEYWORDS: the vocabulary register for all three keyword categories.
+//
+// v7.1 additions over v7:
+//   - BULLET instruction added per tone — forces rewrite of feature bullets,
+//     not just hook/CTA (fixes near-identical bullets across tones).
+//   - [gap] keyword framing now tone-specific:
+//       professional = clinical/data reliability complaint
+//       friendly     = frustrated everyday user's venting search
+//       bold         = lost-results / wasted-momentum anger
+//       minimal      = specific functional failure description
+//   - Arabic instruction now carries full tone + vocabulary differentiation.
 const TONE_BRIEF: Record<ToneStyle, string> = {
   professional:
-    "Professional / Data-authoritative — COPY: Use precise metrics, clinical language, and factual benefit statements. " +
+    "Professional / Data-authoritative — " +
+    "COPY: Use precise metrics, clinical language, and factual benefit statements. " +
     "Lead with measurable outcomes (e.g. 'tracks 50+ nutrients'). Avoid hyperbole. Trust is built through specificity. " +
-    "KEYWORDS: Choose high-authority, data-specific vocabulary. Favour clinical and technical search terms " +
-    "(e.g. 'sodium intake monitor', 'nutrient tracking app', 'dietary compliance tool'). " +
-    "Your [competitive] keywords should reflect what a health professional or data-driven user types. " +
-    "Your [intent] keywords should reflect goal-oriented, outcome-specific queries. " +
-    "Your [gap] keywords should expose clinical shortcomings of rival apps.",
+    "Every feature bullet MUST lead with the measurable outcome or clinical benefit first, then the feature. " +
+    "Example bullet: '📊 Validated nutrient data: 1M+ verified entries ensure clinical-grade accuracy for every meal logged.' " +
+    "KEYWORDS: Choose high-authority, data-specific vocabulary. Favour clinical and technical search terms. " +
+    "Your [competitive] keywords reflect what a health professional or data-driven user types " +
+    "(e.g. 'sodium intake monitor', 'dietary compliance tool', 'clinical nutrition tracker'). " +
+    "Your [intent] keywords reflect goal-oriented, outcome-specific queries " +
+    "(e.g. 'track daily sodium for blood pressure', 'accurate macro logging app'). " +
+    "Your [gap] keywords frame the competitor shortcoming as a clinical or data reliability failure — " +
+    "write them as a frustrated professional would search: what does an unreliable app fail to provide? " +
+    "(e.g. 'unreliable nutrition data app', 'inaccurate calorie tracker alternative', 'food tracker with verified data'). " +
+    "Gap keywords must sound like a clinician or data-driven user's complaint, NOT a generic frustrated user.",
+
   friendly:
-    "Friendly / Habit-empathetic — COPY: Write in second-person ('you'), use warm inclusive language, and frame features as " +
-    "daily habit wins. Celebrate small progress. Avoid intimidating numbers — make the app feel like a supportive companion. " +
-    "KEYWORDS: Choose lifestyle, habit-building, and supportive-intent vocabulary. Favour conversational search terms " +
+    "Friendly / Habit-empathetic — " +
+    "COPY: Write in second-person ('you'), use warm inclusive language, and frame features as daily habit wins. " +
+    "Celebrate small progress. Avoid intimidating numbers — make the app feel like a supportive companion. " +
+    "Every feature bullet MUST start with 'you' or frame the feature as a personal daily win the user will feel. " +
+    "Example bullet: '📅 Your daily log, made easy: just tap what you ate and let Salt Sugar do the rest — no stress, just progress.' " +
+    "KEYWORDS: Choose lifestyle, habit-building, and supportive-intent vocabulary. Favour conversational search terms. " +
+    "Your [competitive] keywords reflect what a motivation-seeking everyday user types " +
     "(e.g. 'easy salt tracker', 'healthy eating habits app', 'daily wellness tracker'). " +
-    "Your [competitive] keywords should reflect what a motivation-seeking everyday user types. " +
-    "Your [intent] keywords should reflect journey-based, emotional, or habit-forming queries. " +
-    "Your [gap] keywords should highlight the frustration or complexity users feel with rival apps.",
+    "Your [intent] keywords reflect journey-based, emotional, or habit-forming queries " +
+    "(e.g. 'how to start eating healthier every day', 'simple app to build better habits'). " +
+    "Your [gap] keywords frame the competitor shortcoming as a frustrating everyday experience — " +
+    "write them as a discouraged everyday user would vent or search after giving up on a rival app: " +
+    "(e.g. 'app keeps crashing fix', 'health app too complicated', 'simple food tracker that actually works'). " +
+    "Gap keywords must sound like a real person's frustrated search, NOT a clinical or technical complaint.",
+
   bold:
-    "Bold / Result-driven — COPY: Use imperative verbs, short punchy sentences, and power words (Crush, Master, Dominate, Zero). " +
+    "Bold / Result-driven — " +
+    "COPY: Use imperative verbs, short punchy sentences, and power words (Crush, Master, Dominate, Zero). " +
     "Every sentence must earn its place — cut anything that doesn't push urgency or outcome. High energy throughout. " +
-    "KEYWORDS: Choose action-oriented, outcome-specific vocabulary. Favour transformation and achievement terms " +
-    "(e.g. 'crush your diet goals', 'master calorie tracking', 'dominate your nutrition'). " +
-    "Your [competitive] keywords should reflect ambitious, result-focused search queries. " +
-    "Your [intent] keywords should reflect urgency and performance (e.g. 'lose weight fast tracker'). " +
-    "Your [gap] keywords should name the failure state competitors leave users in.",
+    "Every feature bullet MUST open with an action verb and a power word, then the payoff. " +
+    "Example bullet: '🎯 Crush your goals: set aggressive sodium and sugar targets and watch your numbers drop — fast.' " +
+    "KEYWORDS: Choose action-oriented, outcome-specific vocabulary. Favour transformation and achievement terms. " +
+    "Your [competitive] keywords reflect ambitious, result-focused search queries " +
+    "(e.g. 'crush your diet goals app', 'master calorie tracking', 'dominate your nutrition'). " +
+    "Your [intent] keywords reflect urgency and performance " +
+    "(e.g. 'lose weight fast tracking app', 'stop sugar spikes now'). " +
+    "Your [gap] keywords name the failure state and lost results competitors leave users in — " +
+    "write them as someone who got burned and is now searching for an alternative: " +
+    "(e.g. 'food tracker that doesnt crash results', 'stop wasting progress unreliable app', 'nutrition app that actually delivers'). " +
+    "Gap keywords must convey lost momentum and a demand for a better outcome.",
+
   minimal:
-    "Minimal / Feature-first — COPY: Zero fluff. State each feature once, precisely. No exclamation marks, no filler adjectives. " +
-    "Bullet points preferred over prose. If a word can be cut without losing meaning, cut it. " +
-    "KEYWORDS: Choose precise, function-specific vocabulary with no marketing language. Favour direct feature terms " +
+    "Minimal / Feature-first — " +
+    "COPY: Zero fluff. State each feature once, precisely. No exclamation marks, no filler adjectives. " +
+    "If a word can be cut without losing meaning, cut it. " +
+    "Every feature bullet MUST be one feature + one stated benefit, nothing more. No enthusiasm, no padding. " +
+    "Example bullet: '📊 Intake dashboard: sodium and glucose at a glance, updated on every log.' " +
+    "KEYWORDS: Choose precise, function-specific vocabulary with no marketing language. Favour direct feature terms. " +
+    "Your [competitive] keywords are exact-match functional queries " +
     "(e.g. 'food log app', 'macro tracker', 'barcode nutrition scanner'). " +
-    "Your [competitive] keywords should be exact-match functional queries. " +
-    "Your [intent] keywords should describe a specific task a user wants to complete. " +
-    "Your [gap] keywords should name a specific missing feature users complain about in rivals.",
+    "Your [intent] keywords describe a specific task a user wants to complete " +
+    "(e.g. 'log sodium intake daily', 'scan barcode food nutrition'). " +
+    "Your [gap] keywords name a specific functional failure users report in rival apps — " +
+    "write them as a task-oriented user describing what broke: " +
+    "(e.g. 'food tracker crash fix', 'nutrition app sync error', 'barcode scanner not working app'). " +
+    "Gap keywords must be specific and functional, not emotional or vague.",
 };
 
 // ── Prompt token-budget constants ─────────────────────────────────────────────
@@ -128,10 +166,17 @@ function buildSystemMessage(targetArabic: boolean): string {
     "  title: string — primary keyword + strongest USP hook, ≤30 chars.",
     "  shortDescription: string — one sharp benefit statement, ≤74 chars. Must answer 'why install NOW'.",
     "  fullDescription: string — ≤4000 chars. Structure MUST follow:",
-    "    • Hook paragraph (1-2 sentences): address the primary pain point directly.",
-    "    • Key Features section: 5-8 bullet points with emojis. Each bullet = one feature + one concrete benefit.",
+    "    • Hook paragraph (1-2 sentences): address the primary pain point directly. Tone-consistent.",
+    "    • Key Features section: 5-8 bullet points with emojis. Each bullet = one feature + one concrete benefit. " +
+      "CRITICAL: Every single bullet MUST be written in the active tone register defined in TONE PSYCHOLOGY. " +
+      "Do NOT write generic bullets and reuse them across tones. " +
+      "Professional bullets lead with the metric or clinical outcome. " +
+      "Friendly bullets lead with 'you' and the personal habit win. " +
+      "Bold bullets lead with an action verb and a power outcome. " +
+      "Minimal bullets state the feature then the benefit, nothing else. " +
+      "If all your bullets read the same regardless of tone, you have failed this rule — rewrite them.",
     "    • Social proof line (if supported by features): e.g. '4.8★ rated by 50,000+ users'.",
-    "    • Call to Action: 1-2 sentences. Imperative. Outcome-focused.",
+    "    • Call to Action: 1-2 sentences. Imperative. Outcome-focused. Tone-consistent.",
     "  keywordSuggestions: array of exactly 20 keyword phrases for ASO. Format EACH as " +
       "'[category] keyword' where category is one of: [competitive], [intent], or [gap]. " +
       "Include: 8 high-volume competitive keywords marked [competitive], " +
@@ -165,7 +210,14 @@ function buildSystemMessage(targetArabic: boolean): string {
     targetArabic
       ? "LANGUAGE: All user-visible string values (title, shortDescription, fullDescription, keywordSuggestions, " +
         "ctaSuggestions, improvementTips) must be natural modern Arabic (MSA/Gulf mix suitable for MENA users). " +
-        "Keyword category tags [competitive], [intent], [gap] stay in English as prefixes. Numeric scores stay as numbers."
+        "Keyword category tags [competitive], [intent], [gap] stay in English as prefixes. Numeric scores stay as numbers. " +
+        "CRITICAL — tone and vocabulary differentiation applies equally in Arabic: " +
+        "Professional Arabic uses formal clinical register (e.g. 'مراقب استهلاك الصوديوم', 'أداة الامتثال الغذائي'). " +
+        "Friendly Arabic uses warm conversational register (e.g. 'تتبع الملح بسهولة', 'تطبيق صديق لعاداتك اليومية'). " +
+        "Bold Arabic uses imperative action verbs and power words. " +
+        "Minimal Arabic is precise and stripped — no filler. " +
+        "The same tone differentiation rules for copy, bullets, keywords, and gap framing ALL apply in Arabic exactly as in English. " +
+        "Do not produce generic Arabic copy that ignores tone — rewrite every field in the correct Arabic register."
       : null,
   ]
     .filter(Boolean)
@@ -234,8 +286,11 @@ function buildUserMessage(
     "── FINAL CHECKLIST BEFORE OUTPUTTING ──",
     "1. title: ≤30 chars? Includes primary keyword? Tone-consistent?",
     "2. shortDescription: ≤74 chars? (count manually) Single hook? Answers 'why install NOW'?",
-    "3. fullDescription: Hook → Features (bullets+emojis) → CTA? ≤4000 chars? Pain point addressed in first 2 sentences?",
-    "4. keywordSuggestions: exactly 20 items? 8 [competitive] + 7 [intent] + 5 [gap]? Each prefixed with category tag? Vocabulary matches the tone register (clinical vs lifestyle vs action vs feature-precise)?",
+    "3. fullDescription: Hook → Features (bullets+emojis) → CTA? ≤4000 chars? Pain point addressed in first 2 sentences? " +
+      "Are ALL bullets written in the correct tone register — not generic copy reused from another tone?",
+    "4. keywordSuggestions: exactly 20 items? 8 [competitive] + 7 [intent] + 5 [gap]? Each prefixed with category tag? " +
+      "Vocabulary matches tone register? [gap] keywords framed correctly for this tone — " +
+      "professional=clinical complaint, friendly=frustrated user, bold=lost-results anger, minimal=functional failure?",
     "5. ctaSuggestions[0]: starts with 'WHY THIS RANKS: '?",
     "6. asoScore = sum of scoreBreakdown values?",
     "Now output the single JSON object.",
@@ -246,20 +301,26 @@ function buildUserMessage(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 /**
- * Builds system + user messages for the Gemini listing generation call (v7).
+ * Builds system + user messages for the Gemini listing generation call (v7.1).
  *
- * v7 improvements over v6:
- * - TONE_BRIEF now has two explicit parts per tone: COPY psychology + KEYWORD vocabulary register.
- *   Professional = clinical/data keywords. Friendly = lifestyle/habit keywords.
- *   Bold = action/outcome keywords. Minimal = feature-precise keywords.
- *   This prevents the model generating identical keyword lists across tones, creating
- *   genuinely distinct "search nets" for each audience segment.
- * - keywordSuggestions system instruction now explicitly references tone-differentiated
- *   vocabulary with concrete examples per tone.
- * - Final checklist reinforces vocabulary-register check for keywords.
+ * v7.1 fixes over v7:
+ * - BULLET tone enforcement: fullDescription contract now explicitly requires each
+ *   feature bullet to be rewritten in the active tone register — not copy-pasted
+ *   across tones. Professional=metric-first, Friendly=you+habit, Bold=verb+power,
+ *   Minimal=feature+benefit only. Checklist item 3 reinforces this.
+ * - [gap] keyword framing is now tone-specific with concrete framing direction:
+ *     professional = clinical/data reliability complaint vocabulary
+ *     friendly     = frustrated everyday user's venting search vocabulary
+ *     bold         = lost-results / wasted-momentum anger vocabulary
+ *     minimal      = specific functional failure description vocabulary
+ *   Checklist item 4 reinforces gap framing check.
+ * - Arabic tone parity: Arabic instruction now carries the full tone + vocabulary
+ *   differentiation rules (copy, bullets, keywords, gap framing) in Arabic register.
+ *   Arabic Professional uses formal clinical register; Arabic Friendly uses warm
+ *   conversational register — same differentiation as English.
  *
- * v6 foundation (unchanged):
- * - Lead ASO Strategist role with First-Page Visibility framing
+ * v7 foundation (unchanged):
+ * - TONE_BRIEF: COPY psychology + KEYWORD vocabulary register per tone
  * - keywordSuggestions: exactly 20 categorised phrases (8 [competitive] + 7 [intent] + 5 [gap])
  * - ctaSuggestions[0] = mandatory "WHY THIS RANKS:" visibility rationale
  * - fullDescription structure: Hook → Features (bullets+emojis) → CTA
