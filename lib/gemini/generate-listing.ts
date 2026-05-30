@@ -1,6 +1,7 @@
 import "server-only";
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { clampListingGenerationParsed } from "@/lib/gemini/clamp-listing-generation-parsed";
+import type { ClampListingResult } from "@/lib/gemini/clamp-listing-generation-parsed";
 import {
   assertGeminiApiKey,
   resolveGeminiModel,
@@ -109,6 +110,12 @@ export type GenerateListingWithGeminiResult = {
   asoScorePartial: boolean;
   /** True when the first attempt failed and a server-side retry succeeded. */
   retried: boolean;
+  /**
+   * True when the clamp layer had to trim shortDescription to fit ≤80 chars.
+   * Surfaced in the Results Panel as a neutral hint so the user knows the system
+   * actively managed the field length on their behalf.
+   */
+  shortDescriptionClamped: boolean;
 };
 
 // ── Core generation (single attempt) ─────────────────────────────────────────
@@ -203,7 +210,9 @@ async function attemptGeneration(
   // longDescription→fullDescription alias. clampListingGenerationParsed enforces
   // Play Store hard limits before Zod validation so minor overruns don't fail.
   const normalized = normalizeListingGenerationParsed(parsed);
-  const clamped = clampListingGenerationParsed(normalized);
+  const clampResult = clampListingGenerationParsed(normalized);
+  const clamped = clampResult.value;
+  const shortDescriptionClamped = clampResult.shortDescriptionClamped;
 
   // ── Core validation ───────────────────────────────────────────────────────
   const coreResult = listingGenerationCoreSchema.safeParse(clamped);
@@ -270,7 +279,7 @@ async function attemptGeneration(
     );
   }
 
-  return { data: final.data, asoScorePartial, retried: isRetry };
+  return { data: final.data, asoScorePartial, retried: isRetry, shortDescriptionClamped };
 }
 
 // ── Public entry point — with one automatic server-side retry ────────────────

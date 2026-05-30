@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
   ledgerId = debit.ledgerId;
 
   try {
-    const { data, asoScorePartial, retried } = await generateListingWithGemini(listingInput);
+    const { data, asoScorePartial, retried, shortDescriptionClamped } = await generateListingWithGemini(listingInput);
     const persist = await insertListingGeneration(supabase, {
       input: listingInput,
       output: data,
@@ -354,6 +354,7 @@ export async function POST(request: NextRequest) {
         savedAt: persist.ok ? persist.createdAt : undefined,
         asoScorePartial: asoScorePartial ? true : undefined,
         retried: retried ? true : undefined,
+        shortDescriptionClamped: shortDescriptionClamped ? true : undefined,
       },
     });
   } catch (e) {

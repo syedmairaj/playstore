@@ -36,6 +36,8 @@ type ApiMeta = {
   promptVersion?: string;
   persisted?: boolean;
   asoScorePartial?: boolean;
+  /** True when the clamp layer had to trim shortDescription to fit ≤80 chars. */
+  shortDescriptionClamped?: boolean;
 } | undefined;
 
 /** Full results-area loading shell (skeleton + Active Auditor) during first generate. */
@@ -371,6 +373,11 @@ export function OptimizerResultsPanel({
             >
               {t("results.shortLimitHint")}
             </p>
+            {meta?.shortDescriptionClamped ? (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-sky-300/70">
+                {t("results.shortDescClampedHint")}
+              </p>
+            ) : null}
           </div>
         </TabsContent>
 

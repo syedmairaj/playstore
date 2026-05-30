@@ -333,7 +333,9 @@ function buildSystemMessage(targetArabic: boolean): string {
     "  title: string ≤30 chars — primary keyword + transformation hook. Must signal both relevance (for search) " +
       "and outcome (for conversion). Tone-consistent.",
     "  shortDescription: string ≤80 chars — standalone install hook visible in search results. " +
-      "Must answer 'why install NOW' in one tight benefit statement. This is the highest-CVR real estate on the listing.",
+      "Must answer 'why install NOW' in one tight benefit statement. This is the highest-CVR real estate on the listing. " +
+      "LENGTH SAFETY BUFFER: Aim for 70 characters maximum to give a safe margin for character miscounting. " +
+      "The hard limit is 80 — the target is 70. This buffer prevents truncation at the display layer.",
     "  fullDescription: string ≤4000 chars. Structure MUST follow this exact sequence: " +
       "(A) HOOK PARAGRAPH — 2-3 sentences. First sentence (≤80 chars): transformation promise for the target user. " +
       "Second sentence: explain WHY the app exists — the human reason it was built " +

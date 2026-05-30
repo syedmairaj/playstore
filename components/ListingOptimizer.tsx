@@ -92,6 +92,8 @@ type ApiSuccess = {
     asoScorePartial?: boolean;
     /** Server performed an automatic retry — first attempt failed schema validation. */
     retried?: boolean;
+    /** Clamp layer trimmed shortDescription to fit ≤80 chars — surfaced as a neutral UI hint. */
+    shortDescriptionClamped?: boolean;
   };
 };
 

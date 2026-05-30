@@ -13,22 +13,19 @@ export const LISTING_GEN_SCREENSHOT_CAPTION_MAX = 80;
 export const LISTING_GEN_AB_TITLE_MAX = 30;
 export const LISTING_GEN_AB_HYPOTHESIS_MAX = 300;
 
+// Safety buffer: shortDescription prompt instructs Gemini to aim for 70 chars,
+// but model can miscalculate (token != char). This hard floor ensures that when
+// no sentence/comma break is found we still output a clean result at ≤75 chars.
+export const LISTING_GEN_SHORT_SAFE_FLOOR = 75;
+
 const ELLIPSIS = "\u2026";
 
-
-/**
- * Sentence-boundary clamp for medium-length prose fields (e.g. whatsNew <=500 chars).
- * Prefers ending at the last sentence boundary (`. `, `! `, `? `, `.\n`) within the
- * first `max` characters. Falls back to word boundary, then hard-trims with ellipsis.
- * Prevents truncated mid-sentence output like "...improved, timely".
- */
-function clampProse(raw: string, max: number): string {
-  const trimmed = raw.trim();
-  if (trimmed.length <= max) return trimmed;
-
-  const window = trimmed.slice(0, max);
-  // Find last sentence end within the window.
-  let lastSentenceEnd = -1;
+// ── Break-point search ────────────────────────────────────────────────────────
+// Priority: sentence end → comma → word boundary → hard floor
+// Returns the index (exclusive) of the best break point within `window`,
+// or -1 if no acceptable break was found above `minBreak`.
+function findBestBreak(window: string, minBreak: number): number {
+  // 1. Last sentence terminator followed by whitespace or end-of-string
   for (let i = window.length - 1; i >= 0; i--) {
     const ch = window[i];
     const next = window[i + 1];
@@ -36,36 +33,57 @@ function clampProse(raw: string, max: number): string {
       (ch === "." || ch === "!" || ch === "?") &&
       (next === " " || next === "\n" || next === undefined)
     ) {
-      lastSentenceEnd = i + 1; // include the punctuation
-      break;
+      if (i + 1 >= minBreak) return i + 1;
+      break; // gone past minBreak walking backwards — stop
     }
   }
 
-  const minBreak = Math.floor(max * 0.5);
-  if (lastSentenceEnd >= minBreak) {
-    return trimmed.slice(0, lastSentenceEnd).trimEnd();
-  }
+  // 2. Last comma (e.g. AI omitted terminal punctuation but stopped mid-clause)
+  const lastComma = window.lastIndexOf(",");
+  if (lastComma >= minBreak) return lastComma + 1; // include the comma
 
-  // Fall back to word boundary
+  // 3. Last word boundary (space)
   const lastSpace = window.lastIndexOf(" ");
-  if (lastSpace >= minBreak) {
-    return trimmed.slice(0, lastSpace).trimEnd();
+  if (lastSpace >= minBreak) return lastSpace; // exclude the space itself
+
+  return -1; // no acceptable break found
+}
+
+/**
+ * Sentence-boundary clamp for medium-length prose fields (e.g. whatsNew ≤500 chars).
+ * Priority: sentence end → comma → word boundary → ellipsis hard-trim.
+ * Prevents mid-sentence truncation like "...improved, timely".
+ */
+function clampProse(raw: string, max: number): string {
+  const trimmed = raw.trim();
+  if (trimmed.length <= max) return trimmed;
+
+  const window = trimmed.slice(0, max);
+  const minBreak = Math.floor(max * 0.5);
+  const breakAt = findBestBreak(window, minBreak);
+
+  if (breakAt > 0) {
+    return trimmed.slice(0, breakAt).trimEnd();
   }
 
-  // Hard trim with ellipsis
   return `${trimmed.slice(0, max - 1)}${ELLIPSIS}`;
 }
 
 /**
  * Trims, then enforces max length for title/shortDescription fields.
- * Priority order for break point:
- *   1. Last sentence boundary (`. `, `! `, `? `) within the first `max` chars
- *      — prevents dangling incomplete sentences like "...See rapid results. Own"
- *   2. Last word boundary (space) within the first `max` chars
- *   3. Hard trim to `max - 1` + ellipsis
- * minBreak = 45% of max ensures we never cut too early.
+ * Priority order for break point (via findBestBreak):
+ *   1. Last sentence boundary (`. `, `! `, `? `)
+ *   2. Last comma (handles AI output with no terminal punctuation)
+ *   3. Last word boundary (space)
+ *   4. Hard safe floor (LISTING_GEN_SHORT_SAFE_FLOOR for shortDescription) + ellipsis
+ *
+ * Returns clamped flag so callers can surface a UI hint when trimming occurred.
  */
-function clampTitleOrShort(raw: string, max: number): {
+function clampTitleOrShort(
+  raw: string,
+  max: number,
+  safeFloor?: number,
+): {
   text: string;
   clamped: boolean;
   originalLen: number;
@@ -78,43 +96,24 @@ function clampTitleOrShort(raw: string, max: number): {
 
   const window = trimmed.slice(0, max);
   const minBreak = Math.floor(max * 0.45);
+  const breakAt = findBestBreak(window, minBreak);
 
-  // 1. Prefer sentence boundary — avoids dangling words from cut sentences
-  let lastSentenceEnd = -1;
-  for (let i = window.length - 1; i >= 0; i--) {
-    const ch = window[i];
-    const next = window[i + 1];
-    if (
-      (ch === "." || ch === "!" || ch === "?") &&
-      (next === " " || next === "\n" || next === undefined)
-    ) {
-      lastSentenceEnd = i + 1;
-      break;
+  if (breakAt > 0) {
+    const out = trimmed.slice(0, breakAt).trimEnd();
+    if (out.length <= max) {
+      return { text: out, clamped: true, originalLen };
     }
   }
-  if (lastSentenceEnd >= minBreak) {
-    const out = trimmed.slice(0, lastSentenceEnd).trimEnd();
-    return { text: out, clamped: true, originalLen };
-  }
 
-  // 2. Fall back to word boundary
-  const lastSpace = window.lastIndexOf(" ");
-  let out =
-    lastSpace >= minBreak
-      ? trimmed.slice(0, lastSpace).trimEnd()
-      : `${trimmed.slice(0, max - 1)}${ELLIPSIS}`;
-
-  if (out.length === 0) {
-    out = `${trimmed.slice(0, max - 1)}${ELLIPSIS}`;
-  }
-  if (out.length > max) {
-    out = `${trimmed.slice(0, max - 1)}${ELLIPSIS}`;
-  }
-  if (out.length > max) {
-    out = trimmed.slice(0, max);
-  }
-
-  return { text: out, clamped: true, originalLen };
+  // Hard floor: use safeFloor if provided (shortDescription uses 75),
+  // otherwise fall back to max - 1 + ellipsis.
+  const floor = safeFloor ?? max - 1;
+  const hardOut = `${trimmed.slice(0, floor)}${ELLIPSIS}`;
+  return {
+    text: hardOut.length <= max ? hardOut : trimmed.slice(0, max),
+    clamped: true,
+    originalLen,
+  };
 }
 
 function clampLong(raw: string): {
@@ -134,18 +133,25 @@ function clampLong(raw: string): {
   };
 }
 
+export type ClampListingResult = {
+  value: unknown;
+  /** True when shortDescription was trimmed by the clamp layer. Used to surface a UI hint. */
+  shortDescriptionClamped: boolean;
+};
+
 /**
  * Mutates a shallow copy of the parsed model object: clamps `title`,
  * `shortDescription`, and `fullDescription` before Zod validation.
  * Logs when any field was clamped (dev / `DEBUG_GEMINI_ENV=1` only).
+ * Returns ClampListingResult so callers can propagate the shortDescriptionClamped flag.
  */
-export function clampListingGenerationParsed(parsed: unknown): unknown {
+export function clampListingGenerationParsed(parsed: unknown): ClampListingResult {
   if (
     parsed === null ||
     typeof parsed !== "object" ||
     Array.isArray(parsed)
   ) {
-    return parsed;
+    return { value: parsed, shortDescriptionClamped: false };
   }
 
   const o = { ...(parsed as Record<string, unknown>) };
@@ -163,7 +169,12 @@ export function clampListingGenerationParsed(parsed: unknown): unknown {
     titleOrigLen = r.originalLen;
   }
   if (typeof o.shortDescription === "string") {
-    const r = clampTitleOrShort(o.shortDescription, LISTING_GEN_SHORT_MAX);
+    // Pass safeFloor so hard-trim always lands at ≤75 chars (never ≥76 with ellipsis)
+    const r = clampTitleOrShort(
+      o.shortDescription,
+      LISTING_GEN_SHORT_MAX,
+      LISTING_GEN_SHORT_SAFE_FLOOR,
+    );
     o.shortDescription = r.text;
     shortClamped = r.clamped;
     shortOrigLen = r.originalLen;
@@ -233,5 +244,5 @@ export function clampListingGenerationParsed(parsed: unknown): unknown {
     });
   }
 
-  return o;
+  return { value: o, shortDescriptionClamped: shortClamped };
 }

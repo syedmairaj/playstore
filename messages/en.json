@@ -1581,6 +1581,7 @@
       "charCount": "{current} / {max}",
       "titleLimitHint": "Google Play title limit: 30 characters.",
       "shortLimitHint": "Google Play short description limit: 80 characters.",
+      "shortDescClampedHint": "Length auto-adjusted to fit the 80-character limit — all content is complete and ready to upload.",
       "longLimitHint": "Google Play long description limit: 4,000 characters.",
       "longDescriptionHint": "Use clear sections, short paragraphs, and bullets where helpful. Avoid ALL CAPS spam; plain text pastes cleanly into Play Console.",
       "regenerate": {

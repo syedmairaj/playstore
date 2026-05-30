@@ -1581,6 +1581,7 @@
       "charCount": "{current} / {max}",
       "titleLimitHint": "حد عنوان Google Play: 30 حرفًا.",
       "shortLimitHint": "حد الوصف القصير في Google Play: 80 حرفًا.",
+      "shortDescClampedHint": "تم ضبط الطول تلقائيًا ليناسب حد 80 حرفًا — المحتوى مكتمل وجاهز للرفع.",
       "longLimitHint": "حد الوصف الطويل في Google Play: 4000 حرفًا.",
       "longDescriptionHint": "استخدم أقسامًا واضحة وفقرات قصيرة ونقاطًا عند الحاجة. تجنّب الكتابة بأحرف كبيرة بشكل مزعج؛ النص العادي يلصق بسهولة في Play Console.",
       "regenerate": {
