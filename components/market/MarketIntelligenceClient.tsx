@@ -44,6 +44,8 @@ export type MarketIntelligenceClientProps = {
   ownAppId?: string | null;
   /** Auto-detected category from user's app/listing — used as default */
   defaultCategory?: string;
+  /** True when the UI locale is Arabic — enables RTL layout + defaults country to SA */
+  isRtl?: boolean;
 };
 
 // ── Spotlight locked state ─────────────────────────────────────────────────────
@@ -140,9 +142,11 @@ export function MarketIntelligenceClient({
   workspaceId,
   ownAppId,
   defaultCategory = "APPLICATION",
+  isRtl = false,
 }: MarketIntelligenceClientProps) {
   const [category,   setCategory]   = useState(defaultCategory);
-  const [country,    setCountry]    = useState("us");
+  // Arabic users default to Saudi Arabia — their primary market
+  const [country,    setCountry]    = useState(isRtl ? "sa" : "us");
   const [collection, setCollection] = useState<Collection>("TOP_FREE");
 
   const [apps,          setApps]          = useState<TopChartApp[]>([]);
@@ -262,7 +266,7 @@ export function MarketIntelligenceClient({
     : null;
 
   return (
-    <div className="space-y-6">
+    <div dir={isRtl ? "rtl" : "ltr"} className={cn("space-y-6", isRtl && "font-arabic")}>
       {/* ── Controls bar ──────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3">
         {/* Category picker */}
@@ -356,7 +360,7 @@ export function MarketIntelligenceClient({
             <div className="divide-y divide-zinc-800/60">
               {loadingChart
                 ? Array.from({ length: 15 }, (_, i) => (
-                    <TopChartRowSkeleton key={i} rank={i + 1} />
+                    <TopChartRowSkeleton key={i} rank={i + 1} isRtl={isRtl} />
                   ))
                 : apps.map((app, i) => (
                     <TopChartRow
@@ -364,6 +368,7 @@ export function MarketIntelligenceClient({
                       app={app}
                       rank={i + 1}
                       isOwnApp={Boolean(ownAppId && app.appId === ownAppId)}
+                      isRtl={isRtl}
                     />
                   ))}
             </div>

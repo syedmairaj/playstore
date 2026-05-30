@@ -75,6 +75,7 @@ export default async function MarketIntelligencePage({
         workspaceId={workspaceId}
         ownAppId={ownAppId}
         defaultCategory={defaultCategory}
+        isRtl={locale === "ar"}
       />
     </div>
   );

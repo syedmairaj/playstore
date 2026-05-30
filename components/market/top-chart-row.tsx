@@ -10,6 +10,7 @@ type Props = {
   rank: number;
   /** Highlight this row if it matches the user's own app */
   isOwnApp?: boolean;
+  isRtl?: boolean;
 };
 
 function RankBadge({ rank }: { rank: number }) {
@@ -29,7 +30,7 @@ function RankBadge({ rank }: { rank: number }) {
   );
 }
 
-export function TopChartRow({ app, rank, isOwnApp = false }: Props) {
+export function TopChartRow({ app, rank, isOwnApp = false, isRtl = false }: Props) {
   const scoreDisplay =
     app.score != null ? app.score.toFixed(1) : null;
   const ratingsDisplay =
@@ -43,6 +44,7 @@ export function TopChartRow({ app, rank, isOwnApp = false }: Props) {
 
   return (
     <div
+      dir={isRtl ? "rtl" : "ltr"}
       className={cn(
         "group flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors duration-150",
         isOwnApp
@@ -50,7 +52,7 @@ export function TopChartRow({ app, rank, isOwnApp = false }: Props) {
           : "hover:bg-white/[0.04]",
       )}
     >
-      {/* Rank */}
+      {/* Rank — always at the leading edge */}
       <RankBadge rank={rank} />
 
       {/* Icon */}
@@ -73,8 +75,8 @@ export function TopChartRow({ app, rank, isOwnApp = false }: Props) {
       </div>
 
       {/* Info */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+      <div className={cn("min-w-0 flex-1", isRtl && "font-arabic")}>
+        <div className={cn("flex items-center gap-2", isRtl && "flex-row-reverse justify-end")}>
           <p className={cn(
             "truncate text-sm font-medium leading-tight",
             isOwnApp ? "text-emerald-100" : "text-white/90",
@@ -87,10 +89,10 @@ export function TopChartRow({ app, rank, isOwnApp = false }: Props) {
             </span>
           )}
         </div>
-        <p className="truncate text-[11px] text-zinc-500">{app.developer}</p>
+        <p className={cn("truncate text-[11px] text-zinc-500", isRtl && "text-end")}>{app.developer}</p>
       </div>
 
-      {/* Stats */}
+      {/* Stats — always at the trailing edge */}
       <div className="hidden shrink-0 items-center gap-3 sm:flex">
         {scoreDisplay && (
           <div className="flex items-center gap-1">
@@ -111,16 +113,16 @@ export function TopChartRow({ app, rank, isOwnApp = false }: Props) {
 
 // ── Skeleton row ──────────────────────────────────────────────────────────────
 
-export function TopChartRowSkeleton({ rank }: { rank: number }) {
+export function TopChartRowSkeleton({ rank, isRtl = false }: { rank: number; isRtl?: boolean }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl px-3 py-2.5">
+    <div dir={isRtl ? "rtl" : "ltr"} className="flex items-center gap-3 rounded-xl px-3 py-2.5">
       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.05] text-xs font-bold text-zinc-600">
         {rank}
       </span>
       <div className="size-10 shrink-0 animate-pulse rounded-xl bg-white/[0.06]" />
       <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="h-3 w-3/5 animate-pulse rounded-full bg-white/[0.07]" />
-        <div className="h-2.5 w-2/5 animate-pulse rounded-full bg-white/[0.04]" />
+        <div className={cn("h-3 w-3/5 animate-pulse rounded-full bg-white/[0.07]", isRtl && "ms-auto")} />
+        <div className={cn("h-2.5 w-2/5 animate-pulse rounded-full bg-white/[0.04]", isRtl && "ms-auto")} />
       </div>
       <div className="hidden h-3 w-16 animate-pulse rounded-full bg-white/[0.04] sm:block" />
     </div>
