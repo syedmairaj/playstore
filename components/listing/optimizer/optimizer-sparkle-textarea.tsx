@@ -3,6 +3,8 @@
 import type { ReactNode } from "react";
 import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@radix-ui/react-tooltip";
 
 type Props = {
   id: string;
@@ -19,6 +21,7 @@ type Props = {
   /** When set, called before `onAutofill` (e.g. credit confirmation). */
   onBeforeAutofill?: () => void;
   sparkleAriaLabel: string;
+  /** Context-aware tooltip shown on hover — should describe what this specific field does. */
   sparkleTooltip: string;
   creditsNote: string;
 };
@@ -75,21 +78,28 @@ export function OptimizerSparkleTextarea({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
         />
-        <button
-          type="button"
-          title={sparkleTooltip}
-          aria-label={sparkleAriaLabel}
-          disabled={disabled || busy}
-          onClick={handleSparkleClick}
-          className={cn(
-            "absolute top-2.5 end-2.5 inline-flex size-9 items-center justify-center rounded-xl border border-zinc-700/90 bg-zinc-900/90 text-emerald-200/90 shadow-sm backdrop-blur-sm transition",
-            "hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-50",
-            "focus-visible:outline-none focus-visible:ring-[0.5px] focus-visible:ring-emerald-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0E14]",
-            "disabled:pointer-events-none disabled:opacity-40",
-          )}
-        >
-          <Sparkles className="size-4 shrink-0" aria-hidden />
-        </button>
+        {/* Radix Tooltip wrapping the sparkle button — asChild merges onto the button
+            so there is no nested interactive element. Muted opacity on the icon signals
+            "secondary / suggestion" role vs the primary Generate button. */}
+        <TooltipProvider>
+          <Tooltip content={sparkleTooltip} side="left" asChild>
+            <button
+              type="button"
+              aria-label={sparkleAriaLabel}
+              disabled={disabled || busy}
+              onClick={handleSparkleClick}
+              className={cn(
+                "absolute top-2.5 end-2.5 inline-flex size-9 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-emerald-200/60 shadow-sm backdrop-blur-sm transition",
+                "hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-50",
+                "focus-visible:outline-none focus-visible:ring-[0.5px] focus-visible:ring-emerald-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0E14]",
+                "disabled:pointer-events-none disabled:opacity-40",
+              )}
+            >
+              {/* Slightly smaller icon + reduced opacity reinforces secondary / suggestion role */}
+              <Sparkles className="size-3.5 shrink-0 opacity-75" aria-hidden />
+            </button>
+          </Tooltip>
+        </TooltipProvider>
       </div>
       <p className="text-xs leading-snug text-white/45">{creditsNote}</p>
     </div>

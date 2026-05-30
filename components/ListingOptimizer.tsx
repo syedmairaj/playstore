@@ -1514,6 +1514,11 @@ export function ListingOptimizer({
     router.push(`/app/${workspaceId}/settings`);
   }
 
+  function handleNavigateToReviews() {
+    if (!workspaceId) return;
+    router.push(`/app/${workspaceId}/reviews`);
+  }
+
   function clearAutofillGate(field: "appName" | "category") {
     setAutofillGate((g) => {
       const next = { ...g };
@@ -2866,7 +2871,7 @@ export function ListingOptimizer({
                         onAutofill={() => void runAutofill("keywords")}
                         onBeforeAutofill={() => requestAutofill("keywords")}
                         sparkleAriaLabel={t("form.autofill.sparkleAriaKeywords")}
-                        sparkleTooltip={t("form.autofill.aiAssistTooltip")}
+                        sparkleTooltip={t("form.autofill.aiAssistTooltipKeywords")}
                         creditsNote={t("form.autofill.usesCredits", {
                           credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
                         })}
@@ -2895,7 +2900,7 @@ export function ListingOptimizer({
                         onAutofill={() => void runAutofill("features")}
                         onBeforeAutofill={() => requestAutofill("features")}
                         sparkleAriaLabel={t("form.autofill.sparkleAriaFeatures")}
-                        sparkleTooltip={t("form.autofill.aiAssistTooltip")}
+                        sparkleTooltip={t("form.autofill.aiAssistTooltipFeatures")}
                         creditsNote={t("form.autofill.usesCredits", {
                           credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
                         })}
@@ -2946,6 +2951,7 @@ export function ListingOptimizer({
                         className="mb-0"
                         onRemoveItem={handleRemoveQueueItem}
                         ownPackageName={selectedAppRow?.package_name ?? null}
+                        onNavigateToReviews={handleNavigateToReviews}
                       />
                     ) : null}
                     <p className="text-xs leading-relaxed text-white/45">
@@ -2982,31 +2988,50 @@ export function ListingOptimizer({
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-4 sm:gap-y-2">
                       <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
-                        <button
-                          type="submit"
-                          disabled={!canSubmit || isProcessingCredits || loading}
-                          aria-busy={loading ? true : undefined}
-                          className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
-                        >
-                          {loading ? (
-                            <>
-                              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-                              {t("form.generating")}
-                            </>
-                          ) : (
-                            t("form.generate", {
-                              credits: AI_CREDIT_COSTS.listing_generation,
-                            })
-                          )}
-                        </button>
+                        {/* Tooltip explains what the full generate action does.
+                            When button is disabled due to incomplete App Identity,
+                            the step-gate hint appears below instead of the normal helper text. */}
+                        <TooltipProvider>
+                          <Tooltip
+                            content={t("form.generateTooltip")}
+                            side="top"
+                            asChild
+                          >
+                            <button
+                              type="submit"
+                              disabled={!canSubmit || isProcessingCredits || loading}
+                              aria-busy={loading ? true : undefined}
+                              className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
+                            >
+                              {loading ? (
+                                <>
+                                  <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                                  {t("form.generating")}
+                                </>
+                              ) : (
+                                t("form.generate", {
+                                  credits: AI_CREDIT_COSTS.listing_generation,
+                                })
+                              )}
+                            </button>
+                          </Tooltip>
+                        </TooltipProvider>
                         <p className="text-center text-sm font-medium text-emerald-300/90 sm:text-start">
                           {t("form.generateValueMicrocopy")}
                         </p>
-                        <p className="max-w-xl text-center text-xs leading-relaxed text-white/50 sm:text-start">
-                          {t("form.generateButtonHelper", {
-                            credits: AI_CREDIT_COSTS.listing_generation,
-                          })}
-                        </p>
+                        {/* Step-gate: when App Identity is incomplete show a nudge instead of the normal helper */}
+                        {!canSubmit && !loading && !isProcessingCredits &&
+                          (displayAppName.trim().length === 0 || category.trim().length === 0) ? (
+                          <p className="max-w-xl text-center text-xs leading-relaxed text-amber-400/80 sm:text-start">
+                            {t("form.generateStepGateHint")}
+                          </p>
+                        ) : (
+                          <p className="max-w-xl text-center text-xs leading-relaxed text-white/50 sm:text-start">
+                            {t("form.generateButtonHelper", {
+                              credits: AI_CREDIT_COSTS.listing_generation,
+                            })}
+                          </p>
+                        )}
                       </div>
 
                       {/* "This can take a few seconds" moved into the

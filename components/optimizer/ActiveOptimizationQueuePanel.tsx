@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, Info, Loader2, Star, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, Info, Loader2, Star, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import type { ListingImprovementItem } from "@/components/reviews/review-improvements-queue";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
@@ -148,6 +148,11 @@ export type ActiveOptimizationQueuePanelProps = {
    * state duplication bugs).
    */
   isGenerating?: boolean;
+  /**
+   * Optional callback wired up by the parent to navigate the user to the Reviews tab.
+   * When provided, the empty state shows a "Go to Reviews" CTA button.
+   */
+  onNavigateToReviews?: () => void;
 };
 
 export function ActiveOptimizationQueuePanel({
@@ -157,6 +162,7 @@ export function ActiveOptimizationQueuePanel({
   onRemoveItem,
   ownPackageName,
   isGenerating = false,
+  onNavigateToReviews,
 }: ActiveOptimizationQueuePanelProps) {
   const t = useTranslations("optimizer.activeQueue");
 
@@ -372,7 +378,22 @@ export function ActiveOptimizationQueuePanel({
               </motion.div>
             </TooltipProvider>
           ) : (
-            <p className="text-xs leading-relaxed text-slate-500">{t("empty")}</p>
+            <div className="space-y-3">
+              <p className="text-xs leading-relaxed text-slate-500">{t("emptyTip")}</p>
+              {onNavigateToReviews ? (
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={onNavigateToReviews}
+                    className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors hover:border-emerald-500/50 hover:bg-emerald-500/15 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/60"
+                  >
+                    {t("emptyCtaLabel")}
+                    <ArrowRight className="size-3 shrink-0" aria-hidden />
+                  </button>
+                  <p className="text-[11px] leading-relaxed text-slate-600">{t("emptyCtaHint")}</p>
+                </div>
+              ) : null}
+            </div>
           )}
         </div>
 
