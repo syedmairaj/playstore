@@ -57,9 +57,13 @@ function clampProse(raw: string, max: number): string {
 }
 
 /**
- * Trims, then enforces max length. For title/short: prefers breaking at the last
- * space in the first `max` characters when that space is not too early; otherwise
- * trims to `max - 1` + ellipsis (single Unicode character) so total length ≤ max.
+ * Trims, then enforces max length for title/shortDescription fields.
+ * Priority order for break point:
+ *   1. Last sentence boundary (`. `, `! `, `? `) within the first `max` chars
+ *      — prevents dangling incomplete sentences like "...See rapid results. Own"
+ *   2. Last word boundary (space) within the first `max` chars
+ *   3. Hard trim to `max - 1` + ellipsis
+ * minBreak = 45% of max ensures we never cut too early.
  */
 function clampTitleOrShort(raw: string, max: number): {
   text: string;
@@ -73,8 +77,28 @@ function clampTitleOrShort(raw: string, max: number): {
   }
 
   const window = trimmed.slice(0, max);
-  const lastSpace = window.lastIndexOf(" ");
   const minBreak = Math.floor(max * 0.45);
+
+  // 1. Prefer sentence boundary — avoids dangling words from cut sentences
+  let lastSentenceEnd = -1;
+  for (let i = window.length - 1; i >= 0; i--) {
+    const ch = window[i];
+    const next = window[i + 1];
+    if (
+      (ch === "." || ch === "!" || ch === "?") &&
+      (next === " " || next === "\n" || next === undefined)
+    ) {
+      lastSentenceEnd = i + 1;
+      break;
+    }
+  }
+  if (lastSentenceEnd >= minBreak) {
+    const out = trimmed.slice(0, lastSentenceEnd).trimEnd();
+    return { text: out, clamped: true, originalLen };
+  }
+
+  // 2. Fall back to word boundary
+  const lastSpace = window.lastIndexOf(" ");
   let out =
     lastSpace >= minBreak
       ? trimmed.slice(0, lastSpace).trimEnd()

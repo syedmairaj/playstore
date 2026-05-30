@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v9.7";
+const PROMPT_VERSION = "listing-optimizer-v9.8";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -48,6 +48,11 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "WRONG: 'Advanced [App Category] for serious users. Monitor your key metrics daily.' (qualifier-first, passive) " +
     "RIGHT: 'Track [primary metric] with precision. Reliable data for every important decision.' (benefit-first, specific) " +
     "The first three words of shortDescription must be the most important thing the user gets — not a preamble. " +
+    "SELF-CONTAINMENT RULE (critical): shortDescription must be a 100% complete thought within 80 characters. " +
+    "NEVER start a sentence you cannot finish within the character limit. " +
+    "Every sentence that opens must close. A trailing word or fragment is a hard failure — count characters before writing, not after. " +
+    "WRONG: 'Track [metric] precisely. Eliminate errors. Reliable data for every decision. Own' (last word is fragment) " +
+    "RIGHT: 'Track [metric] precisely. Eliminate errors. Reliable data for every decision.' (all sentences complete) " +
 
     "HUMAN ELEMENT: Include one sentence in the hook paragraph explaining why this app exists for real people " +
     "with real goals — not a feature claim, a human reason " +
@@ -91,6 +96,11 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "WRONG: 'Easy [App Category]. Build better habits with a simple daily log.' (feature-first, cold) " +
     "RIGHT: 'Build better habits daily. Track [primary goal] without the stress or guesswork.' (benefit-first, warm) " +
     "The first three words of shortDescription must make the user feel something positive — not read a spec. " +
+    "SELF-CONTAINMENT RULE (critical): shortDescription must be a 100% complete thought within 80 characters. " +
+    "NEVER start a sentence you cannot finish within the character limit. " +
+    "Every sentence that opens must close. A trailing word or fragment is a hard failure — count characters before writing, not after. " +
+    "WRONG: 'Build habits daily. Track [goal] easily. Make progress feel natural. Win' (last word is fragment) " +
+    "RIGHT: 'Build habits daily. Track [goal] easily. Make progress feel natural.' (all sentences complete) " +
 
     "HUMAN ELEMENT: Include one sentence in the hook paragraph explaining why this app exists for everyday people — " +
     "a warm, relatable reason, not a feature claim " +
@@ -135,6 +145,11 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "WRONG: 'Eliminate guesswork and get started to finally reach your goals fast.' (buried outcome, slow start) " +
     "RIGHT: 'Crush your [primary goal]. Track [key metric] precisely and see results fast.' (outcome first, high energy) " +
     "The first three words of shortDescription must deliver the punch — not warm up to it. " +
+    "SELF-CONTAINMENT RULE (critical): shortDescription must be a 100% complete thought within 80 characters. " +
+    "NEVER start a sentence you cannot finish within the character limit. " +
+    "Every sentence that opens must close. A trailing word or fragment is a hard failure — count characters before writing, not after. " +
+    "WRONG: 'Crush your [goal]. Track [metric] precisely. See rapid results. Own' (last word is fragment — kills impact) " +
+    "RIGHT: 'Crush your [goal]. Track [metric] precisely. See rapid results.' (all sentences complete, ends with force) " +
 
     "HUMAN ELEMENT: Include one sentence in the hook paragraph that frames the app as the weapon the user has been missing — " +
     "a declaration, not a description " +
@@ -186,6 +201,11 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "WRONG: 'Track [primary metric] precisely. Eliminate guesswork, hit goals confidently.' (feature-first — pain point buried second) " +
     "RIGHT: 'Eliminate guesswork. Track [primary metric] precisely, hit your goals confidently.' (pain-point resolution first, feature second, anchor at end) " +
     "The first three words of shortDescription must resolve the user's primary pain point — not describe a feature. " +
+    "SELF-CONTAINMENT RULE (critical): shortDescription must be a 100% complete thought within 80 characters. " +
+    "NEVER start a sentence you cannot finish within the character limit. " +
+    "Every sentence that opens must close. A trailing word or fragment is a hard failure — count characters before writing, not after. " +
+    "WRONG: 'Eliminate guesswork. Track [metric] precisely, hit goals confidently. Own' (last word is fragment) " +
+    "RIGHT: 'Eliminate guesswork. Track [metric] precisely, hit goals confidently.' (all sentences complete) " +
 
     "HUMAN ELEMENT: Include one sentence in the hook paragraph that states simply what the app does and for whom — " +
     "no adjectives, no claims, just a precise statement of purpose " +
@@ -510,9 +530,10 @@ function buildUserMessage(
     "1. title: ≤30 chars? WORD BOUNDARY CHECK: Does the title end on a COMPLETE word — not mid-word? " +
       "Count characters AND check the last character is not inside a word. If it is, trim to the previous complete word. " +
       "Primary keyword present naturally? Signals transformation — not just a category label?",
-    "2. shortDescription: ≤80 chars? PAIN-POINT-FIRST for minimal tone — do the first three words resolve the user's " +
-      "primary frustration (not describe a feature)? For all tones: benefit leads, qualifier never leads. " +
-      "Read it aloud — does it answer 'why install NOW' immediately?",
+    "2. shortDescription: ≤80 chars? SELF-CONTAINED — does every sentence that opens also CLOSE within the 80-char limit? " +
+      "A trailing word or incomplete sentence is a hard failure. Count characters before finalising. " +
+      "PAIN-POINT-FIRST for minimal tone — do the first three words resolve the user's primary frustration? " +
+      "For all tones: benefit/outcome/resolution leads, qualifier never leads. Read it aloud — does it answer 'why install NOW'?",
     "3. fullDescription structure: Hook paragraph → BRIDGE SENTENCE → Bullet list → Social proof → CTA? " +
       "BRIDGE SENTENCE CHECK: Is there one tone-consistent sentence between the hook paragraph and the bullet list " +
       "that frames the features as the solution to the hook's problem? If missing, add it. " +

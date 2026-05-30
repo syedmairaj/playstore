@@ -90,7 +90,9 @@ const LISTING_RESPONSE_SCHEMA = {
 // Kept English-only (model instruction, not UI copy).
 const STRICT_RETRY_ADDENDUM =
   "STRICT RETRY — previous attempt failed schema validation. You MUST return every required key: " +
-  "title (≤30 chars), shortDescription (≤74 chars — count every character, never 75+), fullDescription (≤4000 chars), " +
+  "title (≤30 chars — ends on complete word, never mid-word), " +
+  "shortDescription (≤80 chars — SELF-CONTAINED: every sentence that opens must close within the limit, no trailing fragments, ends on sentence boundary), " +
+  "fullDescription (≤4000 chars), " +
   "keywordSuggestions (exactly 20 strings, each prefixed [competitive], [intent], or [gap]), " +
   "ctaSuggestions (4–8 strings — first item MUST start with 'WHY THIS RANKS: '), " +
   "asoScore (integer 0–100 = exact sum of scoreBreakdown), " +
