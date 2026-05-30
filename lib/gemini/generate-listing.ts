@@ -225,7 +225,26 @@ async function attemptGeneration(
       : {};
 
   const asoTry = tryParseListingAsoBundle(clampedRecord);
-  let data: ListingGenerationOutput = { ...coreResult.data };
+  // Start with core fields, then layer in v8 optional fields from clamped output.
+  // coreResult.data only contains the 5 core fields — v8 fields (whatsNew,
+  // screenshotCaptions, abTestVariant) must be pulled directly from clampedRecord
+  // or they are silently lost before final Zod validation.
+  let data: ListingGenerationOutput = {
+    ...coreResult.data,
+    ...(typeof clampedRecord.whatsNew === "string" && clampedRecord.whatsNew.trim()
+      ? { whatsNew: clampedRecord.whatsNew }
+      : {}),
+    ...(Array.isArray(clampedRecord.screenshotCaptions) && clampedRecord.screenshotCaptions.length > 0
+      ? { screenshotCaptions: clampedRecord.screenshotCaptions as string[] }
+      : {}),
+    ...(clampedRecord.abTestVariant !== null &&
+      typeof clampedRecord.abTestVariant === "object" &&
+      !Array.isArray(clampedRecord.abTestVariant) &&
+      typeof (clampedRecord.abTestVariant as Record<string, unknown>).titleB === "string" &&
+      typeof (clampedRecord.abTestVariant as Record<string, unknown>).hypothesis === "string"
+      ? { abTestVariant: clampedRecord.abTestVariant as { titleB: string; hypothesis: string } }
+      : {}),
+  };
   let asoScorePartial = false;
 
   if (asoTry.ok) {
