@@ -178,11 +178,15 @@ export function ActiveOptimizationQueuePanel({
     }, 600);
   }
 
-  // ── Generating state: collapse the panel to a minimal inline strip ───────────
-  // The Sonner toast at the top already communicates "generation in progress".
-  // Showing a full bordered card + amber banner on top of that creates double
-  // containers and visual anxiety. During generation: no card, no banner —
-  // just a quiet label + dimmed pills so the user knows what's being used.
+  // ── Generating state ─────────────────────────────────────────────────────────
+  // The Sonner toast already communicates "generation in progress".
+  // No items → hide the panel entirely (no card, no empty state text).
+  // Has items → collapse to a minimal strip so the user sees what's being used,
+  // without the full bordered card competing visually with the toast.
+  if (isGenerating && items.length === 0) {
+    return null;
+  }
+
   if (isGenerating && items.length > 0) {
     return (
       <motion.div
