@@ -1862,11 +1862,32 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                 {(backlogLoading || backlogError || backlogItems.filter((i) => !i.isImplemented).length > 0) && (
                   <div className="space-y-3 border-t border-white/[0.06] pt-4">
 
-                    {/* Section label */}
+                    {/* Section label + Optimize All Insights CTA */}
                     {!backlogLoading && backlogItems.filter((i) => !i.isImplemented).length > 0 && (
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
-                        {t("insightsTabs.queueSectionLabel")}
-                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
+                          {t("insightsTabs.queueSectionLabel")}
+                        </p>
+                        {/* Unified deep-link: pulls ALL queued insights into the optimizer
+                            as exploit_targets so the user doesn't need to queue individually. */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const activeItems = backlogItems.filter((i) => !i.isImplemented);
+                            if (!activeItems.length) return;
+                            const targets = activeItems.map((i) => i.issueTitle).join(",");
+                            const params = new URLSearchParams();
+                            params.set("exploit_targets", targets);
+                            if (primaryAppId) params.set("appId", primaryAppId);
+                            router.push(`/app/${workspaceId}/listing-optimizer?${params.toString()}`);
+                          }}
+                          className="group flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/[0.08] px-3.5 py-2 text-xs font-semibold text-emerald-300 transition-all hover:border-emerald-500/55 hover:bg-emerald-500/[0.14] hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50"
+                        >
+                          <Zap className="size-3.5 shrink-0 text-emerald-400" aria-hidden />
+                          {t("insightsTabs.optimizeAllInsights")}
+                          <ArrowRight className="size-3.5 shrink-0 text-emerald-400/70 transition-transform group-hover:translate-x-0.5" aria-hidden />
+                        </button>
+                      </div>
                     )}
 
                     {backlogLoading && (

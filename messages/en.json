@@ -1075,6 +1075,7 @@
       "sourceOwnApp": "Your App",
       "sourceCompetitor": "Competitor",
       "queueSectionLabel": "Queued for listing optimization",
+      "optimizeAllInsights": "Optimize All Insights",
       "openInOptimizer": "Open in Listing Optimizer →",
       "dismissItem": "Dismiss — remove from queue",
       "deleteFromArchive": "Remove from archive",

@@ -208,6 +208,63 @@ function OptimizeWithSpotlightButton({
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
+// ── Spotlight sessionStorage cache helpers ────────────────────────────────────
+// Keyed by workspaceId:category:country — survives page refresh within the session.
+// TTL matches server-side cache TTL (6 hours).
+
+const SPOTLIGHT_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 h
+
+type SpotlightCacheEntry = {
+  spotlight: KeywordSpotlightResult;
+  savedAt: number; // Date.now()
+};
+
+function spotlightCacheKey(workspaceId: string, category: string, country: string): string {
+  return `playstore_spotlight_${workspaceId}_${category}_${country}`;
+}
+
+function readSpotlightCache(
+  workspaceId: string,
+  category: string,
+  country: string,
+): KeywordSpotlightResult | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(spotlightCacheKey(workspaceId, category, country));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as SpotlightCacheEntry;
+    if (Date.now() - entry.savedAt > SPOTLIGHT_CACHE_TTL_MS) {
+      sessionStorage.removeItem(spotlightCacheKey(workspaceId, category, country));
+      return null;
+    }
+    return entry.spotlight;
+  } catch {
+    return null;
+  }
+}
+
+function writeSpotlightCache(
+  workspaceId: string,
+  category: string,
+  country: string,
+  spotlight: KeywordSpotlightResult,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const entry: SpotlightCacheEntry = { spotlight, savedAt: Date.now() };
+    sessionStorage.setItem(spotlightCacheKey(workspaceId, category, country), JSON.stringify(entry));
+  } catch { /* quota — non-fatal */ }
+}
+
+function clearSpotlightCache(workspaceId: string, category: string, country: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(spotlightCacheKey(workspaceId, category, country));
+  } catch { /* */ }
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
 export function MarketIntelligenceClient({
   workspaceId,
   ownAppId,
@@ -222,6 +279,7 @@ export function MarketIntelligenceClient({
   const [apps,          setApps]          = useState<TopChartApp[]>([]);
   const [spotlight,     setSpotlight]     = useState<KeywordSpotlightResult | null>(null);
   // "locked" = chart loaded, spotlight not yet purchased for this category/country
+  // Initialised to false if a cached spotlight exists — user doesn't re-pay on refresh.
   const [spotlightLocked, setSpotlightLocked] = useState(true);
   const [loadingChart,  setLoadingChart]  = useState(true);
   const [loadingSpot,   setLoadingSpot]   = useState(false);
@@ -229,11 +287,18 @@ export function MarketIntelligenceClient({
   const [fromCache,     setFromCache]     = useState(false);
   const [error,         setError]         = useState<string | null>(null);
 
-  // Reset spotlight lock when category or country changes — new market, new spotlight
+  // ── Restore spotlight from sessionStorage on mount / market change ───────────
+  // When category or country changes: check cache first, then lock if nothing cached.
   useEffect(() => {
-    setSpotlight(null);
-    setSpotlightLocked(true);
-  }, [category, country]);
+    const cached = readSpotlightCache(workspaceId, category, country);
+    if (cached) {
+      setSpotlight(cached);
+      setSpotlightLocked(false);
+    } else {
+      setSpotlight(null);
+      setSpotlightLocked(true);
+    }
+  }, [workspaceId, category, country]);
 
   // ── Fetch chart (free — no credits) ─────────────────────────────────────────
   const loadChart = useCallback(async (opts?: { forceRefresh?: boolean }) => {
@@ -269,8 +334,16 @@ export function MarketIntelligenceClient({
   }, [category, country, collection]);
 
   // ── Fetch AI spotlight (costs credits — user-initiated) ──────────────────────
-  const fetchSpotlight = useCallback(async () => {
+  // On success: persists result to sessionStorage (6h TTL) so page refresh
+  // doesn't lose the data and the user doesn't re-pay on every visit.
+  const fetchSpotlight = useCallback(async (opts?: { forceRefresh?: boolean }) => {
     if (!apps.length) return;
+
+    // If re-analysing (force refresh), clear the existing cache entry first
+    if (opts?.forceRefresh) {
+      clearSpotlightCache(workspaceId, category, country);
+    }
+
     setLoadingSpot(true);
     try {
       const res = await fetch("/api/market/keyword-spotlight", {
@@ -292,7 +365,6 @@ export function MarketIntelligenceClient({
       };
 
       if (!json.ok) {
-        // Handle insufficient credits specifically
         if (json.error?.code === "insufficient_credits") {
           toast.error("Not enough credits for AI Spotlight. Top up to continue.");
         } else {
@@ -302,6 +374,8 @@ export function MarketIntelligenceClient({
       }
 
       if (json.spotlight) {
+        // Persist to sessionStorage so refresh doesn't lose the result
+        writeSpotlightCache(workspaceId, category, country, json.spotlight);
         setSpotlight(json.spotlight);
         setSpotlightLocked(false);
         if (json.creditsUsed) {
@@ -462,7 +536,7 @@ export function MarketIntelligenceClient({
               {spotlight && !loadingSpot && (
                 <button
                   type="button"
-                  onClick={fetchSpotlight}
+                  onClick={() => fetchSpotlight({ forceRefresh: true })}
                   title={`Re-run AI analysis — costs ${SPOTLIGHT_CREDIT_COST} credits`}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700/50 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-500 transition hover:border-zinc-600/60 hover:text-zinc-300"
                 >
