@@ -11,7 +11,18 @@ import {
   PixelPhoneFrame,
 } from "@/components/ui/pixel-phone-frame";
 import { OptimizerPreviewTextShimmer } from "@/components/listing/optimizer/optimizer-preview-text-shimmer";
+import { parseKeyword, type KeywordCategory } from "@/components/listing/optimizer/keyword-strategy-panel";
 import { cn } from "@/lib/utils";
+
+// ── Keyword chip category dot colours ────────────────────────────────────────
+// Maps ASO category → a subtle dot tint so users get a quick visual signal
+// of keyword type without any [bracket] clutter. Dot is decorative (aria-hidden).
+const CATEGORY_DOT_CLASS: Record<KeywordCategory, string> = {
+  competitive: "bg-sky-400/70",
+  intent:      "bg-emerald-400/70",
+  gap:         "bg-amber-400/70",
+  general:     "bg-white/25",
+};
 
 export type PreviewMode = "aso" | "ad" | "push";
 
@@ -437,14 +448,24 @@ export function LivePreviewPhone({
                           {keywords
                             .split(/[,;\n]+/)
                             .map((s) => s.trim())
-                            .filter((term) => term.length > 0 && term.length <= 48)
+                            .filter((raw) => raw.length > 0)
+                            .map((raw) => parseKeyword(raw))
+                            .filter(({ keyword }) => keyword.length > 0 && keyword.length <= 48)
                             .slice(0, 8)
-                            .map((k, i) => (
+                            .map(({ raw, keyword, category }, i) => (
                               <span
-                                key={`kw-${i}-${k}`}
-                                className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium leading-none text-white/58"
+                                key={`kw-${i}-${raw}`}
+                                className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium leading-none text-white/70"
                               >
-                                {k}
+                                {/* Category dot — purely decorative, replaces the ugly [bracket] prefix */}
+                                <span
+                                  aria-hidden
+                                  className={cn(
+                                    "inline-block size-1.5 shrink-0 rounded-full",
+                                    CATEGORY_DOT_CLASS[category],
+                                  )}
+                                />
+                                {keyword}
                               </span>
                             ))}
                         </div>

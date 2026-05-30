@@ -526,7 +526,7 @@ export function OptimizerResultsPanel({
             : null;
           if (!rationale) return null;
           return (
-            <div className="rounded-2xl border border-emerald-500/20 bg-[#07120e]/80 px-5 py-4 ring-1 ring-emerald-500/10">
+            <div className="rounded-2xl border border-emerald-500/20 bg-[#07120e]/80 px-5 py-4 ring-1 ring-emerald-500/10 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-emerald-400/80">
                 Why This Ranks
               </p>
@@ -536,12 +536,15 @@ export function OptimizerResultsPanel({
         })()}
 
         {/* ── Keyword Strategy Panel ── */}
-        <KeywordStrategyPanel
-          keywords={result.keywordSuggestions ?? []}
-          copyLabel={t("results.copyAll")}
-          onCopyAll={onCopyKeywordsList}
-          isRtl={isRtl}
-        />
+        <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:60ms] motion-safe:[animation-fill-mode:both]">
+          <KeywordStrategyPanel
+            keywords={result.keywordSuggestions ?? []}
+            copyLabel={t("results.copyAll")}
+            onCopyAll={onCopyKeywordsList}
+            isRtl={isRtl}
+            busy={resultsBusy}
+          />
+        </div>
         {workspaceId &&
         selectedAppId.trim() &&
         listingGenerationId &&
@@ -549,6 +552,7 @@ export function OptimizerResultsPanel({
           <div
             className={cn(
               "rounded-2xl border border-emerald-500/30 bg-[#07120e]/90 p-6 shadow-[0_0_40px_-18px_rgba(34,197,94,0.35)] ring-1 ring-emerald-500/15",
+              "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:120ms] motion-safe:[animation-fill-mode:both]",
               isRtl && "text-end",
             )}
           >
@@ -585,18 +589,20 @@ export function OptimizerResultsPanel({
             {t("results.trackKeywords.persistHint")}
           </p>
         ) : null}
-        <OptimizerResultList
-          title={t("results.ctaList")}
-          items={(result.ctaSuggestions ?? []).filter(
-            (cta, idx) => !(idx === 0 && /^WHY THIS RANKS:/i.test(cta)),
-          )}
-          copyLabel={t("results.copyAll")}
-          onCopyAll={onCopyCtasList}
-        />
+        <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:180ms] motion-safe:[animation-fill-mode:both]">
+          <OptimizerResultList
+            title={t("results.ctaList")}
+            items={(result.ctaSuggestions ?? []).filter(
+              (cta, idx) => !(idx === 0 && /^WHY THIS RANKS:/i.test(cta)),
+            )}
+            copyLabel={t("results.copyAll")}
+            onCopyAll={onCopyCtasList}
+          />
+        </div>
 
         {/* ── v8: What's New ── */}
         {result.whatsNew ? (
-          <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/50 px-5 py-4">
+          <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/50 px-5 py-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:240ms] motion-safe:[animation-fill-mode:both]">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="text-[13px] font-semibold uppercase tracking-wide text-zinc-300/80">
                 {t("results.whatsNew.label")}
@@ -623,7 +629,7 @@ export function OptimizerResultsPanel({
 
         {/* ── v8: Screenshot Captions ── */}
         {result.screenshotCaptions && result.screenshotCaptions.length > 0 ? (
-          <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/50 px-5 py-4">
+          <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/50 px-5 py-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:300ms] motion-safe:[animation-fill-mode:both]">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="text-[13px] font-semibold uppercase tracking-wide text-zinc-300/80">
                 {t("results.screenshotCaptions.label")}
@@ -659,7 +665,7 @@ export function OptimizerResultsPanel({
 
         {/* ── v8: A/B Title Variant ── */}
         {result.abTestVariant ? (
-          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] px-5 py-4">
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] px-5 py-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:360ms] motion-safe:[animation-fill-mode:both]">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="text-[13px] font-semibold uppercase tracking-wide text-violet-300/80">
                 {t("results.abTestVariant.label")}

@@ -121,6 +121,26 @@ const SECTION_LABELS: Record<string, { label: string; desc: string }> = {
   general:        { label: "Additional",      desc: "Supporting keywords without a specific category" },
 };
 
+// ── Keyword chip skeleton ─────────────────────────────────────────────────────
+// Renders placeholder shimmer chips in the same layout as real chips.
+// widths array gives natural-looking variation rather than uniform bars.
+const SKELETON_WIDTHS = [72, 96, 80, 112, 64, 88, 104, 76, 92, 68, 100, 84];
+
+function KeywordChipSkeleton() {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {SKELETON_WIDTHS.map((w, i) => (
+        <span
+          key={i}
+          className="inline-block h-[28px] animate-pulse rounded-lg bg-white/[0.06]"
+          style={{ width: w }}
+          aria-hidden
+        />
+      ))}
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -129,9 +149,11 @@ type Props = {
   onCopyAll?: () => void | Promise<void>;
   /** When true the panel title is right-aligned. */
   isRtl?: boolean;
+  /** When true, show shimmer skeleton instead of chip content (e.g. regenerating). */
+  busy?: boolean;
 };
 
-export function KeywordStrategyPanel({ keywords, copyLabel = "Copy all", onCopyAll, isRtl = false }: Props) {
+export function KeywordStrategyPanel({ keywords, copyLabel = "Copy all", onCopyAll, isRtl = false, busy = false }: Props) {
   const [copied, setCopied] = useState(false);
   const buckets = useMemo(() => categoriseKeywords(keywords), [keywords]);
 
@@ -181,15 +203,32 @@ export function KeywordStrategyPanel({ keywords, copyLabel = "Copy all", onCopyA
         )}
       </div>
 
-      {/* Categorised sections */}
-      {hasCategorised ? (
+      {/* Categorised sections — shimmer skeleton while busy */}
+      {busy ? (
+        <div className="space-y-5">
+          {/* Show one skeleton row per expected section (3 rows matches typical v9 output) */}
+          {[0, 1, 2].map((i) => (
+            <div key={i}>
+              {/* Section header skeleton */}
+              <div className="mb-2.5 flex items-center gap-2">
+                <span className="inline-block h-[22px] w-24 animate-pulse rounded-full bg-white/[0.07]" aria-hidden />
+                <span className="inline-block h-3 w-40 animate-pulse rounded bg-white/[0.04]" aria-hidden />
+              </div>
+              <KeywordChipSkeleton />
+            </div>
+          ))}
+        </div>
+      ) : hasCategorised ? (
         <div className="space-y-5">
           {visibleSections.map((section) => {
             const items = buckets[section.category];
             if (items.length === 0) return null;
             const meta = SECTION_LABELS[section.category];
             return (
-              <div key={section.category}>
+              <div
+                key={section.category}
+                className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-200"
+              >
                 {/* Section header */}
                 <div className={cn("mb-2.5 flex items-center gap-2", isRtl && "flex-row-reverse")}>
                   <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold", section.badgeColor)}>
