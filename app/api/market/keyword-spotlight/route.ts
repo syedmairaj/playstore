@@ -90,12 +90,15 @@ Return only valid JSON. No markdown, no explanation outside the JSON object.`;
       generationConfig: {
         temperature: 0.4,
         topP: 0.9,
-        maxOutputTokens: 512,
-        responseMimeType: "application/json",
+        // 1024 gives the model headroom for its thinking tokens + the JSON output.
+        // 512 was too tight for gemini-2.5-flash and caused truncated responses.
+        maxOutputTokens: 1024,
       },
     });
 
-    const text = response.response.text().trim();
+    let text = response.response.text().trim();
+    // Strip markdown code fences if the model wraps output despite the prompt
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
     result = JSON.parse(text) as KeywordSpotlightResult;
 
     // Validate shape

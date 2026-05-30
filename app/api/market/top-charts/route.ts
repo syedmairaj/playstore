@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { fetchTopCharts, type TopChartApp, type TopChartCollection } from "@/lib/play-store/fetch-top-charts";
 import { GPLAY_CATEGORY_LABELS } from "@/lib/market/category-labels";
 
@@ -95,7 +96,10 @@ export async function GET(request: Request) {
   const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
 
   // ── Cache write (fire-and-forget, non-fatal) ──────────────────────────────
-  supabase
+  // Use admin/service-role client — the cache table's write policy requires it.
+  // Reads use the user's JWT (anon_read policy); writes always go through admin.
+  const adminClient = getSupabaseAdmin();
+  adminClient
     .from(CACHE_TABLE)
     .upsert(
       {
