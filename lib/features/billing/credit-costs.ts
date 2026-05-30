@@ -34,6 +34,12 @@ export const AI_CREDIT_COSTS = {
   reviews_issue_analysis: 3,
   /** On-demand marketplace ecosystem scan: re-crawls tracked keywords + competitor listings and writes fresh alerts. */
   marketplace_scan: 1,
+  /**
+   * AI Keyword Spotlight for Market Intelligence: analyses the top-10 chart titles/descriptions
+   * and surfaces trending keywords, a category narrative, and an ASO tip via Gemini.
+   * Top Charts (the ranked list) is always free; the AI layer costs this many credits.
+   */
+  market_keyword_spotlight: 3,
 } as const;
 
 /** First N tracked keywords from a given listing generation are free (AI credits). */

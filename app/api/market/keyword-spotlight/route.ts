@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@/lib/supabase/server";
+import {
+  AI_CREDIT_COSTS,
+  buildInsufficientAiCreditsPayload,
+  consumeWorkspaceAiCredits,
+  readWorkspaceAiCreditsRemaining,
+  refundWorkspaceAiCredits,
+} from "@/lib/features";
+import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { assertGeminiApiKey, resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
 import { getCategoryLabel } from "@/lib/market/category-labels";
 
 const ROUTE = "POST /api/market/keyword-spotlight";
+const CREDIT_COST = AI_CREDIT_COSTS.market_keyword_spotlight;
 
 export type KeywordSpotlightResult = {
   /** Top recurring keyword themes from the chart titles/descriptions */
@@ -23,6 +32,8 @@ type RequestBody = {
   category: string;
   /** ISO country code */
   country: string;
+  /** Workspace ID — required for credit deduction */
+  workspaceId: string;
 };
 
 export async function POST(request: Request) {
@@ -45,7 +56,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const { apps, category, country } = body;
+  const { apps, category, country, workspaceId } = body;
+
+  if (!workspaceId) {
+    return NextResponse.json(
+      { ok: false, error: { code: "missing_workspace", message: "workspaceId is required" } },
+      { status: 400 },
+    );
+  }
   if (!apps?.length) {
     return NextResponse.json(
       { ok: false, error: { code: "no_apps", message: "apps array is required" } },
@@ -53,7 +71,52 @@ export async function POST(request: Request) {
     );
   }
 
-  // Use top 10 only for the spotlight
+  // ── Workspace membership check ────────────────────────────────────────────
+  const role = await getWorkspaceRole(supabase, workspaceId, user.id);
+  if (!role) {
+    return NextResponse.json(
+      { ok: false, error: { code: "forbidden", message: "Not a workspace member" } },
+      { status: 403 },
+    );
+  }
+
+  // ── Balance check ─────────────────────────────────────────────────────────
+  const balanceResult = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
+  const remaining = balanceResult.ok ? balanceResult.remaining : 0;
+  if (remaining < CREDIT_COST) {
+    return NextResponse.json(
+      buildInsufficientAiCreditsPayload(CREDIT_COST, remaining),
+      { status: 402 },
+    );
+  }
+
+  // ── Deduct credits upfront ────────────────────────────────────────────────
+  const consumeResult = await consumeWorkspaceAiCredits(supabase, {
+    workspaceId,
+    userId: user.id,
+    amount: CREDIT_COST,
+    description: `Market Intelligence: AI Keyword Spotlight — ${getCategoryLabel(category)} (${country.toUpperCase()})`,
+    sourceType: "generation",
+    meta: { route: ROUTE, category, country },
+  });
+
+  if (!consumeResult.ok) {
+    const code = consumeResult.code;
+    if (code === "insufficient_credits" || code === "balance_too_low") {
+      return NextResponse.json(
+        buildInsufficientAiCreditsPayload(CREDIT_COST, consumeResult.remaining ?? 0),
+        { status: 402 },
+      );
+    }
+    return NextResponse.json(
+      { ok: false, error: { code: "billing_error", message: "Could not deduct credits" } },
+      { status: 500 },
+    );
+  }
+
+  const ledgerId = consumeResult.ledgerId;
+
+  // ── Gemini inference ──────────────────────────────────────────────────────
   const top10 = apps.slice(0, 10);
   const categoryLabel = getCategoryLabel(category);
 
@@ -106,13 +169,24 @@ Return only valid JSON. No markdown, no explanation outside the JSON object.`;
       throw new Error("Unexpected response shape from Gemini");
     }
   } catch (err) {
+    // Refund on any AI failure — user should not lose credits for a server error
+    await refundWorkspaceAiCredits(supabase, {
+      ledgerId,
+      userId: user.id,
+      reason: "AI Keyword Spotlight generation failed",
+    });
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[${ROUTE}] Gemini error:`, message);
     return NextResponse.json(
-      { ok: false, error: { code: "ai_error", message: "Could not generate spotlight. Try again." } },
+      { ok: false, error: { code: "ai_error", message: "Could not generate spotlight. Your credits have been refunded." } },
       { status: 502 },
     );
   }
 
-  return NextResponse.json({ ok: true, spotlight: result });
+  return NextResponse.json({
+    ok: true,
+    spotlight: result,
+    creditsUsed: CREDIT_COST,
+    creditsRemaining: remaining - CREDIT_COST,
+  });
 }
