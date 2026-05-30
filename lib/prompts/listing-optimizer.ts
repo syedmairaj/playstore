@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v9.8";
+const PROMPT_VERSION = "listing-optimizer-v10.0";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -404,6 +404,15 @@ function buildSystemMessage(targetArabic: boolean): string {
       "(5) CTA / install nudge — action-oriented, outcome-focused final push. " +
       "If targetArabic is true: all 5 captions must be in natural Arabic — short, punchy, high-impact, legible on a mobile screen.",
 
+    // ── v10 field ────────────────────────────────────────────────────────────
+    "  strategicNote: string ≤400 chars. ONE sentence only. Explain exactly what signal combination drove this listing. " +
+      "Format: 'Fixed [issue] from reviews + wove [keyword] market spotlight keywords + applied [tone] tone.' " +
+      "If no review issues were staged, skip that clause. If no market spotlight keywords were present, skip that clause. " +
+      "This is shown to the user as 'Optimization Factors' pills in the UI — make it specific and human-readable. " +
+      "WRONG: 'Optimized the listing using available signals.' " +
+      "RIGHT: 'Fixed crash stability issue from reviews + wove AI coach and community trending keywords into title and short description.' " +
+      "If targetArabic is true: write strategicNote in natural Arabic.",
+
     "  abTestVariant: object — titleB (string ≤30 chars) + hypothesis (string ≤300 chars). " +
       "titleB MUST be derived from THIS app's APP BRIEF — use the actual app name, category, primary feature, " +
       "or primary user goal from the input. Do NOT use generic action verbs unrelated to this specific app. " +
@@ -464,7 +473,21 @@ function buildSystemMessage(targetArabic: boolean): string {
     .join(" ");
 }
 
-// ── User message (v9) ─────────────────────────────────────────────────────────
+// ── User message (v10) ───────────────────────────────────────────────────────
+//
+// v10 additions over v9.8:
+//   - Splits exploit targets into two distinct signal types:
+//       (a) Review pain-point issues  (no prefix or backlog-prefixed)
+//       (b) Market spotlight keywords (prefixed `market_spotlight:`)
+//   - Injects a SYNTHESIS PRIORITY HIERARCHY block when either signal is present:
+//       PRIORITY 1 — FIX & REASSURE: address review issues in fullDescription + whatsNew
+//       PRIORITY 2 — EXPLOIT (Market Intelligence): weave spotlight keywords into title/short
+//       PRIORITY 3 — NARRATIVE: apply tone consistently across all fields
+//   - Review issues and market keywords are kept in separate prompt blocks so the
+//     model doesn't conflate them (issues are NOT keywords; keywords are NOT bugs).
+//   - strategicNote output field added to responseSchema so the model explains
+//     what signals it used — surfaced in the UI as "Optimization Factors" pills.
+
 function buildUserMessage(
   input: ListingOptimizerInput,
   keywords: string[],
@@ -472,6 +495,16 @@ function buildUserMessage(
   targetArabic: boolean,
 ): string {
   const toneBrief = TONE_BRIEF[input.toneStyle];
+
+  // Separate market spotlight keywords from review-based pain-point issues
+  const spotlightKeywords = exploitTargets
+    .filter((t) => t.startsWith("market_spotlight:"))
+    .map((t) => t.replace(/^market_spotlight:/, "").trim())
+    .filter(Boolean);
+
+  const reviewIssues = exploitTargets
+    .filter((t) => !t.startsWith("market_spotlight:"))
+    .filter(Boolean);
 
   const strategyBlock = [
     "── APP BRIEF ──",
@@ -500,31 +533,58 @@ function buildUserMessage(
         ].join("\n")
       : "";
 
-  // Competitor displacement block — CLEAN ROOM: only injected when the current
-  // session has explicitly staged pain-point targets. Never inferred from history.
+  // ── PRIORITY 1: Fix & Reassure — review-based pain-point issues ──────────
+  // CLEAN ROOM: only injected when the current session has explicitly staged
+  // pain-point targets. Never inferred from history.
   const displacementBlock =
-    exploitTargets.length > 0
+    reviewIssues.length > 0
       ? [
           "",
-          "── STRATEGIC DISPLACEMENT CAMPAIGN ──",
-          "CLEAN ROOM: The following pain points are the ONLY competitive issues to address. " +
-            "Do NOT reference any other pain points, bugs, or historical issues not listed here.",
-          `Pain points identified from competitor and own-app reviews this session: [${exploitTargets.join(", ")}].`,
-          "Apply the Safe-Passage Strategy: your fullDescription hook MUST open with a direct promise of relief " +
-            "from these pain points — make it the first thing the user reads.",
+          "── SYNTHESIS PRIORITY 1: FIX & REASSURE (Review Issues — Highest Priority) ──",
+          "CLEAN ROOM: The following user pain points are the ONLY review issues to address. " +
+            "Do NOT reference any other pain points or bugs not listed here.",
+          `Pain points from user reviews this session: [${reviewIssues.join(", ")}].`,
+          "INSTRUCTIONS:",
+          "  • The fullDescription hook MUST open with a direct promise that these pain points are resolved.",
+          "  • The whatsNew field MUST explicitly address these fixes — make it the first thing the user reads.",
+          "  • Do NOT insert these as keywords. They are UX/trust signals, not search terms.",
           "Displacement rules per pain-point type:",
-          "  • Inaccurate data / database issues → position around data precision, verified entries, " +
-            "trusted accuracy. Never imply your data is 'perfect' — use 'verified', 'trusted', 'validated'.",
-          "  • Stability/crash issues → position as 'zero crashes', 'rock-solid performance', 'battle-tested'.",
-          "  • Ad/monetization friction → highlight smooth experience, fair pricing, zero interruptions.",
-          "  • Missing features/limited → showcase depth, comprehensive tracking, power-user capabilities.",
-          "  • Poor UX/navigation → emphasise intuitive design, fast onboarding, clean interface.",
-          "  • General dissatisfaction → build trust through specifics: data sources, audit trail, guarantee.",
-          "  • Any other type → infer the strongest displacement angle and apply it assertively.",
-          "Blend naturally into copy. Do NOT name competitors. The displacement must read as genuine positioning.",
+          "  • Stability/crash → 'zero crashes', 'rock-solid', 'battle-tested reliability'.",
+          "  • Inaccurate data → 'verified', 'trusted', 'validated' (never claim 'perfect').",
+          "  • Ad friction → smooth experience, fair pricing, zero interruptions.",
+          "  • Missing features → depth, comprehensive capabilities, power-user tools.",
+          "  • Poor UX → intuitive design, fast onboarding, clean interface.",
+          "  • Other → infer the strongest displacement angle and apply it assertively.",
+          "Blend naturally. Do NOT name competitors. The displacement must read as genuine positioning.",
           "Your [gap] keywords MUST directly reflect these staged pain points only.",
         ].join("\n")
       : "";
+
+  // ── PRIORITY 2: Exploit — market intelligence spotlight keywords ──────────
+  // Only injected when the user navigated from Market Intelligence and
+  // clicked "Optimize with Market Spotlight". Never inferred.
+  const spotlightBlock =
+    spotlightKeywords.length > 0
+      ? [
+          "",
+          "── SYNTHESIS PRIORITY 2: EXPLOIT MARKET INTELLIGENCE (Market Spotlight Keywords) ──",
+          "The following keywords are currently trending in this app's category on Google Play. " +
+            "They were identified by real-time analysis of the top 10 chart apps in this market.",
+          `Trending Market Keywords: [${spotlightKeywords.join(", ")}]`,
+          "INSTRUCTIONS:",
+          "  • Incorporate these keywords into the title and shortDescription ONLY if they are " +
+            "genuinely relevant to this app's features — never force-fit irrelevant terms.",
+          "  • Weave them semantically into fullDescription as natural language — not as a keyword list.",
+          "  • Use the category gap these keywords reveal to POSITION this app as the standout alternative " +
+            "to the top 10 chart leaders. What does this app offer that the top 10 don't?",
+          "  • Do NOT stuff multiple keywords into a single sentence. One per sentence maximum.",
+          "  • These are SECONDARY to Priority 1 — if a fix issue and a spotlight keyword conflict for " +
+            "the same sentence, the fix/reassurance wins.",
+        ].join("\n")
+      : "";
+
+  // ── PRIORITY 3: Narrative — applied via TONE PSYCHOLOGY block above ───────
+  // (No separate block needed — TONE_BRIEF is already in strategyBlock)
 
   const reminderBlock = [
     "",
@@ -569,7 +629,7 @@ function buildUserMessage(
     "If ANY item above fails, rewrite the affected field before outputting. Then output the single JSON object.",
   ].join("\n");
 
-  return [strategyBlock, refinement, displacementBlock, reminderBlock].join("\n");
+  return [strategyBlock, refinement, displacementBlock, spotlightBlock, reminderBlock].join("\n");
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

@@ -64,6 +64,7 @@ import {
   resolveListingPreviewIconUrl,
 } from "@/lib/apps/logo-generator-metadata";
 import { ActiveOptimizationQueuePanel } from "@/components/optimizer/ActiveOptimizationQueuePanel";
+import { OptimizationSourcesSidebar } from "@/components/optimizer/optimization-sources-sidebar";
 import { LocalizedResults } from "@/components/optimizer/LocalizedResults";
 import {
   LOCALIZE_MARKETS,
@@ -385,6 +386,13 @@ export function ListingOptimizer({
   const competitorVulnerabilitiesRef = useRef<string[]>([]);
   const [queuedImprovements, setQueuedImprovements] = useState<ListingImprovementItem[]>([]);
   const [queuedImprovementsLoading, setQueuedImprovementsLoading] = useState(false);
+  /**
+   * Snapshot of queuedImprovements captured at generation time.
+   * Used to populate "Optimization Factors" pills in the results panel
+   * — we need to know what WAS in the queue when the listing was generated,
+   * not what's left after items are archived.
+   */
+  const [generationQueueSnapshot, setGenerationQueueSnapshot] = useState<ListingImprovementItem[]>([]);
   const optimizerSessionRestoredRef = useRef(false);
   const [pickAppGate, setPickAppGate] = useState(false);
   const [wizardStep, setWizardStep] = useState<OptimizerWizardStep>(0);
@@ -1843,6 +1851,8 @@ export function ListingOptimizer({
       }),
     );
     setLoading(true);
+    // Snapshot the queue before generation — used for "Optimization Factors" pills
+    setGenerationQueueSnapshot([...queuedImprovements]);
     try {
       // ── Competitor inversion directive ────────────────────────────────────
       // If the Exploit bridge injected competitor pain-points, prepend a
@@ -2954,6 +2964,13 @@ export function ListingOptimizer({
                         onNavigateToReviews={handleNavigateToReviews}
                       />
                     ) : null}
+                    {/* Optimization Sources sidebar — transparent view of what the AI will use */}
+                    {queuedImprovements.length > 0 && !queuedImprovementsLoading ? (
+                      <OptimizationSourcesSidebar
+                        items={queuedImprovements}
+                        isRtl={locale === "ar"}
+                      />
+                    ) : null}
                     <p className="text-xs leading-relaxed text-white/45">
                       {t("form.sectionVoiceHelper", {
                         credits: AI_CREDIT_COSTS.listing_generation,
@@ -3142,6 +3159,7 @@ export function ListingOptimizer({
               appsListLength={appsList.length}
               showGenerateSuccess={generateJustSucceeded}
               canSaveToTracker={canSaveKeywordsToTracker}
+              generationQueueSnapshot={generationQueueSnapshot}
             />
             ) : null}
 

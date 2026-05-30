@@ -70,6 +70,10 @@ const LISTING_RESPONSE_SCHEMA = {
       },
       required: ["titleB", "hypothesis"],
     },
+    // ── v10 fields ────────────────────────────────────────────────────────
+    // One-sentence explanation of what signals were used — surfaced in UI
+    // as "Optimization Factors" pills. Optional so older stored rows still parse.
+    strategicNote: { type: SchemaType.STRING },
   },
   required: [
     "title",
@@ -83,6 +87,7 @@ const LISTING_RESPONSE_SCHEMA = {
     "whatsNew",
     "screenshotCaptions",
     "abTestVariant",
+    "strategicNote",
   ],
 };
 
@@ -101,7 +106,8 @@ const STRICT_RETRY_ADDENDUM =
   "improvementTips (2–8 strings), " +
   "whatsNew (≤500 chars — Play Store release notes, opens with pain point resolved, keywords woven in), " +
   "screenshotCaptions (exactly 5 strings each ≤80 chars — screenshot overlay headlines ordered by conversion priority), " +
-  "abTestVariant (object with titleB ≤30 chars + hypothesis ≤300 chars — A/B title test for Play Store Experiments). " +
+  "abTestVariant (object with titleB ≤30 chars + hypothesis ≤300 chars — A/B title test for Play Store Experiments), " +
+  "strategicNote (≤400 chars — one sentence explaining which signals drove the listing: review issues fixed, market keywords woven, tone applied). " +
   "Return ONLY the JSON object — no prose, no markdown.";
 
 export type GenerateListingWithGeminiResult = {

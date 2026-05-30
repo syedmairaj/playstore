@@ -1,9 +1,10 @@
 "use client";
 
-import { Check, ChevronDown, Copy } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Hash, Info } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
+import type { ListingImprovementItem } from "@/components/reviews/review-improvements-queue";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -112,6 +113,8 @@ type Props = {
   appsListLength: number;
   showGenerateSuccess?: boolean;
   canSaveToTracker?: boolean;
+  /** Snapshot of queuedImprovements at generation time — drives Optimization Factors pills. */
+  generationQueueSnapshot?: ListingImprovementItem[];
 };
 
 export function OptimizerResultsPanel({
@@ -151,6 +154,7 @@ export function OptimizerResultsPanel({
   appsListLength,
   showGenerateSuccess = false,
   canSaveToTracker = false,
+  generationQueueSnapshot = [],
 }: Props) {
   const t = useTranslations("optimizer");
 
@@ -234,6 +238,70 @@ export function OptimizerResultsPanel({
           {t("results.asoScoreUnavailable")}
         </div>
       ) : null}
+
+      {/* ── Optimization Factors pills (v10) ───────────────────────────────── */}
+      {(() => {
+        const issueItems = generationQueueSnapshot.filter(
+          (i) => !(i.id.startsWith("url-exploit-") && i.sentimentTag?.startsWith("market_spotlight:")),
+        );
+        const spotlightItems = generationQueueSnapshot.filter(
+          (i) => i.id.startsWith("url-exploit-") && i.sentimentTag?.startsWith("market_spotlight:"),
+        );
+        const hasIssues = issueItems.length > 0;
+        const hasSpotlight = spotlightItems.length > 0;
+        const hasNote = Boolean(result.strategicNote?.trim());
+
+        if (!hasIssues && !hasSpotlight && !hasNote) return null;
+
+        return (
+          <div
+            className={cn(
+              "flex flex-col gap-2.5 rounded-2xl border border-zinc-800/60 bg-white/[0.02] p-4",
+              "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300",
+              isRtl && "font-arabic",
+            )}
+            role="status"
+            aria-live="polite"
+          >
+            <p className={cn(
+              "text-[11px] font-semibold uppercase tracking-wider text-zinc-500",
+              isRtl && "text-end",
+            )}>
+              {isRtl ? "عوامل التحسين" : "Optimization factors"}
+            </p>
+            <div className={cn("flex flex-wrap gap-1.5", isRtl && "flex-row-reverse")}>
+              {hasIssues && (
+                <span className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border border-rose-500/30 bg-rose-500/[0.08] px-2.5 py-1 text-[11px] font-medium text-rose-300/90",
+                  isRtl && "flex-row-reverse",
+                )}>
+                  <AlertTriangle className="size-3 shrink-0 text-rose-400" aria-hidden />
+                  {isRtl
+                    ? `+ ${issueItems.length} مشكلة تم إصلاحها`
+                    : `+ ${issueItems.length} issue${issueItems.length > 1 ? "s" : ""} addressed`}
+                </span>
+              )}
+              {hasSpotlight && (
+                <span className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-1 text-[11px] font-medium text-emerald-300/90",
+                  isRtl && "flex-row-reverse",
+                )}>
+                  <Hash className="size-3 shrink-0 text-emerald-400" aria-hidden />
+                  {isRtl
+                    ? `+ ${spotlightItems.length} كلمة من السوق مُنسجت`
+                    : `+ ${spotlightItems.length} market keyword${spotlightItems.length > 1 ? "s" : ""} woven in`}
+                </span>
+              )}
+            </div>
+            {hasNote && (
+              <p className={cn("flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-500", isRtl && "flex-row-reverse text-end")}>
+                <Info className="mt-0.5 size-3 shrink-0 text-zinc-600" aria-hidden />
+                {result.strategicNote}
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       <Tabs defaultValue="title" className="w-full">
         <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">

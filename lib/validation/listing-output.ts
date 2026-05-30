@@ -52,6 +52,13 @@ export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
     /** Set when the model returned unusable ASO metadata after a successful listing parse. */
     asoScoreDegraded: z.literal(true).optional(),
 
+    // ── v10 fields ─────────────────────────────────────────────────────────
+    /**
+     * One-sentence explanation of what signals drove the generated copy.
+     * Surfaced in the UI as Optimization Factors pills after generation.
+     */
+    strategicNote: z.string().min(1).max(400).optional(),
+
     // ── v8 fields ──────────────────────────────────────────────────────────
     /** "What's New" copy for Play Store release notes (≤500 chars). Indexed by Google. */
     whatsNew: z.string().min(1).max(500).optional(),

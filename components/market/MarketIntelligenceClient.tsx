@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Coins, Lock, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
+import { ArrowRight, Coins, Lock, RefreshCw, Sparkles, TrendingUp, Wand2 } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
 import type { KeywordSpotlightResult } from "@/app/api/market/keyword-spotlight/route";
@@ -133,6 +134,75 @@ function SpotlightLockedCard({
         Credits are refunded automatically if analysis fails
       </p>
     </div>
+  );
+}
+
+// ── Optimize with Market Spotlight button ─────────────────────────────────────
+
+function OptimizeWithSpotlightButton({
+  spotlight,
+  workspaceId,
+  isRtl,
+}: {
+  spotlight: KeywordSpotlightResult;
+  workspaceId: string;
+  isRtl: boolean;
+}) {
+  const router = useRouter();
+
+  function handleClick() {
+    // Encode the top trending keywords as exploit_targets — the optimizer
+    // will inject them as market spotlight signals into the generation prompt.
+    // Prefix each with "market_spotlight:" so the prompt builder can
+    // distinguish them from review-based pain-point targets.
+    const targets = spotlight.trendingKeywords
+      .slice(0, 8)
+      .map((kw) => `market_spotlight:${kw}`)
+      .join(",");
+
+    const params = new URLSearchParams();
+    params.set("exploit_targets", targets);
+    // Also pass the spotlight narrative as a hint
+    if (spotlight.asoTip) {
+      params.set("market_tip", encodeURIComponent(spotlight.asoTip));
+    }
+
+    router.push(`/app/${workspaceId}/listing-optimizer?${params.toString()}`);
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className={cn(
+        "group flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-sm font-semibold transition-all duration-150",
+        "border-emerald-500/40 bg-emerald-500/[0.08] text-emerald-200",
+        "hover:border-emerald-500/60 hover:bg-emerald-500/[0.14] hover:text-emerald-100",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50",
+        isRtl && "flex-row-reverse font-arabic",
+      )}
+    >
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/15">
+        <Wand2 className="size-4 text-emerald-400" aria-hidden />
+      </div>
+      <div className={cn("min-w-0 flex-1 text-start", isRtl && "text-end")}>
+        <p className="text-sm font-semibold text-emerald-100">
+          {isRtl ? "تحسين القائمة بـ Spotlight" : "Optimize Listing with Market Spotlight"}
+        </p>
+        <p className="mt-0.5 text-[11px] font-normal text-emerald-300/70">
+          {isRtl
+            ? `يُحمّل ${spotlight.trendingKeywords.length} كلمة رائجة مباشرةً في المُحسِّن`
+            : `Loads ${spotlight.trendingKeywords.length} trending keywords directly into the Optimizer`}
+        </p>
+      </div>
+      <ArrowRight
+        className={cn(
+          "size-4 shrink-0 text-emerald-400/70 transition-transform duration-150 group-hover:translate-x-0.5",
+          isRtl && "rotate-180 group-hover:-translate-x-0.5 group-hover:translate-x-0",
+        )}
+        aria-hidden
+      />
+    </button>
   );
 }
 
@@ -409,24 +479,37 @@ export function MarketIntelligenceClient({
 
           {/* What to do next — shown after unlock */}
           {!spotlightLocked && spotlight && !loadingSpot && (
-            <div className="rounded-2xl border border-zinc-800 bg-white/[0.02] p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                Next steps
-              </p>
-              <ul className="space-y-2 text-xs leading-relaxed text-zinc-400">
-                <li className="flex gap-2">
-                  <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-emerald-500/60" aria-hidden />
-                  Check if your title includes any of the trending keywords above
-                </li>
-                <li className="flex gap-2">
-                  <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-sky-500/60" aria-hidden />
-                  Open top 3 apps in this chart and compare their short descriptions with yours
-                </li>
-                <li className="flex gap-2">
-                  <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-amber-500/60" aria-hidden />
-                  Run AI Listing Optimizer with these keywords as your target
-                </li>
-              </ul>
+            <div className="space-y-3 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+              {/* Primary CTA — one-click synthesis into Listing Optimizer */}
+              <OptimizeWithSpotlightButton
+                spotlight={spotlight}
+                workspaceId={workspaceId}
+                isRtl={isRtl}
+              />
+
+              {/* Secondary guidance */}
+              <div className="rounded-2xl border border-zinc-800 bg-white/[0.02] p-4">
+                <p className={cn(
+                  "mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500",
+                  isRtl && "text-end font-arabic",
+                )}>
+                  {isRtl ? "الخطوات التالية" : "Next steps"}
+                </p>
+                <ul className="space-y-2 text-xs leading-relaxed text-zinc-400">
+                  <li className={cn("flex gap-2", isRtl && "flex-row-reverse")}>
+                    <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-emerald-500/60" aria-hidden />
+                    <span className={isRtl ? "text-end font-arabic" : ""}>
+                      {isRtl ? "تحقق من عنوانك — هل يتضمن أيًا من الكلمات الرائجة أعلاه؟" : "Check if your title includes any of the trending keywords above"}
+                    </span>
+                  </li>
+                  <li className={cn("flex gap-2", isRtl && "flex-row-reverse")}>
+                    <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-sky-500/60" aria-hidden />
+                    <span className={isRtl ? "text-end font-arabic" : ""}>
+                      {isRtl ? "افتح أفضل 3 تطبيقات في هذا الجدول وقارن أوصافها القصيرة بوصفك" : "Open top 3 apps in this chart and compare their short descriptions with yours"}
+                    </span>
+                  </li>
+                </ul>
+              </div>
             </div>
           )}
         </div>
