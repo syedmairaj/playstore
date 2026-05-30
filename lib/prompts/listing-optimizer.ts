@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v9.1";
+const PROMPT_VERSION = "listing-optimizer-v9.3";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -43,9 +43,22 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most nutrition trackers are either too complex (medical-software UX) or " +
     "too shallow (consumer-grade data). Position this app as precise AND human-designed — clinical accuracy with intuitive flow. " +
 
+    "SHORT DESCRIPTION RULE: Front-load the PRIMARY CLINICAL BENEFIT — the single most important outcome the user gains. " +
+    "Lead with what they achieve, not with a qualifier or secondary modifier. " +
+    "WRONG: 'Accurate nutrition tracking for health-focused users. Monitor sodium, sugar daily.' (qualifier-first, passive) " +
+    "RIGHT: 'Track sodium & sugar with clinical accuracy. Reliable data for every health decision.' (benefit-first, specific) " +
+    "The first three words of shortDescription must be the most important thing the user gets — not a preamble. " +
+
     "HUMAN ELEMENT: Include one sentence in the hook paragraph explaining why this app exists for real patients and " +
     "health-conscious individuals — not a feature claim, a human reason " +
     "(e.g. 'Built for people who need their tracking data to be as reliable as their lab results'). " +
+
+    "BRIDGE SENTENCE (mandatory): After the hook paragraph and before the bullet list, write one sentence that connects " +
+    "the clinical problem stated in the hook to the features that follow. Frame features as the solution to data unreliability. " +
+    "The transition must feel authoritative, not generic. " +
+    "WRONG: 'Here is what you get:' (generic — no clinical authority) " +
+    "RIGHT: 'Every feature is built around a single standard: data you can present to a clinician without hesitation.' " +
+
     "BULLETS: Every feature bullet MUST lead with the user's clinical or quantitative gain, THEN the feature. " +
     "NEVER start a bullet with a keyword phrase, feature name, or app-specific term. " +
     "WRONG: '📊 Food database scanner: search 2M entries for nutrition data.' " +
@@ -76,9 +89,22 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most health trackers feel like homework — complex, cold, or guilt-inducing. " +
     "Position this app as the one that makes healthy habits feel natural and rewarding, not stressful. " +
 
+    "SHORT DESCRIPTION RULE: Front-load the PRIMARY PERSONAL WIN — the single most motivating outcome the user experiences. " +
+    "Lead with their benefit, not a feature name or qualifier. Make the first three words feel like a warm promise. " +
+    "WRONG: 'Easy health tracking. Build better habits with a simple salt & sugar log.' (feature-first, cold) " +
+    "RIGHT: 'Build healthier habits daily. Track salt & sugar without the stress or guesswork.' (benefit-first, warm) " +
+    "The first three words of shortDescription must make the user feel something positive — not read a spec. " +
+
     "HUMAN ELEMENT: Include one sentence in the hook paragraph explaining why this app exists for everyday people — " +
     "a warm, relatable reason, not a feature claim " +
     "(e.g. 'Made for people who want to eat a little better every day, without turning nutrition into a second job'). " +
+
+    "BRIDGE SENTENCE (mandatory): After the hook paragraph and before the bullet list, write one warm sentence that connects " +
+    "the emotional problem in the hook to the features that follow. Frame features as what makes the journey easy and rewarding. " +
+    "The transition must feel like a supportive hand on the shoulder, not a product spec intro. " +
+    "WRONG: 'Here is what the app includes:' (cold, spec-sheet tone) " +
+    "RIGHT: 'Everything here is designed to make your healthy habits feel effortless — not like a chore.' " +
+
     "BULLETS: Every bullet leads with a personal win the user will feel, then the feature behind it. " +
     "NEVER start a bullet with a feature name or keyword phrase — that reads like a spec sheet, not a companion. " +
     "WRONG: '📅 Daily food log: record what you ate each day.' " +
@@ -110,9 +136,23 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most trackers are passive log-books. " +
     "Position this app as an active weapon — it doesn't just record; it helps the user take control and see results fast. " +
 
+    "SHORT DESCRIPTION RULE: Front-load the PRIMARY OUTCOME — the single most powerful result the user achieves. " +
+    "Lead with the win, not a qualifier or preamble. First three words must hit hard. " +
+    "WRONG: 'Eliminate guesswork and track nutrition to crush your diet goals fast.' (buried outcome, slow start) " +
+    "RIGHT: 'Crush your diet goals. Track salt & sugar precisely and see results fast.' (outcome first, high energy) " +
+    "The first three words of shortDescription must deliver the punch — not warm up to it. " +
+
     "HUMAN ELEMENT: Include one sentence in the hook paragraph that frames the app as the weapon the user has been missing — " +
     "a declaration, not a description " +
     "(e.g. 'Built for people who are done guessing and ready to see real numbers move'). " +
+
+    "BRIDGE SENTENCE (mandatory): After the hook paragraph and before the bullet list, write one bridge sentence that connects " +
+    "the frustration stated in the hook to the feature list that follows. This sentence must frame the features as the SOLUTION, " +
+    "not just introduce them. The transition must feel earned, not abrupt. " +
+    "WRONG: 'Here is what you get:' (generic — kills momentum completely) " +
+    "RIGHT: 'We built every feature in this app to replace passive log-books with active, result-driving tools.' " +
+    "The bridge sentence must be imperative, outcome-focused, zero filler. " +
+
     "BULLETS: Every bullet opens with a strong action verb or power word, then delivers the payoff immediately. " +
     "NEVER start a bullet with a keyword phrase or feature label — that kills momentum. " +
     "The outcome must be concrete and measurable, not vague. " +
@@ -144,9 +184,22 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most trackers are over-designed with features users don't need. " +
     "Position this app as the one that does exactly what it says — nothing more, nothing less. Pure function. " +
 
+    "SHORT DESCRIPTION RULE: Front-load the PRIMARY FUNCTIONAL BENEFIT — the single most important outcome the user achieves. " +
+    "Lead with what they get, not with a qualifier, modifier, or setup phrase. " +
+    "WRONG: 'Eliminate guesswork. Track salt & sugar precisely. Achieve rapid health results.' (qualifier-first, fragmented) " +
+    "RIGHT: 'Track salt & sugar precisely. Eliminate guesswork and hit your health goals daily.' (outcome-first, tight) " +
+    "The first three words of shortDescription must be the most important thing the user gets — not a preamble. " +
+
     "HUMAN ELEMENT: Include one sentence in the hook paragraph that states simply what the app does and for whom — " +
     "no adjectives, no claims, just a precise statement of purpose " +
     "(e.g. 'Built for people who need accurate sodium and glucose data without the noise'). " +
+
+    "BRIDGE SENTENCE (mandatory): After the hook paragraph and before the bullet list, write one minimal sentence that connects " +
+    "the functional problem in the hook to the features that follow. No filler — one clean statement of purpose. " +
+    "WRONG: 'Here is a list of the app features:' (redundant, adds zero value) " +
+    "RIGHT: 'Built to do one thing well: give you accurate data, fast, every time.' " +
+    "The bridge sentence must be stripped and precise — if it can be shorter, make it shorter. " +
+
     "BULLETS: Every bullet is one concrete benefit + the feature that delivers it. Nothing more. " +
     "NEVER start a bullet with a feature name, app term, or keyword phrase. " +
     "Start with the outcome — the thing the user now has — then name what delivers it. " +
@@ -310,7 +363,11 @@ function buildSystemMessage(targetArabic: boolean): string {
       "Every caption must be tone-consistent and specific to this app's USP. No generic captions.",
 
     "  abTestVariant: object — titleB (string ≤30 chars) + hypothesis (string ≤300 chars). " +
-      "titleB tests a DIFFERENT angle from titleA (keyword-first vs benefit-first or vice versa). " +
+      "titleB MUST be keyword-rich — it must contain at least one high-search-volume term from the category " +
+      "(e.g. 'Track', 'Log', 'Monitor', the primary nutrient name, or the primary health goal). " +
+      "Abstract benefit phrases without search terms (e.g. 'Your Health Command', 'Take Control Now') are FORBIDDEN " +
+      "— they destroy search discovery. titleB tests a DIFFERENT angle from titleA: " +
+      "if titleA is keyword+benefit, titleB must be keyword+action or keyword+audience. " +
       "hypothesis explains: what each title tests, which user segment each targets, " +
       "what metric to watch (CVR or installs), and minimum test duration (2 weeks). " +
       "Written for a non-technical app owner.",
@@ -342,7 +399,16 @@ function buildSystemMessage(targetArabic: boolean): string {
         "and gap strategy ALL apply in Arabic exactly as in English — same standards, different language. " +
         "Professional Arabic uses formal clinical register (e.g. 'مراقب استهلاك الصوديوم', 'أداة الامتثال الغذائي'). " +
         "Friendly Arabic uses warm conversational register (e.g. 'تتبع الملح بسهولة', 'تطبيق صديق لعاداتك اليومية'). " +
-        "Bold Arabic uses imperative action verbs and power words. Minimal Arabic is stripped and precise. " +
+        "Bold Arabic uses imperative action verbs and power words (e.g. 'تحكم في صحتك', 'سحق أهدافك اليوم'). " +
+        "Minimal Arabic is stripped and precise — no filler, no marketing adjectives. " +
+        "ALL FOUR STRUCTURAL RULES apply in Arabic exactly as in English: " +
+        "(1) SHORT DESCRIPTION RULE: front-load the primary benefit — first three words of shortDescription must deliver " +
+        "the main outcome in Arabic, not a qualifier or preamble. " +
+        "(2) BRIDGE SENTENCE: required in all 4 tones in Arabic — connect the hook paragraph to the feature list " +
+        "with one tone-consistent sentence that frames features as the solution. " +
+        "(3) BENEFIT-FIRST BULLETS: every Arabic bullet leads with the user outcome, never with a feature name. " +
+        "(4) HUMAN ELEMENT: one sentence explaining why the app exists for real Arabic-speaking users — " +
+        "culturally relevant, not a translated English phrase. " +
         "Do not produce generic Arabic copy — every field must be in the correct register."
       : null,
   ]
@@ -414,12 +480,16 @@ function buildUserMessage(
 
   const reminderBlock = [
     "",
-    "── FINAL QUALITY CHECKLIST (10/10 STANDARD) ──",
+    "── FINAL QUALITY CHECKLIST (10/10 STANDARD) — applies to ALL tones, English AND Arabic ──",
     "1. title: ≤30 chars? Primary keyword present naturally? Signals transformation — not just a category label?",
-    "2. shortDescription: ≤80 chars? Standalone hook? Answers 'why install NOW' without relying on context?",
-    "3. fullDescription structure: Hook paragraph → Features intro sentence → Bullet list → Social proof → CTA?",
+    "2. shortDescription: ≤80 chars? BENEFIT-FIRST — do the first three words deliver the primary outcome? " +
+      "NOT a qualifier, modifier, or preamble? Read it aloud — does it answer 'why install NOW' immediately?",
+    "3. fullDescription structure: Hook paragraph → BRIDGE SENTENCE → Bullet list → Social proof → CTA? " +
+      "BRIDGE SENTENCE CHECK: Is there one tone-consistent sentence between the hook paragraph and the bullet list " +
+      "that frames the features as the solution to the hook's problem? If missing, add it. " +
+      "A generic 'Here is what you get:' is NOT a bridge sentence — it must connect the specific frustration to the solution.",
     "4. Hook paragraph: First sentence ≤80 chars with transformation promise? " +
-      "Human element sentence present (why this app exists for real people)?",
+      "Human element sentence present (why this app exists for real people — not a feature claim)?",
     "5. ANTI-STUFFING CHECK — read every sentence. Does any sentence contain an awkward keyword phrase " +
       "that a human would never say naturally? (e.g. 'end searches for barcode scanner accuracy app', " +
       "'food tracker data error fix solution'). If yes, rewrite it as natural language expressing the same intent.",
@@ -434,7 +504,9 @@ function buildUserMessage(
     "11. improvementTips: last tip is a 'Rationale for Ranking' — why this copy beats market leaders?",
     "12. whatsNew: ≤500 chars? Opens with pain point resolved? No awkward keyword strings?",
     "13. screenshotCaptions: exactly 5 items? ≤80 chars each? Benefit-first? Tone-specific?",
-    "14. abTestVariant: titleB ≤30 chars? Different angle from titleA? Hypothesis clear to a non-technical owner?",
+    "14. abTestVariant: titleB ≤30 chars? Keyword-rich — contains at least one search term (Track/Log/Monitor/nutrient name)? " +
+      "NOT an abstract phrase with no search value (e.g. 'Your Health Command' is forbidden)? " +
+      "Different angle from titleA? Hypothesis clear to a non-technical owner?",
     "If ANY item above fails, rewrite the affected field before outputting. Then output the single JSON object.",
   ].join("\n");
 
