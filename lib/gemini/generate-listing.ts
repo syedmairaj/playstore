@@ -70,7 +70,19 @@ const LISTING_RESPONSE_SCHEMA = {
       required: ["titleB", "hypothesis"],
     },
   },
-  required: ["title", "shortDescription", "fullDescription", "keywordSuggestions", "ctaSuggestions"],
+  required: [
+    "title",
+    "shortDescription",
+    "fullDescription",
+    "keywordSuggestions",
+    "ctaSuggestions",
+    "asoScore",
+    "scoreBreakdown",
+    "improvementTips",
+    "whatsNew",
+    "screenshotCaptions",
+    "abTestVariant",
+  ],
 };
 
 // ── Server-side retry instruction ─────────────────────────────────────────────
