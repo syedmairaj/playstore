@@ -15,6 +15,47 @@ export const LISTING_GEN_AB_HYPOTHESIS_MAX = 300;
 
 const ELLIPSIS = "\u2026";
 
+
+/**
+ * Sentence-boundary clamp for medium-length prose fields (e.g. whatsNew <=500 chars).
+ * Prefers ending at the last sentence boundary (`. `, `! `, `? `, `.\n`) within the
+ * first `max` characters. Falls back to word boundary, then hard-trims with ellipsis.
+ * Prevents truncated mid-sentence output like "...improved, timely".
+ */
+function clampProse(raw: string, max: number): string {
+  const trimmed = raw.trim();
+  if (trimmed.length <= max) return trimmed;
+
+  const window = trimmed.slice(0, max);
+  // Find last sentence end within the window.
+  let lastSentenceEnd = -1;
+  for (let i = window.length - 1; i >= 0; i--) {
+    const ch = window[i];
+    const next = window[i + 1];
+    if (
+      (ch === "." || ch === "!" || ch === "?") &&
+      (next === " " || next === "\n" || next === undefined)
+    ) {
+      lastSentenceEnd = i + 1; // include the punctuation
+      break;
+    }
+  }
+
+  const minBreak = Math.floor(max * 0.5);
+  if (lastSentenceEnd >= minBreak) {
+    return trimmed.slice(0, lastSentenceEnd).trimEnd();
+  }
+
+  // Fall back to word boundary
+  const lastSpace = window.lastIndexOf(" ");
+  if (lastSpace >= minBreak) {
+    return trimmed.slice(0, lastSpace).trimEnd();
+  }
+
+  // Hard trim with ellipsis
+  return `${trimmed.slice(0, max - 1)}${ELLIPSIS}`;
+}
+
 /**
  * Trims, then enforces max length. For title/short: prefers breaking at the last
  * space in the first `max` characters when that space is not too early; otherwise
@@ -121,7 +162,8 @@ export function clampListingGenerationParsed(parsed: unknown): unknown {
 
   // ── v8 field clamps ─────────────────────────────────────────────────────
   if (typeof o.whatsNew === "string" && o.whatsNew.length > LISTING_GEN_WHATS_NEW_MAX) {
-    o.whatsNew = o.whatsNew.slice(0, LISTING_GEN_WHATS_NEW_MAX);
+    // Sentence-boundary clamp — prevents mid-sentence truncation (e.g. "...improved, timely")
+    o.whatsNew = clampProse(o.whatsNew, LISTING_GEN_WHATS_NEW_MAX);
   }
   if (Array.isArray(o.screenshotCaptions)) {
     o.screenshotCaptions = (o.screenshotCaptions as unknown[]).map((item) =>

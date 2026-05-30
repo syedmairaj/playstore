@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v9.5";
+const PROMPT_VERSION = "listing-optimizer-v9.7";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -175,11 +175,17 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit: most apps in this category are over-designed with features users don't need. " +
     "Position this app as the one that does exactly what it says — nothing more, nothing less. Pure function. " +
 
-    "SHORT DESCRIPTION RULE: Front-load the PRIMARY FUNCTIONAL BENEFIT — the single most important outcome the user achieves. " +
-    "Lead with what they get, not with a qualifier, modifier, or setup phrase. " +
-    "WRONG: 'Eliminate guesswork. Use [App Name] precisely. Achieve results.' (qualifier-first, fragmented) " +
-    "RIGHT: 'Track [primary metric] precisely. Eliminate guesswork and hit your goals daily.' (outcome-first, tight) " +
-    "The first three words of shortDescription must be the most important thing the user gets — not a preamble. " +
+    "SHORT DESCRIPTION RULE: Front-load the RESOLUTION OF THE PRIMARY PAIN POINT — " +
+    "start with the problem the user has RIGHT NOW that this app eliminates, then follow with how. " +
+    "Pain-point resolution is a higher-converting hook than a feature statement because it makes the user feel seen immediately. " +
+    "Lead with the outcome/resolution, NOT the feature name or a qualifier. " +
+    "EMOTIONAL ANCHOR ALLOWANCE: Minimal tone permits exactly ONE benefit-driven emotional anchor word " +
+    "(e.g. 'confidently', 'reliably', 'effortlessly') placed at the END of the shortDescription only — " +
+    "never at the start, never more than one. This word must express the user's emotional state AFTER achieving the outcome, " +
+    "NOT a promise or a qualifier at the beginning. The copy remains stripped and functional — the anchor is the finishing touch. " +
+    "WRONG: 'Track [primary metric] precisely. Eliminate guesswork, hit goals confidently.' (feature-first — pain point buried second) " +
+    "RIGHT: 'Eliminate guesswork. Track [primary metric] precisely, hit your goals confidently.' (pain-point resolution first, feature second, anchor at end) " +
+    "The first three words of shortDescription must resolve the user's primary pain point — not describe a feature. " +
 
     "HUMAN ELEMENT: Include one sentence in the hook paragraph that states simply what the app does and for whom — " +
     "no adjectives, no claims, just a precise statement of purpose " +
@@ -293,7 +299,11 @@ function buildSystemMessage(targetArabic: boolean): string {
 
     // ── Hard character limits ────────────────────────────────────────────────
     "HARD CHARACTER LIMITS — Google Play enforces these at submission:",
-    "  title: max 30 characters. Count every character including spaces. Never 31+.",
+    "  title: max 30 characters. Count every character including spaces. Never 31+. " +
+      "WORD-BOUNDARY RULE: title MUST end on a complete word — never truncate mid-word. " +
+      "Count characters AND verify the last character is not in the middle of a word. " +
+      "If the draft reaches 30 chars mid-word, remove that incomplete word and use a shorter alternative. " +
+      "WRONG: 'AppName: Track Glucose & So' (cuts 'Sodium'). RIGHT: 'AppName: Track Glucose & Sodium' (ends on complete word, ≤30).",
     "  shortDescription: max 80 characters. Count every character. Never 81+. " +
       "If draft exceeds 80, shorten aggressively until it fits.",
     "  fullDescription: max 4000 characters.",
@@ -350,18 +360,27 @@ function buildSystemMessage(targetArabic: boolean): string {
       "If targetArabic is true: write entirely in natural Arabic, tone-consistent, specific to this app's category.",
 
     "  screenshotCaptions: array of exactly 5 strings, each ≤80 chars. " +
-      "Captions are the overlay headlines on Play Store screenshots — they are the first visual content a user reads. " +
+      "Captions are the overlay headlines on Play Store screenshots — they are the FIRST visual content a user reads " +
+      "BEFORE any copy. High-conversion captions are seen before the description is read. Weak captions lose installs. " +
       "CRITICAL: Every caption MUST be derived from THIS app's actual features and category from the APP BRIEF. " +
       "Do NOT write generic captions that could apply to any app. A user reading caption 1 must immediately know " +
       "what this specific app does and why it is different from competitors. " +
+      "CAPTION ENERGY RULE — ALL TONES: Regardless of the selected tone register, ALL screenshot captions must use " +
+      "bold-energy, outcome-driven language for maximum visual engagement and conversion. " +
+      "Captions are visual-first short-form content — not prose. The tone register applies to fullDescription, " +
+      "shortDescription, and keywords; captions follow conversion-first principles across ALL tones. " +
+      "A 'minimal' caption is NOT a weak caption. It is a STRIPPED, PRECISE, HIGH-IMPACT caption — " +
+      "e.g. 'Zero Errors. Always.' is minimal AND powerful. 'Precise salt & sugar tracking' is minimal AND weak — forbidden. " +
+      "A 'professional' caption is NOT a dry statement. It is a credibility-driven impact line — " +
+      "e.g. 'Clinical-Grade Accuracy' beats 'Accurate tracking feature'. " +
+      "A 'friendly' caption is NOT a gentle description. It is a warm WIN — e.g. 'Your Best Day Starts Here' beats 'Easy daily logging'. " +
       "Conversion-priority order: " +
-      "(1) Strongest hook — the single most compelling outcome this app delivers for its target user. " +
-      "(2) Most-used feature benefit — the feature users will rely on every day, stated as what they gain. " +
-      "(3) Social proof or credibility claim — supported by real app features only, never invented. " +
-      "(4) Secondary differentiator — the second most important thing that separates this app from rivals in its category. " +
-      "(5) CTA / install nudge — tone-consistent, urgency-appropriate final push. " +
-      "Every caption must be in the active tone register (bold = power words, minimal = stripped, friendly = warm, professional = precise). " +
-      "If targetArabic is true: all 5 captions must be in natural Arabic in the correct tone register — short, punchy, legible on a mobile screen.",
+      "(1) Strongest hook — the single most compelling outcome this app delivers. Short. Bold. Unmistakable. " +
+      "(2) Most-used feature benefit — the feature users rely on every day, stated as a powerful gain, not a description. " +
+      "(3) Social proof or credibility — real features only, stated as impact (e.g. 'Trusted for precision' not 'Has a database'). " +
+      "(4) Secondary differentiator — what no rival does, in 5 words or fewer. " +
+      "(5) CTA / install nudge — action-oriented, outcome-focused final push. " +
+      "If targetArabic is true: all 5 captions must be in natural Arabic — short, punchy, high-impact, legible on a mobile screen.",
 
     "  abTestVariant: object — titleB (string ≤30 chars) + hypothesis (string ≤300 chars). " +
       "titleB MUST be derived from THIS app's APP BRIEF — use the actual app name, category, primary feature, " +
@@ -369,6 +388,10 @@ function buildSystemMessage(targetArabic: boolean): string {
       "titleB must contain at least one high-search-volume term that a real user of THIS app would type in Play Store search. " +
       "Abstract benefit phrases with no search value (e.g. 'Take Control Now', 'Your Best Self') are FORBIDDEN. " +
       "titleB tests a DIFFERENT angle from titleA: if titleA is keyword+benefit, titleB must be keyword+action or keyword+audience. " +
+      "WORD-BOUNDARY RULE: titleB MUST end on a complete word — never truncate mid-word. " +
+      "Count characters AND verify the last character is not mid-word. " +
+      "If the draft reaches 30 chars mid-word, remove that incomplete word and use a shorter alternative. " +
+      "WRONG: 'AppName: Diet Management Ap' (cuts 'App'). RIGHT: 'AppName: Diet Management App' (complete word, ≤30). " +
       "hypothesis MUST reference the specific app category and user segment from the APP BRIEF — not generic 'users'. " +
       "It explains: what angle each title tests, which specific user segment each targets (derived from the app's category), " +
       "what metric to watch (CVR or installs), and minimum test duration (2 weeks). Written for a non-technical app owner. " +
@@ -484,9 +507,12 @@ function buildUserMessage(
   const reminderBlock = [
     "",
     "── FINAL QUALITY CHECKLIST (10/10 STANDARD) — applies to ALL tones, English AND Arabic ──",
-    "1. title: ≤30 chars? Primary keyword present naturally? Signals transformation — not just a category label?",
-    "2. shortDescription: ≤80 chars? BENEFIT-FIRST — do the first three words deliver the primary outcome? " +
-      "NOT a qualifier, modifier, or preamble? Read it aloud — does it answer 'why install NOW' immediately?",
+    "1. title: ≤30 chars? WORD BOUNDARY CHECK: Does the title end on a COMPLETE word — not mid-word? " +
+      "Count characters AND check the last character is not inside a word. If it is, trim to the previous complete word. " +
+      "Primary keyword present naturally? Signals transformation — not just a category label?",
+    "2. shortDescription: ≤80 chars? PAIN-POINT-FIRST for minimal tone — do the first three words resolve the user's " +
+      "primary frustration (not describe a feature)? For all tones: benefit leads, qualifier never leads. " +
+      "Read it aloud — does it answer 'why install NOW' immediately?",
     "3. fullDescription structure: Hook paragraph → BRIDGE SENTENCE → Bullet list → Social proof → CTA? " +
       "BRIDGE SENTENCE CHECK: Is there one tone-consistent sentence between the hook paragraph and the bullet list " +
       "that frames the features as the solution to the hook's problem? If missing, add it. " +
@@ -508,8 +534,12 @@ function buildUserMessage(
     "12. whatsNew: ≤500 chars? Opens with pain point resolved? Specific to THIS app's features — not generic? " +
       "No awkward keyword strings? Tone-consistent? Arabic if targetArabic?",
     "13. screenshotCaptions: exactly 5 items? ≤80 chars each? Every caption derived from THIS app's actual features " +
-      "and category — not generic? Benefit-first? Correct tone register? In Arabic if targetArabic?",
-    "14. abTestVariant: titleB ≤30 chars? Derived from THIS app's APP BRIEF (app name, category, primary feature, or user goal)? " +
+      "and category — not generic? HIGH-CONVERSION ENERGY CHECK: Are ALL captions outcome-driven, bold-impact headlines? " +
+      "A weak descriptive caption (e.g. 'Precise X tracking') is a FAILURE — rewrite as an impact statement (e.g. 'Own Your [Goal]'). " +
+      "This applies to ALL tones — even minimal and professional captions must hit hard. In Arabic if targetArabic?",
+    "14. abTestVariant: titleB ≤30 chars? WORD BOUNDARY CHECK: Does titleB end on a COMPLETE word — not mid-word? " +
+      "If it reaches 30 chars mid-word, trim to the previous complete word and use a shorter alternative. " +
+      "Derived from THIS app's APP BRIEF (app name, category, primary feature, or user goal)? " +
       "Keyword-rich with a real search term for this app's category? NOT an abstract phrase with no search value? " +
       "Different angle from titleA? Hypothesis references THIS app's specific category and user segment — not generic 'users'? " +
       "In Arabic if targetArabic?",
