@@ -140,10 +140,11 @@ async function attemptGeneration(
       // inconsistent key counts that drove most schema-validation failures.
       temperature: isRetry ? 0.2 : 0.35,
       topP: 0.95,
-      // 4096 gives comfortable headroom: ~1000 tokens for 4000-char description +
-      // ~600 for remaining fields. Previous 2540 was dangerously close to real
-      // output sizes and triggered the truncation-recovery guard in production.
-      maxOutputTokens: 4096,
+      // 8192 gives headroom for v9 output: ~1000 tokens for 4000-char description +
+      // ~600 for core fields + ~800 for v8 fields (whatsNew, screenshotCaptions,
+      // abTestVariant) + ~400 for keywords/CTAs/tips. v9 prompt generates richer
+      // copy across all fields; 4096 was too tight and caused MAX_TOKENS truncation.
+      maxOutputTokens: 8192,
     },
   });
 
