@@ -201,9 +201,10 @@ export function clampListingGenerationParsed(parsed: unknown): ClampListingResul
     o.whatsNew = clampProse(o.whatsNew, LISTING_GEN_WHATS_NEW_MAX);
   }
   if (Array.isArray(o.screenshotCaptions)) {
+    // Use word-boundary clamp — prevents mid-word truncation on caption headlines
     o.screenshotCaptions = (o.screenshotCaptions as unknown[]).map((item) =>
       typeof item === "string" && item.length > LISTING_GEN_SCREENSHOT_CAPTION_MAX
-        ? item.slice(0, LISTING_GEN_SCREENSHOT_CAPTION_MAX)
+        ? clampTitleOrShort(item, LISTING_GEN_SCREENSHOT_CAPTION_MAX).text
         : item,
     );
   }
@@ -214,10 +215,13 @@ export function clampListingGenerationParsed(parsed: unknown): ClampListingResul
   ) {
     const ab = o.abTestVariant as Record<string, unknown>;
     if (typeof ab.titleB === "string" && ab.titleB.length > LISTING_GEN_AB_TITLE_MAX) {
-      ab.titleB = ab.titleB.slice(0, LISTING_GEN_AB_TITLE_MAX);
+      // Use word-boundary clamp — same as title — to prevent mid-word truncation
+      // e.g. "Salt Sugar: Track Diet & Resul" → "Salt Sugar: Track Diet & Results"
+      ab.titleB = clampTitleOrShort(ab.titleB, LISTING_GEN_AB_TITLE_MAX).text;
     }
     if (typeof ab.hypothesis === "string" && ab.hypothesis.length > LISTING_GEN_AB_HYPOTHESIS_MAX) {
-      ab.hypothesis = ab.hypothesis.slice(0, LISTING_GEN_AB_HYPOTHESIS_MAX);
+      // Use sentence-boundary clamp for prose field
+      ab.hypothesis = clampProse(ab.hypothesis, LISTING_GEN_AB_HYPOTHESIS_MAX);
     }
   }
 
