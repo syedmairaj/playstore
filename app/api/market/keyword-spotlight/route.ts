@@ -153,9 +153,15 @@ Return only valid JSON. No markdown, no explanation outside the JSON object.`;
       generationConfig: {
         temperature: 0.4,
         topP: 0.9,
-        // 1024 gives the model headroom for its thinking tokens + the JSON output.
-        // 512 was too tight for gemini-2.5-flash and caused truncated responses.
-        maxOutputTokens: 1024,
+        // 512 is sufficient for the small JSON payload we need.
+        // thinkingBudget: 0 disables gemini-2.5-flash's internal reasoning —
+        // without this, thinking tokens consume the maxOutputTokens budget and
+        // truncate the actual JSON output, causing "Unexpected end of JSON input".
+        // This is the same fix used in localize-listing-schema.ts.
+        maxOutputTokens: 512,
+        // @ts-expect-error — thinkingConfig is a valid Gemini 2.5 Flash param
+        // not yet typed in the @google/generative-ai SDK types.
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
 
