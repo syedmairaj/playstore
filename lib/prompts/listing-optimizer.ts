@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v9";
+const PROMPT_VERSION = "listing-optimizer-v9.1";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -43,9 +43,13 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most nutrition trackers are either too complex (medical-software UX) or " +
     "too shallow (consumer-grade data). Position this app as precise AND human-designed — clinical accuracy with intuitive flow. " +
 
-    "BULLETS: Every feature bullet MUST lead with the measurable outcome or clinical benefit first, then the feature. " +
-    "Do NOT start with the feature name. Start with what the user gains clinically or quantitatively. " +
-    "Example: '📊 Clinical-grade accuracy: 1M+ verified entries eliminate data errors that skew your health decisions.' " +
+    "HUMAN ELEMENT: Include one sentence in the hook paragraph explaining why this app exists for real patients and " +
+    "health-conscious individuals — not a feature claim, a human reason " +
+    "(e.g. 'Built for people who need their tracking data to be as reliable as their lab results'). " +
+    "BULLETS: Every feature bullet MUST lead with the user's clinical or quantitative gain, THEN the feature. " +
+    "NEVER start a bullet with a keyword phrase, feature name, or app-specific term. " +
+    "WRONG: '📊 Food database scanner: search 2M entries for nutrition data.' " +
+    "RIGHT: '📊 Eliminate data guesswork: verified entries across 2M+ foods mean every logged meal reflects reality.' " +
 
     "KEYWORDS: Choose high-authority, data-specific vocabulary. Treat keywords as Mandatory Semantic Terms to weave " +
     "naturally into copy — never list them verbatim. " +
@@ -72,9 +76,13 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most health trackers feel like homework — complex, cold, or guilt-inducing. " +
     "Position this app as the one that makes healthy habits feel natural and rewarding, not stressful. " +
 
-    "BULLETS: Every feature bullet MUST start with 'you' or frame the feature as something the user will personally feel. " +
-    "The benefit must be emotional or experiential first, functional second. " +
-    "Example: '📅 You stay in control: just tap what you ate and let the app do the rest — no stress, just steady progress.' " +
+    "HUMAN ELEMENT: Include one sentence in the hook paragraph explaining why this app exists for everyday people — " +
+    "a warm, relatable reason, not a feature claim " +
+    "(e.g. 'Made for people who want to eat a little better every day, without turning nutrition into a second job'). " +
+    "BULLETS: Every bullet leads with a personal win the user will feel, then the feature behind it. " +
+    "NEVER start a bullet with a feature name or keyword phrase — that reads like a spec sheet, not a companion. " +
+    "WRONG: '📅 Daily food log: record what you ate each day.' " +
+    "RIGHT: '📅 You build your streak effortlessly: log a meal in seconds and watch your healthy habits compound day by day.' " +
 
     "KEYWORDS: Choose lifestyle, habit-building, and supportive-intent vocabulary. Treat keywords as Mandatory Semantic Terms " +
     "to weave naturally into copy — never list them verbatim. " +
@@ -102,9 +110,14 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most trackers are passive log-books. " +
     "Position this app as an active weapon — it doesn't just record; it helps the user take control and see results fast. " +
 
-    "BULLETS: Every feature bullet MUST open with a strong action verb or power word, then deliver the payoff immediately. " +
-    "The outcome must be bold and specific — not vague ('better health') but concrete ('sodium drops, energy climbs'). " +
-    "Example: '🎯 Crush your targets: set aggressive sodium and sugar goals and watch your numbers drop — fast.' " +
+    "HUMAN ELEMENT: Include one sentence in the hook paragraph that frames the app as the weapon the user has been missing — " +
+    "a declaration, not a description " +
+    "(e.g. 'Built for people who are done guessing and ready to see real numbers move'). " +
+    "BULLETS: Every bullet opens with a strong action verb or power word, then delivers the payoff immediately. " +
+    "NEVER start a bullet with a keyword phrase or feature label — that kills momentum. " +
+    "The outcome must be concrete and measurable, not vague. " +
+    "WRONG: '🎯 Goal tracker app: set sodium and sugar targets.' " +
+    "RIGHT: '🎯 Crush your targets: set precise sodium and sugar goals and watch the numbers move — every single day.' " +
 
     "KEYWORDS: Choose action-oriented, outcome-specific vocabulary. Treat keywords as Mandatory Semantic Terms to weave " +
     "naturally into copy — never list them verbatim. " +
@@ -131,9 +144,14 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
     "Gap to exploit against incumbents: most trackers are over-designed with features users don't need. " +
     "Position this app as the one that does exactly what it says — nothing more, nothing less. Pure function. " +
 
-    "BULLETS: Every feature bullet MUST be one feature + one concrete stated benefit. Nothing more. " +
-    "No enthusiasm, no padding, no emotional framing. State the tool, state the outcome. Full stop. " +
-    "Example: '📊 Sodium + glucose dashboard: intake at a glance, updated on every log entry.' " +
+    "HUMAN ELEMENT: Include one sentence in the hook paragraph that states simply what the app does and for whom — " +
+    "no adjectives, no claims, just a precise statement of purpose " +
+    "(e.g. 'Built for people who need accurate sodium and glucose data without the noise'). " +
+    "BULLETS: Every bullet is one concrete benefit + the feature that delivers it. Nothing more. " +
+    "NEVER start a bullet with a feature name, app term, or keyword phrase. " +
+    "Start with the outcome — the thing the user now has — then name what delivers it. " +
+    "WRONG: '📊 Barcode scanner: scan foods for nutrition data.' " +
+    "RIGHT: '📊 Accurate data instantly: scan any barcode and get verified nutritional facts — no manual entry, no errors.' " +
 
     "KEYWORDS: Choose precise, function-specific vocabulary with zero marketing language. Treat keywords as " +
     "Mandatory Semantic Terms to weave naturally into copy — never list them verbatim. " +
@@ -220,14 +238,16 @@ function buildSystemMessage(targetArabic: boolean): string {
     "In ONE response (no tool calls), execute this workflow internally: " +
       "(1) BRIEF ANALYSIS: Identify the single strongest USP, the primary user transformation (what life looks like after using this app), " +
       "and the market gap against incumbents stated in the TONE PSYCHOLOGY block. " +
-      "(2) SEMANTIC MAPPING: Map the seed keywords to natural language patterns that signal topical authority to " +
-      "Google Play's NLP algorithm. Do NOT list keywords verbatim — weave them as natural phrases. " +
+      "(2) SEMANTIC MAPPING: Map the seed keywords to natural language INTENT — the meaning behind the keyword, not the string itself. " +
+      "Google Play's NLP algorithm understands semantic intent; it does not require exact-match keyword strings in copy. " +
+      "NEVER insert a keyword phrase verbatim into a sentence if it reads awkwardly. " +
+      "If 'barcode scanner accuracy app' is a keyword, express that intent as 'scan any barcode and get verified nutritional data instantly' — " +
+      "not as the literal phrase. The keyword list is for Play Console's backend keyword field, not for direct insertion into prose. " +
       "(3) DRAFT: Write all fields in the correct tone register with psychological triggers active. " +
-      "(4) SELF-AUDIT: Check every character limit, keyword density (keywords appear in copy naturally), " +
-      "tone consistency across ALL fields, hook strength (first 80 chars of fullDescription), " +
-      "and conversion strength of each bullet. " +
-      "(5) REWRITE: Fix any section that is generic, tone-inconsistent, or keyword-missing until the listing " +
-      "is cohesive, differentiated, and ready to outperform incumbents. " +
+      "(4) SELF-AUDIT: Read every sentence aloud mentally. If any sentence sounds robotic, keyword-stuffed, or 'generated', rewrite it. " +
+      "Check: character limits, semantic keyword coverage (intent present, not string-matched), " +
+      "tone consistency, hook strength, bullet benefit-first structure, and human origin story present. " +
+      "(5) REWRITE: Fix any section that is generic, tone-inconsistent, stuffed, or inhuman. " +
       "(6) OUTPUT: A single JSON object only — no markdown, no code fences, no prose.",
 
     // ── Hard character limits ────────────────────────────────────────────────
@@ -243,21 +263,32 @@ function buildSystemMessage(targetArabic: boolean): string {
       "and outcome (for conversion). Tone-consistent.",
     "  shortDescription: string ≤80 chars — standalone install hook visible in search results. " +
       "Must answer 'why install NOW' in one tight benefit statement. This is the highest-CVR real estate on the listing.",
-    "  fullDescription: string ≤4000 chars. Structure MUST be: " +
-      "(A) HOOK — first 1-2 sentences (top 80 chars) address a high-intent user goal with a transformation promise. " +
-      "This is not a tagline — it is a direct, specific benefit statement that makes the user feel understood. " +
-      "(B) BODY — 5-8 bullet points with emojis. Each bullet = one feature + one concrete outcome. " +
+    "  fullDescription: string ≤4000 chars. Structure MUST follow this exact sequence: " +
+      "(A) HOOK PARAGRAPH — 2-3 sentences. First sentence (≤80 chars): transformation promise for the target user. " +
+      "Second sentence: explain WHY the app exists — the human reason it was built " +
+      "(e.g. 'Built for people managing blood pressure or glucose who need data they can trust'). " +
+      "Third sentence (optional): bridge from problem to solution. No keywords forced here — write as you would explain to a friend. " +
+      "(B) FEATURES PARAGRAPH — 1-2 sentences BEFORE the bullet list. Introduce the features section in plain human language. " +
+      "Example: 'Here is what you get from day one:' or 'Everything you need, nothing you don't:'. " +
+      "(C) BULLET LIST — 5-8 bullets with emojis. BENEFIT FIRST rule: every bullet must lead with the user outcome or benefit, " +
+      "THEN the feature name. NEVER lead with a keyword phrase or feature name. " +
+      "WRONG: '📊 Barcode scanner accuracy app — scan foods to track nutrients.' " +
+      "RIGHT: '📊 Instant barcode scanning: point your camera at any food and get verified nutritional data in under a second.' " +
       "CRITICAL: Every bullet MUST be written in the active tone register from TONE PSYCHOLOGY. " +
-      "Professional = metric/outcome first. Friendly = 'you' + personal habit win. " +
-      "Bold = action verb + power outcome. Minimal = feature + benefit, nothing else. " +
-      "Generic bullets that read the same across tones are a failure — rewrite until they are unmistakably tone-specific. " +
-      "(C) SOCIAL PROOF line (if any real claim is supported by the app features). " +
-      "(D) CTA — 1-2 sentences. Imperative. Tone-consistent. Outcome-focused.",
+      "Professional = clinical outcome first. Friendly = personal daily win first. " +
+      "Bold = power verb + result first. Minimal = one benefit + one feature, nothing else. " +
+      "Generic bullets that read identically across tones are a failure — rewrite until each is unmistakably tone-specific. " +
+      "(D) SOCIAL PROOF — one line if supported by real app features (never invent stats). " +
+      "(E) CTA — 1-2 sentences. Imperative. Tone-consistent. Ends the listing with momentum toward install.",
     "  keywordSuggestions: array of exactly 20 keyword phrases. Format EACH as '[category] keyword phrase'. " +
       "Categories: [competitive] (8 items), [intent] (7 items), [gap] (5 items). " +
-      "SEMANTIC WEAVING RULE: every keyword that appears in this list should also appear naturally somewhere in " +
-      "title, shortDescription, or fullDescription as organic language — not forced insertion. " +
-      "Vocabulary register must match the tone (see TONE PSYCHOLOGY). Never mix registers.",
+      "CRITICAL — TWO-LAYER KEYWORD STRATEGY: " +
+      "Layer 1 (copy): The INTENT behind each keyword must be expressed naturally in title, shortDescription, or fullDescription. " +
+      "Do NOT copy-paste the keyword string into prose. 'Barcode scanner accuracy app' is a keyword for Play Console's backend — " +
+      "its intent ('accurate barcode scanning') belongs in copy as natural language. " +
+      "Layer 2 (list): The keywordSuggestions list itself is for Play Console's keyword field — these are exact search strings, " +
+      "optimised for what users actually type, not what reads well in a sentence. They can be short, blunt, and search-optimised. " +
+      "Vocabulary register must match tone (see TONE PSYCHOLOGY). Never mix registers.",
     "  ctaSuggestions: array of 4-8 items. First item MUST start with 'WHY THIS RANKS: ' — " +
       "explain in 1-2 sentences the specific keyword + displacement angle that will push this listing to page 1. " +
       "Remaining items are conversion-focused CTAs, max 60 chars each.",
@@ -285,14 +316,22 @@ function buildSystemMessage(targetArabic: boolean): string {
       "Written for a non-technical app owner.",
 
     // ── ASO quality standards ────────────────────────────────────────────────
-    "ASO QUALITY STANDARDS — these are the difference between a 7/10 and a 10/10 listing:",
-    "  • Semantic keyword weaving: keywords appear as natural language, not as a list inserted into copy.",
-    "  • Hook strength: first 80 chars of fullDescription must make the user feel the app was built for them.",
-    "  • Tone purity: EVERY field (title, short, long, CTAs, captions, whatsNew) reads as one voice in one register.",
-    "  • Differentiation: the listing must read differently from any generic health tracker. The gap angle is explicit.",
-    "  • Conversion architecture: the flow Hook → Body → CTA must build psychological momentum toward install.",
-    "  • No hyperbole: 'Best app ever' or '100% perfect' are disqualifying. Specificity creates trust.",
-    "  • Bullets and emojis in fullDescription are required — walls of text kill conversion.",
+    "ASO QUALITY STANDARDS — the difference between a 7/10 and a 10/10 listing:",
+    "  • NO KEYWORD STUFFING — this is the most common failure. Never insert a keyword string directly into a sentence " +
+      "if it reads awkwardly. 'End searches for a barcode scanner accuracy app' is keyword stuffing. " +
+      "'Scan any barcode for verified nutritional data' expresses the same intent naturally. " +
+      "Google Play's algorithm is semantic — it understands intent, not exact-match strings in prose. " +
+      "Keyword stuffing triggers spam filters and destroys user trust. Never do it.",
+    "  • BENEFIT-FIRST BULLETS — every bullet leads with what the user gains, not with a feature name or keyword. " +
+      "If a bullet could appear in any generic health app, it is too generic. Rewrite it.",
+    "  • HUMAN ORIGIN STORY — every listing must contain at least one sentence explaining why the app exists " +
+      "for real people with real health goals. This is the sentence that converts skeptical users.",
+    "  • HOOK STRENGTH — first 80 chars must make the target user feel seen. Not 'track your health' — " +
+      "that could describe 1000 apps. Something specific: 'Managing your sodium intake shouldn't require a medical degree.'",
+    "  • TONE PURITY — every field reads as one voice in one register. No tone drift between title and bullets.",
+    "  • CONVERSION FLOW — Hook paragraph → Features paragraph → Bullet list → Social proof → CTA builds momentum.",
+    "  • No hyperbole: 'Best app ever' or '100% accurate' without evidence are disqualifying.",
+    "  • Bullets and emojis required — walls of text kill conversion.",
     "  • Google Play policy: no prohibited content, no misleading category claims.",
 
     // ── Arabic instruction (conditional) ────────────────────────────────────
@@ -376,25 +415,27 @@ function buildUserMessage(
   const reminderBlock = [
     "",
     "── FINAL QUALITY CHECKLIST (10/10 STANDARD) ──",
-    "1. title: ≤30 chars? Primary keyword present? Signals transformation, not just category?",
-    "2. shortDescription: ≤80 chars? (count every character) Standalone install hook? Answers 'why install NOW'?",
-    "3. fullDescription hook (first 80 chars): Does it address a high-intent goal with a transformation promise? " +
-      "Is it specific to THIS app and audience — not a generic health tracker hook?",
-    "4. fullDescription bullets: Are ALL bullets unmistakably written in the correct tone register? " +
-      "Would a reader immediately know the tone from the bullet alone? " +
-      "Professional=metric first. Friendly=you+habit win. Bold=verb+power outcome. Minimal=feature+benefit only.",
-    "5. Semantic weaving: Do the Mandatory Semantic Terms appear naturally in title, shortDescription, or fullDescription? " +
-      "Are they organic phrases — not keyword-stuffed insertions?",
-    "6. keywordSuggestions: exactly 20 items? 8 [competitive] + 7 [intent] + 5 [gap]? " +
-      "Vocabulary register matches tone? [gap] keywords reflect ONLY current session's staged pain points (if any)?",
-    "7. ctaSuggestions[0]: starts with 'WHY THIS RANKS: '? Explains keyword + displacement angle specifically?",
-    "8. asoScore = exact sum of scoreBreakdown values?",
-    "9. improvementTips: last tip is a 'Rationale for Ranking' explaining why this copy beats market leaders?",
-    "10. whatsNew: ≤500 chars? Opens with pain point resolved? Keywords woven in naturally? Tone-consistent?",
-    "11. screenshotCaptions: exactly 5 items? Each ≤80 chars? Ordered by conversion priority? Tone-specific and USP-specific?",
-    "12. abTestVariant: titleB ≤30 chars AND different angle from titleA? hypothesis clear to a non-technical owner?",
-    "If ANY item above fails, rewrite the affected field before outputting.",
-    "Now output the single JSON object.",
+    "1. title: ≤30 chars? Primary keyword present naturally? Signals transformation — not just a category label?",
+    "2. shortDescription: ≤80 chars? Standalone hook? Answers 'why install NOW' without relying on context?",
+    "3. fullDescription structure: Hook paragraph → Features intro sentence → Bullet list → Social proof → CTA?",
+    "4. Hook paragraph: First sentence ≤80 chars with transformation promise? " +
+      "Human element sentence present (why this app exists for real people)?",
+    "5. ANTI-STUFFING CHECK — read every sentence. Does any sentence contain an awkward keyword phrase " +
+      "that a human would never say naturally? (e.g. 'end searches for barcode scanner accuracy app', " +
+      "'food tracker data error fix solution'). If yes, rewrite it as natural language expressing the same intent.",
+    "6. Bullets: Does every bullet lead with the USER'S BENEFIT, not a feature name or keyword? " +
+      "Cover your feature names with your hand — does the benefit still make the user want the app? " +
+      "Are ALL bullets unmistakably in the correct tone register?",
+    "7. Keyword naturalness: Are the Mandatory Semantic Terms expressed as organic language in copy? " +
+      "Are the keywordSuggestions list items optimised as search strings (not required to read well in sentences)?",
+    "8. keywordSuggestions: exactly 20 items? 8 [competitive] + 7 [intent] + 5 [gap]? Register matches tone?",
+    "9. ctaSuggestions[0]: starts with 'WHY THIS RANKS: '?",
+    "10. asoScore = exact sum of scoreBreakdown values?",
+    "11. improvementTips: last tip is a 'Rationale for Ranking' — why this copy beats market leaders?",
+    "12. whatsNew: ≤500 chars? Opens with pain point resolved? No awkward keyword strings?",
+    "13. screenshotCaptions: exactly 5 items? ≤80 chars each? Benefit-first? Tone-specific?",
+    "14. abTestVariant: titleB ≤30 chars? Different angle from titleA? Hypothesis clear to a non-technical owner?",
+    "If ANY item above fails, rewrite the affected field before outputting. Then output the single JSON object.",
   ].join("\n");
 
   return [strategyBlock, refinement, displacementBlock, reminderBlock].join("\n");
