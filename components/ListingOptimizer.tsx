@@ -966,51 +966,76 @@ export function ListingOptimizer({
   );
   // ─────────────────────────────────────────────────────────────────────────
 
-  // ── exploit_targets URL param → queue injection ──────────────────────────
-  // When the user navigates here from Competitor Spy with ?exploit_targets=…,
-  // synthesise stub ListingImprovementItem entries from the encoded labels,
-  // merge them into queuedImprovements, show a toast, then clear the param.
+  // ── exploit_targets + market_tip URL params → queue injection ───────────
+  // When the user navigates here from Market Intel or Competitor Spy with
+  // ?exploit_targets=…, synthesise stub ListingImprovementItem entries from
+  // the encoded labels, merge them into queuedImprovements, show a toast,
+  // then clear BOTH exploit_targets and market_tip from the URL so they
+  // don't persist in the address bar or re-fire on re-render.
   useEffect(() => {
     const raw = searchParams.get("exploit_targets");
-    if (!raw?.trim()) return;
+    const rawTip = searchParams.get("market_tip");
 
-    let decoded = raw.trim();
-    try { decoded = decodeURIComponent(decoded); } catch { /* keep raw */ }
+    // Nothing to do if neither param is present
+    if (!raw?.trim() && !rawTip?.trim()) return;
 
-    const labels = decoded
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!labels.length) return;
+    if (raw?.trim()) {
+      let decoded = raw.trim();
+      try { decoded = decodeURIComponent(decoded); } catch { /* keep raw */ }
 
-    const stubs: ListingImprovementItem[] = labels.map((label, i) => ({
-      id: `url-exploit-${i}-${label.replace(/\s+/g, "-").toLowerCase()}`,
-      reviewId: `url-exploit-${i}`,
-      reviewText: label,
-      userName: "",
-      score: 0,
-      sentimentTag: label,
-      appId: null,
-      packageName: null,
-      isUtilized: false,
-      createdAt: new Date().toISOString(),
-    }));
+      const labels = decoded
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
 
-    setQueuedImprovements((prev) => {
-      const existingIds = new Set(prev.map((p) => p.id));
-      const fresh = stubs.filter((s) => !existingIds.has(s.id));
-      return fresh.length ? [...prev, ...fresh] : prev;
-    });
+      if (labels.length) {
+        const stubs: ListingImprovementItem[] = labels.map((label, i) => ({
+          id: `url-exploit-${i}-${label.replace(/\s+/g, "-").toLowerCase()}`,
+          reviewId: `url-exploit-${i}`,
+          reviewText: label,
+          userName: "",
+          score: 0,
+          sentimentTag: label,
+          appId: null,
+          packageName: null,
+          isUtilized: false,
+          createdAt: new Date().toISOString(),
+        }));
 
-    toast.success(t("activeQueue.exploitTargetsToast"), {
-      description: t("activeQueue.exploitTargetsToastDescription"),
-      duration: 6000,
-    });
+        setQueuedImprovements((prev) => {
+          const existingIds = new Set(prev.map((p) => p.id));
+          const fresh = stubs.filter((s) => !existingIds.has(s.id));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
 
-    // Clear the param from the URL so it doesn't re-fire on re-render
+        // Determine whether these are market spotlight keywords or competitor issues
+        const hasSpotlight = labels.some((l) => l.startsWith("market_spotlight:"));
+        const spotlightCount = labels.filter((l) => l.startsWith("market_spotlight:")).length;
+
+        if (hasSpotlight) {
+          toast.success(
+            spotlightCount === 1
+              ? "1 market keyword loaded into optimizer"
+              : `${spotlightCount} market keywords loaded into optimizer`,
+            {
+              description: "Market Intelligence spotlight will be woven into your listing. Go to Step 3 to generate.",
+              duration: 7000,
+            },
+          );
+        } else {
+          toast.success(t("activeQueue.exploitTargetsToast"), {
+            description: t("activeQueue.exploitTargetsToastDescription"),
+            duration: 6000,
+          });
+        }
+      }
+    }
+
+    // Clear BOTH params from the URL in a single replace call
     try {
       const sp = new URLSearchParams(searchParams.toString());
       sp.delete("exploit_targets");
+      sp.delete("market_tip");
       const qs = sp.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname);
     } catch { /* */ }
