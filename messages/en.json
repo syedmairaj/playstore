@@ -371,7 +371,8 @@
         "bullet2": "Quiet defaults — no spammy nudges.",
         "ctaOptimizer": "Open AI Listing Optimizer"
       }
-    }
+    },
+    "market": "Market Intel"
   },
   "settings": {
     "title": "Settings",
@@ -1987,5 +1988,11 @@
     "yourAppPositionBadge": "Your app position",
     "appOutsideTopPreviewFooter": "Your app is not in the top 20 results for this keyword in this market. Add the keyword to your tracker to monitor progress over time.",
     "appOutsideTopPreviewFooterWithApp": "\"{appName}\" is not in the top 20 results for this keyword in this market. Add the keyword to your tracker to monitor progress over time."
+  },
+  "market": {
+    "title": "Market Intelligence",
+    "subheadline": "See what's ranking at the top of your category — and the keyword patterns driving those apps. Updated every 6 hours.",
+    "howItWorksSummary": "How this works",
+    "howItWorksDetail": "We pull the live top-chart ranking directly from Google Play for any category and market you choose. The AI Keyword Spotlight analyses the top 10 app titles and descriptions to surface the keyword themes dominating the chart right now — so you can align your listing before your next optimisation run."
   }
 }

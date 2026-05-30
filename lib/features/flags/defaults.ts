@@ -10,4 +10,5 @@ export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
   ranking_tracker_advanced: false,
   alerts_advanced: false,
   localization_playbook: false,
+  market_intelligence: true,
 };

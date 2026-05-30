@@ -55,6 +55,7 @@ export default async function WorkspaceLayout({
     { href: `${appBase}/listing-optimizer`, label: t("listingAi"), show: flags.listing_optimizer },
     { href: `${appBase}/competitors`, label: t("competitorSpy"), show: flags.competitor_spy },
     { href: `${appBase}/reviews`, label: t("reviews"), show: flags.review_insights },
+    { href: `${appBase}/market`, label: t("market"), show: flags.market_intelligence },
     { href: `${appBase}/alerts`, label: t("alerts"), show: true },
     { href: `${appBase}/settings`, label: t("settings"), show: true },
   ];
