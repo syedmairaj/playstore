@@ -2139,6 +2139,38 @@ export function ListingOptimizer({
           }).catch(() => { /* best-effort — Reviews page re-fetches on mount */ });
         }
       }
+      // ── Listing Performance Attribution snapshot ──────────────────────────
+      // Fire-and-forget: POST a snapshot row capturing the exact listing copy,
+      // signals used, and strategy meta so the ListingHistory attribution
+      // engine can later compute before/after metric deltas.
+      // Must run BEFORE clearSpotlightStubsFromSession() and setQueuedImprovements([])
+      // so the queue snapshot contains the full signal set.
+      if (workspaceId) {
+        const snapshotSignals = queuedImprovements.map((item) => item.sentimentTag?.trim() ?? item.reviewText?.slice(0, 80) ?? "");
+        const qualityStatus =
+          json.meta?.quality_status ? "maximum" : "partial";
+        void fetch("/api/listings/snapshots", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            workspaceId,
+            appId: selectedAppId.trim() || undefined,
+            generationId: json.meta?.generationId,
+            title: d.title,
+            shortDescription: d.shortDescription,
+            fullDescription: d.fullDescription,
+            signals: snapshotSignals.filter(Boolean),
+            strategySummary: d.strategySummary ?? d.strategicNote,
+            asoScore: d.asoScore,
+            promptVersion: json.meta?.promptVersion,
+            toneStyle,
+            qualityStatus,
+          }),
+        }).catch(() => { /* non-fatal — attribution is best-effort */ });
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       // Clear the staging queue — provides clean confirmation state now that
       // the AI has consumed all queued improvements. Also clear sessionStorage
       // so spotlight stubs don't reappear on the next refreshQueuedImprovements.
