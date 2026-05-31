@@ -972,6 +972,11 @@ export function ListingOptimizer({
   // the encoded labels, merge them into queuedImprovements, show a toast,
   // then clear BOTH exploit_targets and market_tip from the URL so they
   // don't persist in the address bar or re-fire on re-render.
+  //
+  // ID slug sanitisation: strip all non-alphanumeric characters (colon, dot,
+  // percent, etc.) from the slug portion of the id so Framer Motion's internal
+  // key tracking never receives special characters that could break its Map
+  // lookups or CSS selector generation.
   useEffect(() => {
     const raw = searchParams.get("exploit_targets");
     const rawTip = searchParams.get("market_tip");
@@ -980,27 +985,39 @@ export function ListingOptimizer({
     if (!raw?.trim() && !rawTip?.trim()) return;
 
     if (raw?.trim()) {
-      let decoded = raw.trim();
-      try { decoded = decodeURIComponent(decoded); } catch { /* keep raw */ }
-
-      const labels = decoded
+      // searchParams.get() already percent-decodes the value — no need for a
+      // manual decodeURIComponent call. Calling it again would double-decode
+      // values like "%2520" → "%20" → " " instead of the intended "%20" → " ".
+      const labels = raw
+        .trim()
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
 
       if (labels.length) {
-        const stubs: ListingImprovementItem[] = labels.map((label, i) => ({
-          id: `url-exploit-${i}-${label.replace(/\s+/g, "-").toLowerCase()}`,
-          reviewId: `url-exploit-${i}`,
-          reviewText: label,
-          userName: "",
-          score: 0,
-          sentimentTag: label,
-          appId: null,
-          packageName: null,
-          isUtilized: false,
-          createdAt: new Date().toISOString(),
-        }));
+        const stubs: ListingImprovementItem[] = labels.map((label, i) => {
+          // Produce a safe DOM/Framer-Motion-friendly id slug:
+          // replace any non-word character (colons, dots, slashes, etc.) with a dash,
+          // collapse consecutive dashes, and trim leading/trailing dashes.
+          const safeSlug = label
+            .toLowerCase()
+            .replace(/[^\w]/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "")
+            .slice(0, 60);
+          return {
+            id: `url-exploit-${i}-${safeSlug || "kw"}`,
+            reviewId: `url-exploit-${i}`,
+            reviewText: label,
+            userName: "",
+            score: 0,
+            sentimentTag: label,
+            appId: null,
+            packageName: null,
+            isUtilized: false,
+            createdAt: new Date().toISOString(),
+          };
+        });
 
         setQueuedImprovements((prev) => {
           const existingIds = new Set(prev.map((p) => p.id));
@@ -1031,14 +1048,17 @@ export function ListingOptimizer({
       }
     }
 
-    // Clear BOTH params from the URL in a single replace call
+    // Clear BOTH params from the URL in a single replace call.
+    // Build the new search string from current searchParams directly rather
+    // than re-parsing searchParams.toString() (which may re-encode values
+    // and cause a second effect fire if the result differs from the current URL).
     try {
       const sp = new URLSearchParams(searchParams.toString());
       sp.delete("exploit_targets");
       sp.delete("market_tip");
       const qs = sp.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname);
-    } catch { /* */ }
+    } catch { /* navigation errors are non-fatal */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   // ─────────────────────────────────────────────────────────────────────────
