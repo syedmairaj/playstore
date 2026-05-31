@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, ChevronDown, Copy, Hash, Info } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Hash, Info, Layers, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
@@ -239,69 +239,122 @@ export function OptimizerResultsPanel({
         </div>
       ) : null}
 
-      {/* ── Optimization Factors pills (v10) ───────────────────────────────── */}
+      {/* ── Strategy Summary card (v11) ────────────────────────────────────── */}
+      {/* Shows the consultant-grade synthesis note: what signals were used and how. */}
       {(() => {
+        // v11: prefer strategySummary; fall back to strategicNote for stored rows
+        const summaryText = (result.strategySummary ?? result.strategicNote ?? "").trim();
+
+        // Classify signals from the generation snapshot for the pills
         const issueItems = generationQueueSnapshot.filter(
-          (i) => !(i.id.startsWith("url-exploit-") && i.sentimentTag?.startsWith("market_spotlight:")),
+          (i) => !i.sentimentTag?.startsWith("market_spotlight:"),
         );
         const spotlightItems = generationQueueSnapshot.filter(
-          (i) => i.id.startsWith("url-exploit-") && i.sentimentTag?.startsWith("market_spotlight:"),
+          (i) => i.sentimentTag?.startsWith("market_spotlight:"),
         );
         const hasIssues = issueItems.length > 0;
         const hasSpotlight = spotlightItems.length > 0;
-        const hasNote = Boolean(result.strategicNote?.trim());
+        const hasAnySummary = Boolean(summaryText);
 
-        if (!hasIssues && !hasSpotlight && !hasNote) return null;
+        if (!hasIssues && !hasSpotlight && !hasAnySummary) return null;
 
         return (
           <div
             className={cn(
-              "flex flex-col gap-2.5 rounded-2xl border border-zinc-800/60 bg-white/[0.02] p-4",
+              "flex flex-col gap-3 rounded-2xl border border-zinc-800/70 bg-white/[0.025] p-4",
               "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300",
               isRtl && "font-arabic",
             )}
             role="status"
             aria-live="polite"
           >
-            <p className={cn(
-              "text-[11px] font-semibold uppercase tracking-wider text-zinc-500",
-              isRtl && "text-end",
-            )}>
-              {isRtl ? "عوامل التحسين" : "Optimization factors"}
-            </p>
-            <div className={cn("flex flex-wrap gap-1.5", isRtl && "flex-row-reverse")}>
-              {hasIssues && (
-                <span className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border border-rose-500/30 bg-rose-500/[0.08] px-2.5 py-1 text-[11px] font-medium text-rose-300/90",
-                  isRtl && "flex-row-reverse",
-                )}>
-                  <AlertTriangle className="size-3 shrink-0 text-rose-400" aria-hidden />
-                  {isRtl
-                    ? `+ ${issueItems.length} مشكلة تم إصلاحها`
-                    : `+ ${issueItems.length} issue${issueItems.length > 1 ? "s" : ""} addressed`}
-                </span>
-              )}
-              {hasSpotlight && (
-                <span className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-1 text-[11px] font-medium text-emerald-300/90",
-                  isRtl && "flex-row-reverse",
-                )}>
-                  <Hash className="size-3 shrink-0 text-emerald-400" aria-hidden />
-                  {isRtl
-                    ? `+ ${spotlightItems.length} كلمة من السوق مُنسجت`
-                    : `+ ${spotlightItems.length} market keyword${spotlightItems.length > 1 ? "s" : ""} woven in`}
-                </span>
-              )}
+            {/* Header row */}
+            <div className={cn("flex items-center gap-2", isRtl && "flex-row-reverse")}>
+              <Layers className="size-3.5 shrink-0 text-zinc-500" aria-hidden />
+              <p className={cn(
+                "text-[11px] font-semibold uppercase tracking-wider text-zinc-500",
+              )}>
+                {isRtl ? "ملخص الاستراتيجية" : "Strategy Summary"}
+              </p>
             </div>
-            {hasNote && (
-              <p className={cn("flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-500", isRtl && "flex-row-reverse text-end")}>
+
+            {/* Signal pills */}
+            {(hasIssues || hasSpotlight) && (
+              <div className={cn("flex flex-wrap gap-1.5", isRtl && "flex-row-reverse")}>
+                {hasIssues && (
+                  <span className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border border-rose-500/30 bg-rose-500/[0.08] px-2.5 py-1 text-[11px] font-medium text-rose-300/90",
+                    isRtl && "flex-row-reverse",
+                  )}>
+                    <AlertTriangle className="size-3 shrink-0 text-rose-400" aria-hidden />
+                    {isRtl
+                      ? `${issueItems.length} مشكلة تم إصلاحها`
+                      : `${issueItems.length} review issue${issueItems.length > 1 ? "s" : ""} fixed`}
+                  </span>
+                )}
+                {hasSpotlight && (
+                  <span className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-1 text-[11px] font-medium text-emerald-300/90",
+                    isRtl && "flex-row-reverse",
+                  )}>
+                    <Hash className="size-3 shrink-0 text-emerald-400" aria-hidden />
+                    {isRtl
+                      ? `${spotlightItems.length} كلمة سوق مُنسجت`
+                      : `${spotlightItems.length} market keyword${spotlightItems.length > 1 ? "s" : ""} woven in`}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Synthesis note text */}
+            {hasAnySummary && (
+              <p className={cn(
+                "flex items-start gap-1.5 text-[12px] leading-relaxed text-zinc-400",
+                isRtl && "flex-row-reverse text-end",
+              )}>
                 <Info className="mt-0.5 size-3 shrink-0 text-zinc-600" aria-hidden />
-                {result.strategicNote}
+                {summaryText}
               </p>
             )}
           </div>
         );
       })()}
+
+      {/* ── Hero CTA card (v11) ───────────────────────────────────────────────── */}
+      {/* The single strongest install CTA — shown prominently before the listing fields. */}
+      {result.ctaSuggestion ? (
+        <div className={cn(
+          "flex items-start justify-between gap-3 rounded-2xl border border-emerald-500/25 bg-[#07120e]/80 px-4 py-3.5",
+          "ring-1 ring-emerald-500/10",
+          "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300 motion-safe:[animation-delay:40ms] motion-safe:[animation-fill-mode:both]",
+          isRtl && "flex-row-reverse font-arabic",
+        )}>
+          <div className={cn("flex min-w-0 flex-1 flex-col gap-1", isRtl && "items-end")}>
+            <div className={cn("flex items-center gap-1.5", isRtl && "flex-row-reverse")}>
+              <Zap className="size-3 shrink-0 text-emerald-400" aria-hidden />
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400/80">
+                {isRtl ? "نداء التحويل" : "Hero CTA"}
+              </p>
+            </div>
+            <p className={cn(
+              "text-sm font-medium leading-relaxed text-zinc-100/95",
+              isRtl && "text-end",
+            )}>
+              {result.ctaSuggestion}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(result.ctaSuggestion ?? "");
+            }}
+            className="mt-0.5 shrink-0 text-xs font-medium text-emerald-300/80 underline-offset-4 hover:text-emerald-200 hover:underline"
+            aria-label={isRtl ? "نسخ نداء التحويل" : "Copy hero CTA"}
+          >
+            {isRtl ? "نسخ" : "Copy"}
+          </button>
+        </div>
+      ) : null}
 
       <Tabs defaultValue="title" className="w-full">
         <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">

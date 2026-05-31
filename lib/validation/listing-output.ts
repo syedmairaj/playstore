@@ -52,10 +52,25 @@ export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
     /** Set when the model returned unusable ASO metadata after a successful listing parse. */
     asoScoreDegraded: z.literal(true).optional(),
 
+    // ── v11 fields ─────────────────────────────────────────────────────────
+    /**
+     * Consultant-grade one-sentence synthesis summary — what signals were used and how.
+     * Shown as the "Strategy Summary" card in the results panel.
+     * Replaces strategicNote; both are kept for backward compatibility.
+     */
+    strategySummary: z.string().min(1).max(400).optional(),
+
+    /**
+     * Single strongest hero CTA (≤120 chars) — the one install call-to-action
+     * that best captures the app's primary transformation. Shown prominently
+     * in the results panel above the full CTA list.
+     */
+    ctaSuggestion: z.string().min(1).max(120).optional(),
+
     // ── v10 fields ─────────────────────────────────────────────────────────
     /**
      * One-sentence explanation of what signals drove the generated copy.
-     * Surfaced in the UI as Optimization Factors pills after generation.
+     * Kept for backward compatibility with stored rows; new generations use strategySummary.
      */
     strategicNote: z.string().min(1).max(400).optional(),
 

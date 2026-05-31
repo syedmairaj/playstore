@@ -70,10 +70,13 @@ const LISTING_RESPONSE_SCHEMA = {
       },
       required: ["titleB", "hypothesis"],
     },
-    // ── v10 fields ────────────────────────────────────────────────────────
-    // One-sentence explanation of what signals were used — surfaced in UI
-    // as "Optimization Factors" pills. Optional so older stored rows still parse.
+    // ── v11 fields ────────────────────────────────────────────────────────
+    // strategySummary: consultant-grade one-sentence synthesis note,
+    // replaces strategicNote (kept for backward compat with stored rows).
     strategicNote: { type: SchemaType.STRING },
+    strategySummary: { type: SchemaType.STRING },
+    // ctaSuggestion: single hero CTA (≤120 chars) — the best install call-to-action
+    ctaSuggestion: { type: SchemaType.STRING },
   },
   required: [
     "title",
@@ -81,6 +84,7 @@ const LISTING_RESPONSE_SCHEMA = {
     "fullDescription",
     "keywordSuggestions",
     "ctaSuggestions",
+    "ctaSuggestion",
     "asoScore",
     "scoreBreakdown",
     "improvementTips",
@@ -88,6 +92,7 @@ const LISTING_RESPONSE_SCHEMA = {
     "screenshotCaptions",
     "abTestVariant",
     "strategicNote",
+    "strategySummary",
   ],
 };
 
@@ -97,17 +102,19 @@ const LISTING_RESPONSE_SCHEMA = {
 const STRICT_RETRY_ADDENDUM =
   "STRICT RETRY — previous attempt failed schema validation. You MUST return every required key: " +
   "title (≤30 chars — ends on complete word, never mid-word), " +
-  "shortDescription (≤80 chars — SELF-CONTAINED: every sentence that opens must close within the limit, no trailing fragments, ends on sentence boundary), " +
+  "shortDescription (≤80 chars — SELF-CONTAINED: every sentence that opens must close within the limit, no trailing fragments), " +
   "fullDescription (≤4000 chars), " +
   "keywordSuggestions (exactly 20 strings, each prefixed [competitive], [intent], or [gap]), " +
   "ctaSuggestions (4–8 strings — first item MUST start with 'WHY THIS RANKS: '), " +
+  "ctaSuggestion (≤120 chars — single strongest hero install CTA referencing primary transformation), " +
   "asoScore (integer 0–100 = exact sum of scoreBreakdown), " +
   "scoreBreakdown.title (0–30) + shortDescription (0–20) + longDescription (0–40) + persuasiveness (0–10), " +
   "improvementTips (2–8 strings), " +
-  "whatsNew (≤500 chars — Play Store release notes, opens with pain point resolved, keywords woven in), " +
-  "screenshotCaptions (exactly 5 strings each ≤80 chars — screenshot overlay headlines ordered by conversion priority), " +
-  "abTestVariant (object with titleB ≤30 chars + hypothesis ≤300 chars — A/B title test for Play Store Experiments), " +
-  "strategicNote (≤400 chars — one sentence explaining which signals drove the listing: review issues fixed, market keywords woven, tone applied). " +
+  "whatsNew (≤500 chars — opens with review issue fix if present, specific to this app), " +
+  "screenshotCaptions (exactly 5 strings each ≤80 chars — conversion-priority overlay headlines), " +
+  "abTestVariant (object with titleB ≤30 chars + hypothesis ≤300 chars), " +
+  "strategicNote (≤400 chars — one sentence: signals used), " +
+  "strategySummary (≤400 chars — one consultant-grade sentence: Fixed X + Captured Y + Converted Z + Applied tone). " +
   "Return ONLY the JSON object — no prose, no markdown.";
 
 export type GenerateListingWithGeminiResult = {
@@ -242,10 +249,11 @@ async function attemptGeneration(
       : {};
 
   const asoTry = tryParseListingAsoBundle(clampedRecord);
-  // Start with core fields, then layer in v8 optional fields from clamped output.
-  // coreResult.data only contains the 5 core fields — v8 fields (whatsNew,
-  // screenshotCaptions, abTestVariant) must be pulled directly from clampedRecord
-  // or they are silently lost before final Zod validation.
+  // Start with core fields, then layer in v8/v11 optional fields from clamped output.
+  // coreResult.data only contains the 5 core fields — extended fields (whatsNew,
+  // screenshotCaptions, abTestVariant, ctaSuggestion, strategySummary, strategicNote)
+  // must be pulled directly from clampedRecord or they are silently lost before
+  // final Zod validation.
   let data: ListingGenerationOutput = {
     ...coreResult.data,
     ...(typeof clampedRecord.whatsNew === "string" && clampedRecord.whatsNew.trim()
@@ -260,6 +268,17 @@ async function attemptGeneration(
       typeof (clampedRecord.abTestVariant as Record<string, unknown>).titleB === "string" &&
       typeof (clampedRecord.abTestVariant as Record<string, unknown>).hypothesis === "string"
       ? { abTestVariant: clampedRecord.abTestVariant as { titleB: string; hypothesis: string } }
+      : {}),
+    // ── v11 fields ──────────────────────────────────────────────────────────
+    ...(typeof clampedRecord.ctaSuggestion === "string" && clampedRecord.ctaSuggestion.trim()
+      ? { ctaSuggestion: clampedRecord.ctaSuggestion.trim().slice(0, 120) }
+      : {}),
+    ...(typeof clampedRecord.strategySummary === "string" && clampedRecord.strategySummary.trim()
+      ? { strategySummary: clampedRecord.strategySummary.trim().slice(0, 400) }
+      : {}),
+    // backward-compat: keep strategicNote if present
+    ...(typeof clampedRecord.strategicNote === "string" && clampedRecord.strategicNote.trim()
+      ? { strategicNote: clampedRecord.strategicNote.trim().slice(0, 400) }
       : {}),
   };
   let asoScorePartial = false;

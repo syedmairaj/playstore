@@ -28,7 +28,7 @@ import {
   type OptimizerWizardStep,
 } from "@/components/listing/optimizer/optimizer-stepper";
 import { OptimizerCreditsConfirmDialog } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
-import { Info, Loader2 } from "lucide-react";
+import { AlertTriangle, Hash, Info, Loader2, Shield, Sparkles } from "lucide-react";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
 import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog";
@@ -63,8 +63,6 @@ import {
   parseLogoGeneratorMetadata,
   resolveListingPreviewIconUrl,
 } from "@/lib/apps/logo-generator-metadata";
-import { ActiveOptimizationQueuePanel } from "@/components/optimizer/ActiveOptimizationQueuePanel";
-import { OptimizationSourcesSidebar } from "@/components/optimizer/optimization-sources-sidebar";
 import { LocalizedResults } from "@/components/optimizer/LocalizedResults";
 import {
   LOCALIZE_MARKETS,
@@ -382,8 +380,16 @@ export function ListingOptimizer({
    * Competitor pain-point phrases injected from the Exploit bridge.
    * Consumed once on the first generation run as an inversion directive —
    * never surfaced as raw search keywords in the Target Keywords field.
+   * Also mirrored into `competitorWeaknesses` state so Step 3 can render them
+   * as a removable pill group in the Active Context canvas.
    */
   const competitorVulnerabilitiesRef = useRef<string[]>([]);
+  /**
+   * UI-visible mirror of competitorVulnerabilitiesRef.
+   * Populated whenever vulnerabilities are injected; each pill can be removed
+   * independently. The ref is kept in sync so generation consumes the current set.
+   */
+  const [competitorWeaknesses, setCompetitorWeaknesses] = useState<string[]>([]);
   const [queuedImprovements, setQueuedImprovements] = useState<ListingImprovementItem[]>([]);
   const [queuedImprovementsLoading, setQueuedImprovementsLoading] = useState(false);
   /**
@@ -703,9 +709,11 @@ export function ListingOptimizer({
       injectedSession = consumeInjectedOptimizerKeywords();
       // Consume competitor vulnerabilities alongside keyword injection so they
       // arrive atomically. Stored in a ref — used once on the next generation run.
+      // Also mirrored into competitorWeaknesses state so Step 3 can render them.
       const vulns = consumePlaystoreCompetitorVulnerabilities();
       if (vulns.length) {
         competitorVulnerabilitiesRef.current = vulns;
+        setCompetitorWeaknesses(vulns);
       }
     }
 
@@ -1903,8 +1911,13 @@ export function ListingOptimizer({
       // If the Exploit bridge injected competitor pain-points, prepend a
       // one-time system instruction that inverts them into positive positioning
       // angles. Consumed here and cleared so it never leaks into a re-generate.
-      const vulns = competitorVulnerabilitiesRef.current;
+      // Use the UI-visible state if present (user may have removed some pills);
+      // fall back to the raw ref for programmatic invocations.
+      const vulns = competitorWeaknesses.length > 0
+        ? competitorWeaknesses
+        : competitorVulnerabilitiesRef.current;
       competitorVulnerabilitiesRef.current = [];
+      setCompetitorWeaknesses([]);
       const inversionDirective =
         vulns.length > 0
           ? `Tracked competitor analysis has surfaced the following active user pain-points across rival apps: ${vulns.join("; ")}. DO NOT mention these issues literally in the listing. Instead, aggressively position our app as the definitive solution — emphasise stability, accuracy, seamless synchronisation, and a clean ad-free experience that directly resolves each of these rival weaknesses. Where multiple competitors share the same pain-point, treat it as a high-priority differentiation signal. Keep all target keywords positive and optimised for high-volume Play Store indexing.`
@@ -3019,25 +3032,213 @@ export function ListingOptimizer({
                   onToggle={() => toggleWizardPanelPeek(2)}
                   disabledToggle={wizardStep === 2}
                 >
-                  <div className="space-y-5 border-t border-zinc-800/60 pt-5 sm:pt-6">
-                    {workspaceId ? (
-                      <ActiveOptimizationQueuePanel
-                        items={queuedImprovements}
-                        loading={queuedImprovementsLoading}
-                        isGenerating={loading}
-                        className="mb-0"
-                        onRemoveItem={handleRemoveQueueItem}
-                        ownPackageName={selectedAppRow?.package_name ?? null}
-                        onNavigateToReviews={handleNavigateToReviews}
-                      />
-                    ) : null}
-                    {/* Optimization Sources sidebar — transparent view of what the AI will use */}
-                    {queuedImprovements.length > 0 && !queuedImprovementsLoading ? (
-                      <OptimizationSourcesSidebar
-                        items={queuedImprovements}
-                        isRtl={locale === "ar"}
-                      />
-                    ) : null}
+                  <div className="space-y-6 border-t border-zinc-800/60 pt-5 sm:pt-6">
+
+                    {/* ── Active Context Canvas ─────────────────────────────────── */}
+                    {/* Three signal groups: Review Issues, Market Keywords, Competitor Weaknesses.
+                        Each pill is individually removable. Empty groups show a quiet "none staged" hint.
+                        This is the "Data-Aggregating Canvas" — the user manages their strategy deck here. */}
+                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
+                      <div className="mb-3 flex items-center gap-2">
+                        <Sparkles className="size-3.5 shrink-0 text-emerald-400" aria-hidden />
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
+                          {isRtl ? "السياق النشط" : "Active Context"}
+                        </p>
+                        {(queuedImprovements.length > 0 || competitorWeaknesses.length > 0) ? (
+                          <span className="ms-auto rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/20">
+                            {queuedImprovements.length + competitorWeaknesses.length}{" "}
+                            {isRtl
+                              ? "إشارة نشطة"
+                              : `signal${queuedImprovements.length + competitorWeaknesses.length !== 1 ? "s" : ""} active`}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mb-4 text-[11px] leading-relaxed text-white/40">
+                        {isRtl
+                          ? "المدخلات أدناه سيتم دمجها تلقائياً في القائمة. انقر × لإزالة أي إشارة قبل التوليد."
+                          : "All inputs below will be woven into the listing automatically. Click × to remove any signal before generating."}
+                      </p>
+
+                      <div className="space-y-4">
+                        {/* ── Signal Group 1: Review Issues ──────────────────────── */}
+                        {(() => {
+                          const reviewItems = queuedImprovements.filter(
+                            (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
+                          );
+                          return (
+                            <div>
+                              <div className="mb-2 flex items-center gap-1.5">
+                                <AlertTriangle className="size-3 shrink-0 text-rose-400/80" aria-hidden />
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-400/80">
+                                  {isRtl ? "مشكلات المراجعات" : "Review Issues"}
+                                </span>
+                                <span className="text-[10px] text-white/25">
+                                  {isRtl ? "← تُعالَج في الوصف + ما هو جديد" : "→ addressed in description + what's new"}
+                                </span>
+                              </div>
+                              {reviewItems.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  <AnimatePresence initial={false}>
+                                    {reviewItems.map((item) => {
+                                      const label = item.sentimentTag?.trim() || item.reviewText?.slice(0, 24) || "Issue";
+                                      return (
+                                        <motion.span
+                                          key={item.id}
+                                          layout
+                                          initial={{ opacity: 0, scale: 0.85 }}
+                                          animate={{ opacity: 1, scale: 1 }}
+                                          exit={{ opacity: 0, scale: 0.8 }}
+                                          transition={{ duration: 0.18 }}
+                                          className={cn(
+                                            "inline-flex items-center gap-1.5 rounded-full border border-rose-500/25 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-200/90",
+                                            loading && "pointer-events-none opacity-60",
+                                          )}
+                                        >
+                                          <AlertTriangle className="size-2.5 shrink-0 text-rose-400/70" aria-hidden />
+                                          <span className="max-w-[160px] truncate">{label}</span>
+                                          {!loading ? (
+                                            <button
+                                              type="button"
+                                              aria-label={`Remove ${label}`}
+                                              onClick={() => handleRemoveQueueItem(item.id)}
+                                              className="ms-0.5 rounded-full p-0.5 text-rose-400/50 transition hover:bg-rose-500/20 hover:text-rose-300"
+                                            >
+                                              ×
+                                            </button>
+                                          ) : null}
+                                        </motion.span>
+                                      );
+                                    })}
+                                  </AnimatePresence>
+                                </div>
+                              ) : (
+                                <p className="text-[11px] italic text-white/25">
+                                  {isRtl ? "لا توجد مشكلات مراجعات — اذهب إلى المراجعات لإضافة الإشارات" : "None staged — visit Reviews to add signals"}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* ── Signal Group 2: Market Keywords ───────────────────── */}
+                        {(() => {
+                          const spotlightItems = queuedImprovements.filter(
+                            (item) => item.sentimentTag?.startsWith("market_spotlight:"),
+                          );
+                          return (
+                            <div>
+                              <div className="mb-2 flex items-center gap-1.5">
+                                <Hash className="size-3 shrink-0 text-emerald-400/80" aria-hidden />
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-400/80">
+                                  {isRtl ? "فرص السوق" : "Market Opportunities"}
+                                </span>
+                                <span className="text-[10px] text-white/25">
+                                  {isRtl ? "← تُنسج في العنوان + الوصف القصير" : "→ woven into title + short description"}
+                                </span>
+                              </div>
+                              {spotlightItems.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  <AnimatePresence initial={false}>
+                                    {spotlightItems.map((item) => {
+                                      const label = (item.sentimentTag ?? "")
+                                        .replace(/^market_spotlight:/, "")
+                                        .trim() || "Keyword";
+                                      return (
+                                        <motion.span
+                                          key={item.id}
+                                          layout
+                                          initial={{ opacity: 0, scale: 0.85 }}
+                                          animate={{ opacity: 1, scale: 1 }}
+                                          exit={{ opacity: 0, scale: 0.8 }}
+                                          transition={{ duration: 0.18 }}
+                                          className={cn(
+                                            "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200/90",
+                                            loading && "pointer-events-none opacity-60",
+                                          )}
+                                        >
+                                          <Hash className="size-2.5 shrink-0 text-emerald-400/70" aria-hidden />
+                                          <span className="max-w-[160px] truncate">{label}</span>
+                                          {!loading ? (
+                                            <button
+                                              type="button"
+                                              aria-label={`Remove ${label}`}
+                                              onClick={() => handleRemoveQueueItem(item.id)}
+                                              className="ms-0.5 rounded-full p-0.5 text-emerald-400/50 transition hover:bg-emerald-500/20 hover:text-emerald-300"
+                                            >
+                                              ×
+                                            </button>
+                                          ) : null}
+                                        </motion.span>
+                                      );
+                                    })}
+                                  </AnimatePresence>
+                                </div>
+                              ) : (
+                                <p className="text-[11px] italic text-white/25">
+                                  {isRtl ? "لا توجد كلمات مفتاحية — اذهب إلى Market Intel لإضافة spotlight" : "None staged — visit Market Intel to add a spotlight"}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* ── Signal Group 3: Competitor Weaknesses ─────────────── */}
+                        <div>
+                          <div className="mb-2 flex items-center gap-1.5">
+                            <Shield className="size-3 shrink-0 text-amber-400/80" aria-hidden />
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-400/80">
+                              {isRtl ? "نقاط ضعف المنافسين" : "Competitor Weaknesses"}
+                            </span>
+                            <span className="text-[10px] text-white/25">
+                              {isRtl ? "← تُستخدم لإبراز التميز في الوصف الطويل" : "→ position you as the superior alternative"}
+                            </span>
+                          </div>
+                          {competitorWeaknesses.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              <AnimatePresence initial={false}>
+                                {competitorWeaknesses.map((weakness, idx) => (
+                                  <motion.span
+                                    key={`cweak-${idx}-${weakness.slice(0, 20).replace(/\s/g, "-")}`}
+                                    layout
+                                    initial={{ opacity: 0, scale: 0.85 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.8 }}
+                                    transition={{ duration: 0.18 }}
+                                    className={cn(
+                                      "inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200/90",
+                                      loading && "pointer-events-none opacity-60",
+                                    )}
+                                  >
+                                    <Shield className="size-2.5 shrink-0 text-amber-400/70" aria-hidden />
+                                    <span className="max-w-[160px] truncate">{weakness}</span>
+                                    {!loading ? (
+                                      <button
+                                        type="button"
+                                        aria-label={`Remove ${weakness}`}
+                                        onClick={() => {
+                                          const updated = competitorWeaknesses.filter((_, i) => i !== idx);
+                                          setCompetitorWeaknesses(updated);
+                                          competitorVulnerabilitiesRef.current = updated;
+                                        }}
+                                        className="ms-0.5 rounded-full p-0.5 text-amber-400/50 transition hover:bg-amber-500/20 hover:text-amber-300"
+                                      >
+                                        ×
+                                      </button>
+                                    ) : null}
+                                  </motion.span>
+                                ))}
+                              </AnimatePresence>
+                            </div>
+                          ) : (
+                            <p className="text-[11px] italic text-white/25">
+                              {isRtl ? "لا توجد بيانات منافسين — اذهب إلى Competitor Spy لتحليل المنافسين" : "None staged — visit Competitor Spy to analyse rivals"}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {/* ─────────────────────────────────────────────────────────── */}
+
                     <p className="text-xs leading-relaxed text-white/45">
                       {t("form.sectionVoiceHelper", {
                         credits: AI_CREDIT_COSTS.listing_generation,
@@ -3072,9 +3273,6 @@ export function ListingOptimizer({
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-4 sm:gap-y-2">
                       <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
-                        {/* Tooltip explains what the full generate action does.
-                            When button is disabled due to incomplete App Identity,
-                            the step-gate hint appears below instead of the normal helper text. */}
                         <TooltipProvider>
                           <Tooltip
                             content={t("form.generateTooltip")}
@@ -3085,25 +3283,29 @@ export function ListingOptimizer({
                               type="submit"
                               disabled={!canSubmit || isProcessingCredits || loading}
                               aria-busy={loading ? true : undefined}
-                              className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[280px]"
+                              className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[300px]"
                             >
                               {loading ? (
                                 <>
                                   <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-                                  {t("form.generating")}
+                                  {isRtl ? "جارٍ التوليد…" : t("form.generating")}
                                 </>
                               ) : (
-                                t("form.generate", {
-                                  credits: AI_CREDIT_COSTS.listing_generation,
-                                })
+                                <>
+                                  <Sparkles className="size-4 shrink-0" aria-hidden />
+                                  {isRtl
+                                    ? `توليد القائمة الكاملة · ${AI_CREDIT_COSTS.listing_generation} رصيد`
+                                    : `Generate Full Listing · ${AI_CREDIT_COSTS.listing_generation} credits`}
+                                </>
                               )}
                             </button>
                           </Tooltip>
                         </TooltipProvider>
                         <p className="text-center text-sm font-medium text-emerald-300/90 sm:text-start">
-                          {t("form.generateValueMicrocopy")}
+                          {isRtl
+                            ? "يوليف الذكاء الاصطناعي جميع الإشارات النشطة في قائمة واحدة محسّنة"
+                            : "AI synthesises all active signals into one optimised listing"}
                         </p>
-                        {/* Step-gate: when App Identity is incomplete show a nudge instead of the normal helper */}
                         {!canSubmit && !loading && !isProcessingCredits &&
                           (displayAppName.trim().length === 0 || category.trim().length === 0) ? (
                           <p className="max-w-xl text-center text-xs leading-relaxed text-amber-400/80 sm:text-start">
@@ -3111,16 +3313,12 @@ export function ListingOptimizer({
                           </p>
                         ) : (
                           <p className="max-w-xl text-center text-xs leading-relaxed text-white/50 sm:text-start">
-                            {t("form.generateButtonHelper", {
-                              credits: AI_CREDIT_COSTS.listing_generation,
-                            })}
+                            {isRtl
+                              ? "أضف إشارات من المراجعات أو Market Intel أو Competitor Spy لتحسين النتائج"
+                              : "Add signals from Reviews, Market Intel, or Competitor Spy for stronger results"}
                           </p>
                         )}
                       </div>
-
-                      {/* "This can take a few seconds" moved into the
-                          OptimizerResultsGeneratingView skeleton below so it
-                          appears in context rather than floating next to the button */}
                     </div>
                   </div>
                   {wizardStep === 2 ? (
