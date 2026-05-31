@@ -19,5 +19,11 @@ export const listingLogoGenerateBodySchema = z
     category: z.string().trim().min(1).max(120),
     shortDescription: z.string().trim().max(2000).optional(),
     style: z.enum(LISTING_LOGO_STYLES),
+    /** Optional brand colour as a 6-digit hex string (e.g. "#1A2B3C"). */
+    brandColor: z
+      .string()
+      .trim()
+      .regex(/^#[0-9a-fA-F]{6}$/)
+      .optional(),
   })
   .strict();

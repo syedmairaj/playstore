@@ -1823,7 +1823,14 @@
       "errors": {
         "unconfigured": "توليد الشعار بالذكاء الاصطناعي غير مُعدّ على الخادم. أضف RUNWARE_API_KEY لتفعيل الميزة.",
         "generationFailed": "حدث خطأ أثناء توليد الشعارات."
-      }
+      },
+      "brandColorLabel": "لون العلامة التجارية (اختياري)",
+      "brandColorNone": "إزالة",
+      "brandColorCustom": "لون مخصص",
+      "bgSolid": "خلفية صلبة",
+      "bgSolidHint": "تعبئة بيضاء — متوافقة مع Play Store",
+      "bgTransparent": "شفاف",
+      "bgTransparentHint": "قناة ألفا محفوظة — للاستخدام التسويقي"
     }
   },
   "addApp": {

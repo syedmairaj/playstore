@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Loader2 } from "lucide-react";
+import { Loader2, Palette, ImageDown } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -18,6 +18,8 @@ import {
 } from "@/lib/validation/listing-logo-generate-body";
 import { cn } from "@/lib/utils";
 import type { AppLogoGeneratorMetadata } from "@/lib/apps/logo-generator-metadata";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 type LogoGenOk = {
   ok: true;
@@ -35,6 +37,21 @@ type LogoGenErr = {
   };
 };
 
+type BgStyle = "solid" | "transparent";
+
+// ── Brand colour presets ──────────────────────────────────────────────────────
+// Five common, distinct hues that cover dark / mid / light brand palettes.
+// The last swatch is always the custom-color input — rendered separately.
+const BRAND_COLOR_PRESETS = [
+  { hex: "#1A73E8", label: "Blue"    },
+  { hex: "#0B8043", label: "Green"   },
+  { hex: "#D93025", label: "Red"     },
+  { hex: "#E37400", label: "Orange"  },
+  { hex: "#7B1FA2", label: "Purple"  },
+] as const;
+
+// ── Skeleton tile ─────────────────────────────────────────────────────────────
+
 function LogoSkeletonTile() {
   return (
     <div
@@ -45,6 +62,186 @@ function LogoSkeletonTile() {
     </div>
   );
 }
+
+// ── Brand Color Picker ────────────────────────────────────────────────────────
+// Compact inline control: 5 preset swatches + a custom colour input.
+// Selecting a preset clears the custom input; picking a custom colour
+// deselects all presets. Selecting the active preset again deselects it
+// (reverts to "no brand colour").
+
+function BrandColorPicker({
+  value,
+  onChange,
+  label,
+  noneLabel,
+  customLabel,
+  disabled,
+}: {
+  value: string;
+  onChange: (hex: string) => void;
+  label: string;
+  noneLabel: string;
+  customLabel: string;
+  disabled?: boolean;
+}) {
+  const customInputRef = useRef<HTMLInputElement>(null);
+  const isCustom =
+    value !== "" && !BRAND_COLOR_PRESETS.some((p) => p.hex === value);
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-1.5">
+        <Palette className="size-3.5 shrink-0 text-white/50" aria-hidden />
+        <span className="text-xs font-medium text-white/70">{label}</span>
+        {value && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange("")}
+            className="ms-auto text-[10px] text-white/35 transition hover:text-white/60 disabled:pointer-events-none"
+          >
+            {noneLabel}
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {BRAND_COLOR_PRESETS.map((p) => {
+          const active = value === p.hex;
+          return (
+            <button
+              key={p.hex}
+              type="button"
+              disabled={disabled}
+              title={p.label}
+              aria-label={p.label}
+              aria-pressed={active}
+              onClick={() => onChange(active ? "" : p.hex)}
+              className={cn(
+                "size-7 rounded-full border-2 transition-[border-color,transform,box-shadow] duration-150",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]",
+                "disabled:cursor-not-allowed disabled:opacity-40",
+                active
+                  ? "scale-110 border-white/80 shadow-[0_0_0_3px_rgba(255,255,255,0.18)]"
+                  : "border-white/20 hover:border-white/50 hover:scale-105",
+              )}
+              style={{ backgroundColor: p.hex }}
+            />
+          );
+        })}
+
+        {/* Custom colour swatch — clicking opens the native colour picker */}
+        <button
+          type="button"
+          disabled={disabled}
+          title={customLabel}
+          aria-label={customLabel}
+          aria-pressed={isCustom}
+          onClick={() => customInputRef.current?.click()}
+          className={cn(
+            "relative size-7 overflow-hidden rounded-full border-2 transition-[border-color,transform,box-shadow] duration-150",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]",
+            "disabled:cursor-not-allowed disabled:opacity-40",
+            isCustom
+              ? "scale-110 border-white/80 shadow-[0_0_0_3px_rgba(255,255,255,0.18)]"
+              : "border-white/20 hover:border-white/50 hover:scale-105",
+          )}
+          style={isCustom ? { backgroundColor: value } : undefined}
+        >
+          {/* Hue-wheel gradient shown when no custom colour is active */}
+          {!isCustom && (
+            <span
+              className="absolute inset-0 rounded-full"
+              style={{
+                background:
+                  "conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)",
+                opacity: 0.85,
+              }}
+              aria-hidden
+            />
+          )}
+          {/* Hidden native colour input */}
+          <input
+            ref={customInputRef}
+            type="color"
+            tabIndex={-1}
+            aria-hidden
+            disabled={disabled}
+            value={isCustom ? value : "#ffffff"}
+            onChange={(e) => onChange(e.target.value)}
+            className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+          />
+        </button>
+
+        {/* Live hex preview when a colour is set */}
+        {value && (
+          <span className="ms-1 font-mono text-[11px] tracking-wide text-white/50">
+            {value.toUpperCase()}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Background Style Toggle ───────────────────────────────────────────────────
+// Two-option pill toggle. Used only at download-time — does not affect the
+// live preview or the Runware generation prompt.
+
+function BgStyleToggle({
+  value,
+  onChange,
+  solidLabel,
+  solidHint,
+  transparentLabel,
+  transparentHint,
+  disabled,
+}: {
+  value: BgStyle;
+  onChange: (v: BgStyle) => void;
+  solidLabel: string;
+  solidHint: string;
+  transparentLabel: string;
+  transparentHint: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-1.5">
+        <ImageDown className="size-3.5 shrink-0 text-white/50" aria-hidden />
+        <span className="text-xs font-medium text-white/70">{solidLabel.replace(" ✓", "").split(" ")[0]} / {transparentLabel.split(" ")[0]}</span>
+      </div>
+      <div className="flex gap-2">
+        {(
+          [
+            { v: "solid" as BgStyle, label: solidLabel, hint: solidHint },
+            { v: "transparent" as BgStyle, label: transparentLabel, hint: transparentHint },
+          ] as const
+        ).map(({ v, label, hint }) => (
+          <button
+            key={v}
+            type="button"
+            disabled={disabled}
+            title={hint}
+            onClick={() => onChange(v)}
+            className={cn(
+              "flex-1 rounded-xl border px-3 py-2 text-left text-xs transition-colors duration-150",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]",
+              "disabled:cursor-not-allowed disabled:opacity-40",
+              value === v
+                ? "border-[#22C55E]/45 bg-[#22C55E]/10 font-semibold text-[#86efac]"
+                : "border-white/[0.1] bg-white/[0.03] font-medium text-white/55 hover:border-white/20 hover:text-white/75",
+            )}
+          >
+            <span className="block">{label}</span>
+            <span className="mt-0.5 block text-[10px] font-normal opacity-70 leading-tight">{hint}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main dialog ───────────────────────────────────────────────────────────────
 
 export function LogoGeneratorDialog(props: {
   open: boolean;
@@ -60,20 +257,24 @@ export function LogoGeneratorDialog(props: {
   onLogoSelected: (httpsUrl: string) => void;
   /** Called after logo generator metadata is saved to `apps` (regenerate / selection). */
   onLogoGeneratorPersisted?: () => void;
-  /** Restored from `apps.metadata.logoGenerator` when reopening “Change logo”. */
+  /** Restored from `apps.metadata.logoGenerator` when reopening "Change logo". */
   initialLogoGenerator?: AppLogoGeneratorMetadata | null;
 }) {
   const locale = useLocale();
   const isAr = locale === "ar";
   const t = useTranslations("optimizer.logo");
   const creditCost = AI_CREDIT_COSTS.listing_logo_generation;
+
   const [style, setStyle] = useState<ListingLogoStyle>("Modern");
+  const [brandColor, setBrandColor] = useState<string>("");
+  const [bgStyle, setBgStyle] = useState<BgStyle>("solid");
   const [images, setImages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const persistSelectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasOpenRef = useRef(false);
 
+  // Restore state when dialog opens with an existing logo session
   useEffect(() => {
     const opened = props.open && !wasOpenRef.current;
     wasOpenRef.current = props.open;
@@ -97,6 +298,8 @@ export function LogoGeneratorDialog(props: {
       }
     };
   }, []);
+
+  // ── Persist helpers ─────────────────────────────────────────────────────────
 
   async function persistLogoGeneratorState(meta: AppLogoGeneratorMetadata) {
     const res = await fetch(`/api/workspaces/${props.workspaceId}/apps/${props.appId}`, {
@@ -127,6 +330,8 @@ export function LogoGeneratorDialog(props: {
     }, 400);
   }
 
+  // ── Generate ────────────────────────────────────────────────────────────────
+
   async function runGenerate() {
     if (
       typeof props.creditsRemaining === "number" &&
@@ -145,19 +350,25 @@ export function LogoGeneratorDialog(props: {
     setSelected(null);
     const toastId = toast.loading(t("generating"));
     try {
+      const body: Record<string, unknown> = {
+        workspaceId: props.workspaceId,
+        appId: props.appId,
+        appName: props.appName,
+        category: props.category,
+        style,
+      };
+      if (props.shortDescription.trim()) {
+        body.shortDescription = props.shortDescription.trim();
+      }
+      // Only send brandColor when it's a valid 6-digit hex
+      if (/^#[0-9a-fA-F]{6}$/.test(brandColor)) {
+        body.brandColor = brandColor;
+      }
+
       const res = await fetch("/api/listings/logo-generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspaceId: props.workspaceId,
-          appId: props.appId,
-          appName: props.appName,
-          category: props.category,
-          ...(props.shortDescription.trim()
-            ? { shortDescription: props.shortDescription.trim() }
-            : {}),
-          style,
-        }),
+        body: JSON.stringify(body),
       });
       const json = (await res.json()) as LogoGenOk | LogoGenErr;
       toast.dismiss(toastId);
@@ -215,6 +426,8 @@ export function LogoGeneratorDialog(props: {
     }
   }
 
+  // ── Canvas download helpers ─────────────────────────────────────────────────
+
   async function fetchRemoteImageBlob(url: string): Promise<Blob | null> {
     try {
       const res = await fetch(url, {
@@ -229,7 +442,12 @@ export function LogoGeneratorDialog(props: {
     }
   }
 
-  async function blobTo512PngBlob(blob: Blob): Promise<Blob | null> {
+  /**
+   * Renders the image onto a 512×512 canvas.
+   * When `bg === "solid"`, fills the canvas white first (Play Store compliant).
+   * When `bg === "transparent"`, leaves alpha channel intact.
+   */
+  async function blobTo512PngBlob(blob: Blob, bg: BgStyle): Promise<Blob | null> {
     let bmp: ImageBitmap | undefined;
     try {
       bmp = await createImageBitmap(blob);
@@ -245,6 +463,13 @@ export function LogoGeneratorDialog(props: {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
       ctx.clearRect(0, 0, 512, 512);
+
+      // ── Background fill (solid only) ──────────────────────────────────────
+      if (bg === "solid") {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, 512, 512);
+      }
+
       const w = bmp.width;
       const h = bmp.height;
       const scale = Math.min(512 / w, 512 / h);
@@ -288,7 +513,7 @@ export function LogoGeneratorDialog(props: {
       window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
-    const png = await blobTo512PngBlob(blob);
+    const png = await blobTo512PngBlob(blob, bgStyle);
     if (!png) {
       toast.error(t("downloadPrepareFailed"));
       return;
@@ -300,7 +525,7 @@ export function LogoGeneratorDialog(props: {
         category: props.category,
         imageUrl: url,
         index,
-        exportTag: "512",
+        exportTag: bgStyle === "transparent" ? "512-transparent" : "512",
       }),
     );
   }
@@ -326,6 +551,8 @@ export function LogoGeneratorDialog(props: {
       }),
     );
   }
+
+  // ── Apply to app ────────────────────────────────────────────────────────────
 
   async function applyIcon(url: string) {
     if (!/^https:\/\//i.test(url)) {
@@ -358,6 +585,10 @@ export function LogoGeneratorDialog(props: {
         toast.error(json.error?.message ?? t("applyError"));
         return;
       }
+      // ── "Icon-to-Screen Magic" ─────────────────────────────────────────────
+      // onLogoSelected updates previewIconUrl in ListingOptimizer, which flows
+      // into LivePreviewPhone's iconUrl prop. PreviewSquircleMark re-mounts on
+      // key={iconSrc} change, triggering the built-in fade-in zoom-in animation.
       props.onLogoSelected(url);
       toast.success(t("logoUpdated"));
       props.onOpenChange(false);
@@ -370,17 +601,21 @@ export function LogoGeneratorDialog(props: {
 
   const showSkeletonGrid = busy && images.length === 0;
 
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent
         dir={isAr ? "rtl" : "ltr"}
         className={cn(
-          "max-h-[min(92vh,860px)] max-w-[min(96vw,720px)] overflow-y-auto border border-white/[0.1] bg-[#0c1018] p-0 text-white shadow-2xl sm:rounded-2xl",
+          "max-h-[min(92vh,900px)] max-w-[min(96vw,720px)] overflow-y-auto border border-white/[0.1] bg-[#0c1018] p-0 text-white shadow-2xl sm:rounded-2xl",
           isAr && "font-arabic",
         )}
         overlayClassName="bg-black/70 backdrop-blur-md"
       >
         <div className="space-y-8 p-7 sm:p-10">
+
+          {/* ── Header ───────────────────────────────────────────────────── */}
           <DialogHeader className="space-y-3 text-start sm:space-y-3.5">
             <DialogTitle className="text-2xl font-semibold tracking-tight text-white sm:text-[1.65rem]">
               {t("title")}
@@ -394,6 +629,7 @@ export function LogoGeneratorDialog(props: {
             <p className="text-xs leading-relaxed text-white/50 sm:text-[13px]">{t("sizeNote")}</p>
           </DialogHeader>
 
+          {/* ── Style selector ───────────────────────────────────────────── */}
           <div className="space-y-3">
             <label className="text-xs font-medium text-white/70" htmlFor="logo-style">
               {t("styleLabel")}
@@ -413,13 +649,22 @@ export function LogoGeneratorDialog(props: {
             </select>
           </div>
 
+          {/* ── Brand color picker ───────────────────────────────────────── */}
+          <BrandColorPicker
+            value={brandColor}
+            onChange={setBrandColor}
+            label={t("brandColorLabel")}
+            noneLabel={t("brandColorNone")}
+            customLabel={t("brandColorCustom")}
+            disabled={busy}
+          />
+
+          {/* ── Generate button ──────────────────────────────────────────── */}
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
-                void runGenerate();
-              }}
+              onClick={() => { void runGenerate(); }}
               className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-[#22C55E] px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#16a34a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {busy ? (
@@ -438,6 +683,7 @@ export function LogoGeneratorDialog(props: {
             </button>
           </div>
 
+          {/* ── Skeleton grid ────────────────────────────────────────────── */}
           {showSkeletonGrid ? (
             <div className="space-y-4">
               <p className="text-xs text-white/50">{t("generating")}</p>
@@ -449,6 +695,7 @@ export function LogoGeneratorDialog(props: {
             </div>
           ) : null}
 
+          {/* ── Logo grid + actions ──────────────────────────────────────── */}
           {images.length > 0 ? (
             <div className="space-y-6">
               <p className="text-xs leading-relaxed text-white/50 sm:text-[13px]">{t("pickHint")}</p>
@@ -484,6 +731,20 @@ export function LogoGeneratorDialog(props: {
                 ))}
               </div>
 
+              {/* ── Background Style toggle (pre-download) ─────────────── */}
+              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
+                <BgStyleToggle
+                  value={bgStyle}
+                  onChange={setBgStyle}
+                  solidLabel={t("bgSolid")}
+                  solidHint={t("bgSolidHint")}
+                  transparentLabel={t("bgTransparent")}
+                  transparentHint={t("bgTransparentHint")}
+                  disabled={busy}
+                />
+              </div>
+
+              {/* ── Action buttons ──────────────────────────────────────── */}
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-stretch">
                 <button
                   type="button"

@@ -61,11 +61,16 @@ function buildPositivePrompt(input: {
   shortDescription?: string;
   style: string;
   variantIndex: number;
+  brandColor?: string;
 }): string {
   const short = input.shortDescription?.trim();
   const shortLine = short
     ? `Short description / positioning: ${short}`
     : "Short description / positioning: (not provided — infer only from app name and category.)";
+
+  const colorLine = input.brandColor?.trim()
+    ? `• Brand colour palette: dominant hue ${input.brandColor.toUpperCase()} — use this as the primary colour anchor for the icon background, motif, or accent. Keep it recognisable but harmonise with the style.`
+    : null;
 
   const variant = input.variantIndex + 1;
   return [
@@ -80,6 +85,7 @@ function buildPositivePrompt(input: {
     "• Motifs and metaphors must fit the category and feel trustworthy in a global store listing.",
     "• Culturally neutral iconography — must work well for English-speaking and Arabic-speaking users (avoid tiny ambiguous glyphs or region-specific lettering).",
     `• This is creative direction ${variant} of 4: use a clearly distinct composition, focal motif, or layout from the other three variants while staying one coherent product idea.`,
+    ...(colorLine ? [colorLine] : []),
     "",
     `Style influence: ${input.style}.`,
   ].join("\n");
@@ -108,6 +114,7 @@ export async function generateAppLogos(input: {
   category: string;
   shortDescription?: string;
   style: string;
+  brandColor?: string;
 }): Promise<string[]> {
   const apiKey = process.env.RUNWARE_API_KEY?.trim();
   if (!apiKey) {
@@ -128,6 +135,7 @@ export async function generateAppLogos(input: {
       shortDescription: input.shortDescription,
       style: input.style.trim(),
       variantIndex: i,
+      brandColor: input.brandColor,
     }),
     width: 1024,
     height: 1024,

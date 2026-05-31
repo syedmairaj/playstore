@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     throw e;
   }
 
-  const { workspaceId, appId, appName, category, shortDescription, style } = input;
+  const { workspaceId, appId, appName, category, shortDescription, style, brandColor } = input;
 
   const role = await getWorkspaceRole(supabase, workspaceId, user.id);
   if (!role) {
@@ -230,6 +230,7 @@ export async function POST(request: NextRequest) {
       category,
       shortDescription,
       style,
+      brandColor,
     });
     await logUsage(admin, {
       route: ROUTE,

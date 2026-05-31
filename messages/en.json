@@ -1823,7 +1823,14 @@
       "errors": {
         "unconfigured": "AI logo generation is not configured on the server. Add RUNWARE_API_KEY to enable this feature.",
         "generationFailed": "Something went wrong while generating logos."
-      }
+      },
+      "brandColorLabel": "Brand colour (optional)",
+      "brandColorNone": "Clear",
+      "brandColorCustom": "Custom colour",
+      "bgSolid": "Solid background",
+      "bgSolidHint": "White fill — Play Store compliant",
+      "bgTransparent": "Transparent",
+      "bgTransparentHint": "Alpha preserved — for marketing use"
     }
   },
   "addApp": {
