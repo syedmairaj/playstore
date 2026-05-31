@@ -190,6 +190,7 @@ function BrandColorPicker({
 function BgStyleToggle({
   value,
   onChange,
+  heading,
   solidLabel,
   solidHint,
   transparentLabel,
@@ -198,6 +199,7 @@ function BgStyleToggle({
 }: {
   value: BgStyle;
   onChange: (v: BgStyle) => void;
+  heading: string;
   solidLabel: string;
   solidHint: string;
   transparentLabel: string;
@@ -208,7 +210,7 @@ function BgStyleToggle({
     <div className="space-y-2.5">
       <div className="flex items-center gap-1.5">
         <ImageDown className="size-3.5 shrink-0 text-white/50" aria-hidden />
-        <span className="text-xs font-medium text-white/70">{solidLabel.replace(" ✓", "").split(" ")[0]} / {transparentLabel.split(" ")[0]}</span>
+        <span className="text-xs font-medium text-white/70">{heading}</span>
       </div>
       <div className="flex gap-2">
         {(
@@ -629,37 +631,56 @@ export function LogoGeneratorDialog(props: {
             <p className="text-xs leading-relaxed text-white/50 sm:text-[13px]">{t("sizeNote")}</p>
           </DialogHeader>
 
-          {/* ── Style selector ───────────────────────────────────────────── */}
-          <div className="space-y-3">
-            <label className="text-xs font-medium text-white/70" htmlFor="logo-style">
-              {t("styleLabel")}
-            </label>
-            <select
-              id="logo-style"
+          {/* ══ Settings block ═══════════════════════════════════════════
+               Visual style · Brand colour · Background style
+               All three are "inputs" that feed into generation.
+               Separated from the action button by a border.            */}
+          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5 space-y-6">
+
+            {/* Visual style */}
+            <div className="space-y-2.5">
+              <label className="text-xs font-medium text-white/70" htmlFor="logo-style">
+                {t("styleLabel")}
+              </label>
+              <select
+                id="logo-style"
+                disabled={busy}
+                value={style}
+                onChange={(e) => setStyle(e.target.value as ListingLogoStyle)}
+                className="w-full max-w-md rounded-xl border border-white/[0.1] bg-white/[0.06] px-3 py-2.5 text-sm text-white outline-none transition focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/25 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]"
+              >
+                {LISTING_LOGO_STYLES.map((s) => (
+                  <option key={s} value={s}>
+                    {t(`styles.${s}`)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Brand colour */}
+            <BrandColorPicker
+              value={brandColor}
+              onChange={setBrandColor}
+              label={t("brandColorLabel")}
+              noneLabel={t("brandColorNone")}
+              customLabel={t("brandColorCustom")}
               disabled={busy}
-              value={style}
-              onChange={(e) => setStyle(e.target.value as ListingLogoStyle)}
-              className="w-full max-w-md rounded-xl border border-white/[0.1] bg-white/[0.06] px-3 py-2.5 text-sm text-white outline-none transition focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/25 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]"
-            >
-              {LISTING_LOGO_STYLES.map((s) => (
-                <option key={s} value={s}>
-                  {t(`styles.${s}`)}
-                </option>
-              ))}
-            </select>
+            />
+
+            {/* Background style — set before generating so intent is clear */}
+            <BgStyleToggle
+              value={bgStyle}
+              onChange={setBgStyle}
+              heading={t("bgStyleLabel")}
+              solidLabel={t("bgSolid")}
+              solidHint={t("bgSolidHint")}
+              transparentLabel={t("bgTransparent")}
+              transparentHint={t("bgTransparentHint")}
+              disabled={busy}
+            />
           </div>
 
-          {/* ── Brand color picker ───────────────────────────────────────── */}
-          <BrandColorPicker
-            value={brandColor}
-            onChange={setBrandColor}
-            label={t("brandColorLabel")}
-            noneLabel={t("brandColorNone")}
-            customLabel={t("brandColorCustom")}
-            disabled={busy}
-          />
-
-          {/* ── Generate button ──────────────────────────────────────────── */}
+          {/* ── Action barrier → Generate button ─────────────────────────── */}
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
@@ -729,19 +750,6 @@ export function LogoGeneratorDialog(props: {
                     />
                   </button>
                 ))}
-              </div>
-
-              {/* ── Background Style toggle (pre-download) ─────────────── */}
-              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
-                <BgStyleToggle
-                  value={bgStyle}
-                  onChange={setBgStyle}
-                  solidLabel={t("bgSolid")}
-                  solidHint={t("bgSolidHint")}
-                  transparentLabel={t("bgTransparent")}
-                  transparentHint={t("bgTransparentHint")}
-                  disabled={busy}
-                />
               </div>
 
               {/* ── Action buttons ──────────────────────────────────────── */}

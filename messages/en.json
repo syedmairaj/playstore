@@ -1830,7 +1830,8 @@
       "bgSolid": "Solid background",
       "bgSolidHint": "White fill — Play Store compliant",
       "bgTransparent": "Transparent",
-      "bgTransparentHint": "Alpha preserved — for marketing use"
+      "bgTransparentHint": "Alpha preserved — for marketing use",
+      "bgStyleLabel": "Background style"
     }
   },
   "addApp": {

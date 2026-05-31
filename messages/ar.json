@@ -1830,7 +1830,8 @@
       "bgSolid": "خلفية صلبة",
       "bgSolidHint": "تعبئة بيضاء — متوافقة مع Play Store",
       "bgTransparent": "شفاف",
-      "bgTransparentHint": "قناة ألفا محفوظة — للاستخدام التسويقي"
+      "bgTransparentHint": "قناة ألفا محفوظة — للاستخدام التسويقي",
+      "bgStyleLabel": "نمط الخلفية"
     }
   },
   "addApp": {
