@@ -499,7 +499,7 @@ function MetricEntryForm({
   onSaved,
 }: {
   workspaceId: string;
-  appId: string;
+  appId?: string;
   t: Record<string, string>;
   isRtl: boolean;
   onSaved: (entry: MetricEntry) => void;
@@ -520,6 +520,7 @@ function MetricEntryForm({
   }
 
   async function handleSave() {
+    if (!appId) return;
     setSaving(true);
     try {
       const body: Record<string, number | string | null> = {};
@@ -655,7 +656,7 @@ function MetricEntryForm({
 
 export type ListingHistoryProps = {
   workspaceId: string;
-  appId: string;
+  appId?: string;
   locale?: string;
   className?: string;
 };

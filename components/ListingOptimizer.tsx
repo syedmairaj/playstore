@@ -64,6 +64,7 @@ import {
   resolveListingPreviewIconUrl,
 } from "@/lib/apps/logo-generator-metadata";
 import { LocalizedResults } from "@/components/optimizer/LocalizedResults";
+import { ListingHistory } from "@/components/listing/ListingHistory";
 import {
   LOCALIZE_MARKETS,
   type LocalizeMarketCode,
@@ -3579,6 +3580,15 @@ export function ListingOptimizer({
               canSaveToTracker={canSaveKeywordsToTracker}
               generationQueueSnapshot={generationQueueSnapshot}
             />
+            ) : null}
+
+            {/* ── ASO Performance Attribution History ────────────────────── */}
+            {workspaceId ? (
+              <ListingHistory
+                workspaceId={workspaceId}
+                appId={selectedAppId.trim() || undefined}
+                locale={locale}
+              />
             ) : null}
 
             {/* ── Global Localization Expansion Grid ─────────────────────── */}
