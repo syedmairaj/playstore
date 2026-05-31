@@ -81,10 +81,24 @@ type Lang = "en" | "ar";
 
 const STRINGS: Record<Lang, Record<string, string>> = {
   en: {
-    heading: "Listing Performance History",
-    subheading: "Track how each AI optimization impacted your store metrics. Enter your Play Console data weekly to unlock attribution.",
+    // ── Section header ──────────────────────────────────────────────────────
+    heading: "Growth Tracking & Insights",
+    subheading: "Every listing update is an experiment. Log your Play Console numbers weekly and we'll show you exactly what drove the change.",
+
+    // ── "How it works" info panel ───────────────────────────────────────────
+    howItWorksTitle: "How Growth Tracking works",
+    howItWorksToggleShow: "How it works",
+    howItWorksToggleHide: "Hide",
+    whyTrackHeading: "Why track performance?",
+    whyTrackBody: "ASO is about testing, not guessing — every listing change is an experiment with a measurable outcome. This tool bridges the gap between your listing updates and your real-world store analytics so you know exactly what moved the needle.",
+    howStep1: "Make an update — generate a new listing with review issues or keyword signals active.",
+    howStep2: "Wait 7–14 days — give the Play Store algorithm time to index your changes and stabilise rankings.",
+    howStep3: "Log your metrics — copy Conversion rate and Store visitors from Play Console (Acquire users → Store listing analytics) into the form below.",
+    howCta: "Understand exactly what drives your downloads.",
+
+    // ── Metric entry form ───────────────────────────────────────────────────
     enterMetrics: "Enter This Week's Metrics",
-    enterMetricsHint: "Data from Google Play Console → Store listing analytics",
+    enterMetricsHint: "Play Console → Acquire users → Store listing analytics",
     conversionRate: "Conversion Rate (%)",
     storeVisitors: "Store Visitors",
     categoryRank: "Category Rank",
@@ -95,6 +109,8 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     saving: "Saving…",
     saved: "Saved",
     metricsSavedToast: "Metrics saved for this week.",
+
+    // ── Timeline / cards ────────────────────────────────────────────────────
     noSnapshots: "No listing generations yet.",
     noSnapshotsHint: "Generate your first AI listing to start tracking performance.",
     generatedOn: "Generated",
@@ -134,12 +150,29 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     qualityPartial: "Partial signals",
   },
   ar: {
-    heading: "سجل أداء القائمة",
-    subheading: "تتبع كيف أثّر كل تحسين بالذكاء الاصطناعي على مقاييس متجرك. أدخل بيانات Play Console أسبوعياً لتفعيل التحليل.",
+    // ── Section header ──────────────────────────────────────────────────────
+    heading: "تتبع النمو والتحليلات",
+    subheading: "كل تحديث لقائمتك هو تجربة قابلة للقياس. سجّل أرقامك من Play Console أسبوعياً وسنُظهر لك بالضبط ما الذي أحدث الفارق.",
+
+    // ── "How it works" info panel ───────────────────────────────────────────
+    howItWorksTitle: "كيف يعمل تتبع النمو",
+    howItWorksToggleShow: "كيف يعمل؟",
+    howItWorksToggleHide: "إخفاء",
+    whyTrackHeading: "لماذا تتبع الأداء؟",
+    whyTrackBody: "تحسين ASO يعتمد على التجريب لا التخمين — كل تعديل تُجريه على قائمتك هو تجربة بنتيجة قابلة للقياس. هذه الأداة تربط بين تعديلاتك وأرقام متجرك الفعلية حتى تعرف بدقة ما الذي أحدث الأثر.",
+    howStep1: "أجرِ تحديثاً — أنشئ قائمة جديدة مع تفعيل إشارات المراجعات أو الكلمات المفتاحية.",
+    howStep2: "انتظر 7–14 يوماً — امنح خوارزمية Play Store الوقت الكافي لفهرسة تغييراتك واستقرار ترتيباتك.",
+    // Note: "معدل التحويل" and "زوار صفحة المتجر" are the exact Arabic labels in Play Console
+    howStep3: "سجّل مقاييسك — انسخ معدل التحويل وزوار صفحة المتجر من Play Console (اكتساب المستخدمين ← تحليلات قائمة المتجر) في النموذج أدناه.",
+    howCta: "افهم بالضبط ما الذي يُحرّك عدد تنزيلات تطبيقك.",
+
+    // ── Metric entry form ───────────────────────────────────────────────────
     enterMetrics: "أدخل مقاييس هذا الأسبوع",
-    enterMetricsHint: "البيانات من Google Play Console ← تحليلات قائمة المتجر",
+    // Uses exact Arabic Play Console navigation path
+    enterMetricsHint: "Play Console ← اكتساب المستخدمين ← تحليلات قائمة المتجر",
+    // Exact Arabic Play Console field labels:
     conversionRate: "معدل التحويل (%)",
-    storeVisitors: "زوار المتجر",
+    storeVisitors: "زوار صفحة المتجر",
     categoryRank: "مرتبة الفئة",
     searchVisibility: "مؤشر الظهور في البحث (0–100)",
     weekNote: "ملاحظة (اختياري)",
@@ -148,6 +181,8 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     saving: "جاري الحفظ…",
     saved: "تم الحفظ",
     metricsSavedToast: "تم حفظ مقاييس هذا الأسبوع.",
+
+    // ── Timeline / cards ────────────────────────────────────────────────────
     noSnapshots: "لا توجد قوائم مُولَّدة بعد.",
     noSnapshotsHint: "أنشئ أول قائمة AI لبدء تتبع الأداء.",
     generatedOn: "تاريخ الإنشاء",
@@ -166,7 +201,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     conversionChange: "معدل التحويل",
     visibilityChange: "الظهور في البحث",
     rankChange: "مرتبة الفئة",
-    visitorsChange: "زوار المتجر",
+    visitorsChange: "زوار صفحة المتجر",
     attribution: "تحليل الإسناد",
     nextStep: "الخطوة التالية الموصى بها",
     baseline: "الأساس (الأسبوع السابق)",
@@ -675,6 +710,7 @@ export function ListingHistory({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
   const hasFetched = useRef(false);
 
   const fetchAttribution = useCallback(async () => {
@@ -732,6 +768,79 @@ export function ListingHistory({
         <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">
           {t.subheading}
         </p>
+      </div>
+
+      {/* ── "How Growth Tracking works" collapsible info panel ─────────────── */}
+      <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/50 overflow-hidden">
+        {/* Toggle row */}
+        <button
+          type="button"
+          onClick={() => setInfoOpen((v) => !v)}
+          className={cn(
+            "flex w-full items-center gap-2.5 px-4 py-3 text-sm font-medium text-zinc-300 hover:text-zinc-100 transition-colors",
+            isRtl && "flex-row-reverse",
+          )}
+          aria-expanded={infoOpen}
+        >
+          <Info className="size-4 shrink-0 text-indigo-400" aria-hidden />
+          <span className="flex-1 text-start">{t.howItWorksTitle}</span>
+          <ChevronDown
+            className={cn(
+              "size-4 shrink-0 text-zinc-500 transition-transform duration-200",
+              infoOpen && "rotate-180",
+            )}
+            aria-hidden
+          />
+        </button>
+
+        {/* Expandable body */}
+        <AnimatePresence initial={false}>
+          {infoOpen && (
+            <motion.div
+              key="info-panel"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+              className="overflow-hidden"
+            >
+              <div className={cn("border-t border-zinc-800/60 px-4 pb-5 pt-4 space-y-4", isRtl && "text-end")}>
+
+                {/* Why track? */}
+                <div>
+                  <p className={cn("mb-1 text-xs font-semibold uppercase tracking-wider text-indigo-400")}>
+                    {t.whyTrackHeading}
+                  </p>
+                  <p className="text-sm leading-relaxed text-zinc-400">
+                    {t.whyTrackBody}
+                  </p>
+                </div>
+
+                {/* 3-step how-to */}
+                <ol className={cn("space-y-2", isRtl ? "pr-0" : "pl-0")}>
+                  {[t.howStep1, t.howStep2, t.howStep3].map((step, i) => (
+                    <li
+                      key={i}
+                      className={cn("flex items-start gap-3", isRtl && "flex-row-reverse")}
+                    >
+                      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-[10px] font-bold text-indigo-300 ring-1 ring-indigo-500/30">
+                        {i + 1}
+                      </span>
+                      <p className="text-sm leading-relaxed text-zinc-300">{step}</p>
+                    </li>
+                  ))}
+                </ol>
+
+                {/* CTA */}
+                <div className={cn("flex items-center gap-2", isRtl && "flex-row-reverse")}>
+                  <Zap className="size-4 shrink-0 text-amber-400" aria-hidden />
+                  <p className="text-sm font-semibold text-amber-300">{t.howCta}</p>
+                </div>
+
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Manual metric entry form */}
