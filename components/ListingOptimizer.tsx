@@ -27,7 +27,10 @@ import {
   OptimizerStepper,
   type OptimizerWizardStep,
 } from "@/components/listing/optimizer/optimizer-stepper";
-import { OptimizerCreditsConfirmDialog } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
+import {
+  OptimizerCreditsConfirmDialog,
+  type SynthesisSignalContext,
+} from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
 import { AlertTriangle, Hash, Info, Loader2, Shield, Sparkles } from "lucide-react";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
@@ -2686,6 +2689,24 @@ export function ListingOptimizer({
         autofillField={creditConfirmPending?.kind === "autofill" ? creditConfirmPending.field : undefined}
         spyHref={workspaceId ? `/app/${workspaceId}/competitors` : undefined}
         onGoToSpy={() => setCreditConfirmPending(null)}
+        synthesisContext={
+          creditConfirmPending?.kind === "listing_generation"
+            ? ((): SynthesisSignalContext => {
+                const reviewItems = queuedImprovements
+                  .filter((item) => !item.sentimentTag?.startsWith("market_spotlight:"))
+                  .map((item) => ({
+                    label: item.sentimentTag?.trim() || item.reviewText?.slice(0, 60) || "",
+                  }));
+                const marketItems = queuedImprovements
+                  .filter((item) => item.sentimentTag?.startsWith("market_spotlight:"))
+                  .map((item) => ({
+                    keyword: item.sentimentTag!.replace(/^market_spotlight:/, "").trim(),
+                  }));
+                const competitorItems = competitorWeaknesses.slice(0, 3);
+                return { reviewItems, marketItems, competitorItems };
+              })()
+            : undefined
+        }
       />
 
       <UpgradeModal
