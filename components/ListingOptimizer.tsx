@@ -2605,6 +2605,17 @@ export function ListingOptimizer({
           : t("form.toneMinimal");
   const finalSummary = t("workflow.finalSummaryLine", { tone: toneLabel });
 
+  // ── Active Context Canvas: pre-compute pill groups outside JSX ───────────
+  // These MUST be plain variables (not IIFEs inside JSX) so that Framer Motion
+  // AnimatePresence can track key identity across renders without frame.join errors.
+  const reviewQueuePills = queuedImprovements.filter(
+    (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
+  );
+  const spotlightQueuePills = queuedImprovements.filter(
+    (item) => item.sentimentTag?.startsWith("market_spotlight:"),
+  );
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
     <div
       dir={isRtl ? "rtl" : "ltr"}
@@ -3145,126 +3156,112 @@ export function ListingOptimizer({
 
                       <div className="space-y-4">
                         {/* ── Signal Group 1: Review Issues ──────────────────────── */}
-                        {(() => {
-                          const reviewItems = queuedImprovements.filter(
-                            (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
-                          );
-                          return (
-                            <div>
-                              <div className="mb-2 flex items-center gap-1.5">
-                                <AlertTriangle className="size-3 shrink-0 text-rose-400/80" aria-hidden />
-                                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-400/80">
-                                  {isRtl ? "مشكلات المراجعات" : "Review Issues"}
-                                </span>
-                                <span className="text-[10px] text-white/25">
-                                  {isRtl ? "← تُعالَج في الوصف + ما هو جديد" : "→ addressed in description + what's new"}
-                                </span>
-                              </div>
-                              {reviewItems.length > 0 ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                  <AnimatePresence initial={false}>
-                                    {reviewItems.map((item) => {
-                                      const label = item.sentimentTag?.trim() || item.reviewText?.slice(0, 24) || "Issue";
-                                      return (
-                                        <motion.span
-                                          key={item.id}
-                                          layout
-                                          initial={{ opacity: 0, scale: 0.85 }}
-                                          animate={{ opacity: 1, scale: 1 }}
-                                          exit={{ opacity: 0, scale: 0.8 }}
-                                          transition={{ duration: 0.18 }}
-                                          className={cn(
-                                            "inline-flex items-center gap-1.5 rounded-full border border-rose-500/25 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-200/90",
-                                            loading && "pointer-events-none opacity-60",
-                                          )}
+                        <div>
+                          <div className="mb-2 flex items-center gap-1.5">
+                            <AlertTriangle className="size-3 shrink-0 text-rose-400/80" aria-hidden />
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-400/80">
+                              {isRtl ? "مشكلات المراجعات" : "Review Issues"}
+                            </span>
+                            <span className="text-[10px] text-white/25">
+                              {isRtl ? "← تُعالَج في الوصف + ما هو جديد" : "→ addressed in description + what's new"}
+                            </span>
+                          </div>
+                          {reviewQueuePills.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              <AnimatePresence initial={false}>
+                                {reviewQueuePills.map((item) => {
+                                  const label = item.sentimentTag?.trim() || item.reviewText?.slice(0, 24) || "Issue";
+                                  return (
+                                    <motion.span
+                                      key={item.id}
+                                      layout
+                                      initial={{ opacity: 0, scale: 0.85 }}
+                                      animate={{ opacity: 1, scale: 1 }}
+                                      exit={{ opacity: 0, scale: 0.8 }}
+                                      transition={{ duration: 0.18 }}
+                                      className={cn(
+                                        "inline-flex items-center gap-1.5 rounded-full border border-rose-500/25 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-200/90",
+                                        loading && "pointer-events-none opacity-60",
+                                      )}
+                                    >
+                                      <AlertTriangle className="size-2.5 shrink-0 text-rose-400/70" aria-hidden />
+                                      <span className="max-w-[160px] truncate">{label}</span>
+                                      {!loading ? (
+                                        <button
+                                          type="button"
+                                          aria-label={`Remove ${label}`}
+                                          onClick={() => handleRemoveQueueItem(item.id)}
+                                          className="ms-0.5 rounded-full p-0.5 text-rose-400/50 transition hover:bg-rose-500/20 hover:text-rose-300"
                                         >
-                                          <AlertTriangle className="size-2.5 shrink-0 text-rose-400/70" aria-hidden />
-                                          <span className="max-w-[160px] truncate">{label}</span>
-                                          {!loading ? (
-                                            <button
-                                              type="button"
-                                              aria-label={`Remove ${label}`}
-                                              onClick={() => handleRemoveQueueItem(item.id)}
-                                              className="ms-0.5 rounded-full p-0.5 text-rose-400/50 transition hover:bg-rose-500/20 hover:text-rose-300"
-                                            >
-                                              ×
-                                            </button>
-                                          ) : null}
-                                        </motion.span>
-                                      );
-                                    })}
-                                  </AnimatePresence>
-                                </div>
-                              ) : (
-                                <p className="text-[11px] italic text-white/25">
-                                  {isRtl ? "لا توجد مشكلات مراجعات — اذهب إلى المراجعات لإضافة الإشارات" : "None staged — visit Reviews to add signals"}
-                                </p>
-                              )}
+                                          ×
+                                        </button>
+                                      ) : null}
+                                    </motion.span>
+                                  );
+                                })}
+                              </AnimatePresence>
                             </div>
-                          );
-                        })()}
+                          ) : (
+                            <p className="text-[11px] italic text-white/25">
+                              {isRtl ? "لا توجد مشكلات مراجعات — اذهب إلى المراجعات لإضافة الإشارات" : "None staged — visit Reviews to add signals"}
+                            </p>
+                          )}
+                        </div>
 
                         {/* ── Signal Group 2: Market Keywords ───────────────────── */}
-                        {(() => {
-                          const spotlightItems = queuedImprovements.filter(
-                            (item) => item.sentimentTag?.startsWith("market_spotlight:"),
-                          );
-                          return (
-                            <div>
-                              <div className="mb-2 flex items-center gap-1.5">
-                                <Hash className="size-3 shrink-0 text-emerald-400/80" aria-hidden />
-                                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-400/80">
-                                  {isRtl ? "فرص السوق" : "Market Opportunities"}
-                                </span>
-                                <span className="text-[10px] text-white/25">
-                                  {isRtl ? "← تُنسج في العنوان + الوصف القصير" : "→ woven into title + short description"}
-                                </span>
-                              </div>
-                              {spotlightItems.length > 0 ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                  <AnimatePresence initial={false}>
-                                    {spotlightItems.map((item) => {
-                                      const label = (item.sentimentTag ?? "")
-                                        .replace(/^market_spotlight:/, "")
-                                        .trim() || "Keyword";
-                                      return (
-                                        <motion.span
-                                          key={item.id}
-                                          layout
-                                          initial={{ opacity: 0, scale: 0.85 }}
-                                          animate={{ opacity: 1, scale: 1 }}
-                                          exit={{ opacity: 0, scale: 0.8 }}
-                                          transition={{ duration: 0.18 }}
-                                          className={cn(
-                                            "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200/90",
-                                            loading && "pointer-events-none opacity-60",
-                                          )}
+                        <div>
+                          <div className="mb-2 flex items-center gap-1.5">
+                            <Hash className="size-3 shrink-0 text-emerald-400/80" aria-hidden />
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-400/80">
+                              {isRtl ? "فرص السوق" : "Market Opportunities"}
+                            </span>
+                            <span className="text-[10px] text-white/25">
+                              {isRtl ? "← تُنسج في العنوان + الوصف القصير" : "→ woven into title + short description"}
+                            </span>
+                          </div>
+                          {spotlightQueuePills.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              <AnimatePresence initial={false}>
+                                {spotlightQueuePills.map((item) => {
+                                  const label = (item.sentimentTag ?? "")
+                                    .replace(/^market_spotlight:/, "")
+                                    .trim() || "Keyword";
+                                  return (
+                                    <motion.span
+                                      key={item.id}
+                                      layout
+                                      initial={{ opacity: 0, scale: 0.85 }}
+                                      animate={{ opacity: 1, scale: 1 }}
+                                      exit={{ opacity: 0, scale: 0.8 }}
+                                      transition={{ duration: 0.18 }}
+                                      className={cn(
+                                        "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200/90",
+                                        loading && "pointer-events-none opacity-60",
+                                      )}
+                                    >
+                                      <Hash className="size-2.5 shrink-0 text-emerald-400/70" aria-hidden />
+                                      <span className="max-w-[160px] truncate">{label}</span>
+                                      {!loading ? (
+                                        <button
+                                          type="button"
+                                          aria-label={`Remove ${label}`}
+                                          onClick={() => handleRemoveQueueItem(item.id)}
+                                          className="ms-0.5 rounded-full p-0.5 text-emerald-400/50 transition hover:bg-emerald-500/20 hover:text-emerald-300"
                                         >
-                                          <Hash className="size-2.5 shrink-0 text-emerald-400/70" aria-hidden />
-                                          <span className="max-w-[160px] truncate">{label}</span>
-                                          {!loading ? (
-                                            <button
-                                              type="button"
-                                              aria-label={`Remove ${label}`}
-                                              onClick={() => handleRemoveQueueItem(item.id)}
-                                              className="ms-0.5 rounded-full p-0.5 text-emerald-400/50 transition hover:bg-emerald-500/20 hover:text-emerald-300"
-                                            >
-                                              ×
-                                            </button>
-                                          ) : null}
-                                        </motion.span>
-                                      );
-                                    })}
-                                  </AnimatePresence>
-                                </div>
-                              ) : (
-                                <p className="text-[11px] italic text-white/25">
-                                  {isRtl ? "لا توجد كلمات مفتاحية — اذهب إلى Market Intel لإضافة spotlight" : "None staged — visit Market Intel to add a spotlight"}
-                                </p>
-                              )}
+                                          ×
+                                        </button>
+                                      ) : null}
+                                    </motion.span>
+                                  );
+                                })}
+                              </AnimatePresence>
                             </div>
-                          );
-                        })()}
+                          ) : (
+                            <p className="text-[11px] italic text-white/25">
+                              {isRtl ? "لا توجد كلمات مفتاحية — اذهب إلى Market Intel لإضافة spotlight" : "None staged — visit Market Intel to add a spotlight"}
+                            </p>
+                          )}
+                        </div>
 
                         {/* ── Signal Group 3: Competitor Weaknesses ─────────────── */}
                         <div>
