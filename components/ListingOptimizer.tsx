@@ -136,6 +136,45 @@ type AutofillApiSuccess = {
   };
 };
 
+// ── Spotlight stub sessionStorage bridge ──────────────────────────────────────
+// Spotlight stubs (url-exploit- items with market_spotlight: sentimentTag) are
+// ephemeral React state injected from URL params. They get wiped whenever
+// refreshQueuedImprovements fires a DB fetch and replaces the queue array.
+// Writing them to sessionStorage lets the DB-fetch merge re-attach any stubs
+// that haven't been explicitly removed by the user.
+const SPOTLIGHT_STUBS_SESSION_KEY = "playstore:listingOptimizer:spotlightStubs";
+
+function writeSpotlightStubsToSession(stubs: import("@/components/reviews/review-improvements-queue").ListingImprovementItem[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const spotlightOnly = stubs.filter(
+      (s) => s.id.startsWith("url-exploit-") && s.sentimentTag?.startsWith("market_spotlight:"),
+    );
+    if (spotlightOnly.length === 0) {
+      sessionStorage.removeItem(SPOTLIGHT_STUBS_SESSION_KEY);
+    } else {
+      sessionStorage.setItem(SPOTLIGHT_STUBS_SESSION_KEY, JSON.stringify(spotlightOnly));
+    }
+  } catch { /* quota / private mode */ }
+}
+
+function readSpotlightStubsFromSession(): import("@/components/reviews/review-improvements-queue").ListingImprovementItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(SPOTLIGHT_STUBS_SESSION_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed as import("@/components/reviews/review-improvements-queue").ListingImprovementItem[];
+  } catch { return []; }
+}
+
+function clearSpotlightStubsFromSession(): void {
+  if (typeof window === "undefined") return;
+  try { sessionStorage.removeItem(SPOTLIGHT_STUBS_SESSION_KEY); } catch { /* ok */ }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /** English instructions for Gemini (stable regardless of UI locale). */
 const REGENERATE_MODEL_INSTRUCTIONS = {
   punchier:
@@ -919,8 +958,22 @@ export function ListingOptimizer({
       .catch(() => [] as ListingImprovementItem[]);
 
     void Promise.all([listingImprovementsPromise, backlogPromise]).then(([listingRows, backlogRows]) => {
-      // Deduplicate: backlog rows are prefixed "backlog-", listing rows have plain UUIDs
-      setQueuedImprovements([...listingRows, ...backlogRows]);
+      // Deduplicate: backlog rows are prefixed "backlog-", listing rows have plain UUIDs.
+      // Preserve ephemeral url-exploit- stubs — they are never in the DB and would be
+      // silently wiped by a full replace. Read from both current state AND sessionStorage
+      // to cover the race where the DB fetch completes before the URL-param effect fires.
+      setQueuedImprovements((prev) => {
+        const stateStubs = prev.filter((item) => item.id.startsWith("url-exploit-"));
+        const sessionStubs = readSpotlightStubsFromSession();
+        // Merge state stubs + session stubs, deduplicating by id
+        const allStubIds = new Set(stateStubs.map((s) => s.id));
+        const extraSessionStubs = sessionStubs.filter((s) => !allStubIds.has(s.id));
+        const ephemeralStubs = [...stateStubs, ...extraSessionStubs];
+        const dbRows = [...listingRows, ...backlogRows];
+        const dbIds = new Set(dbRows.map((r) => r.id));
+        const freshStubs = ephemeralStubs.filter((s) => !dbIds.has(s.id));
+        return [...dbRows, ...freshStubs];
+      });
       setQueuedImprovementsLoading(false);
     });
   }, [workspaceId]);
@@ -950,7 +1003,14 @@ export function ListingOptimizer({
   const handleRemoveQueueItem = useCallback(
     (itemId: string) => {
       // Optimistic: remove from local state immediately
-      setQueuedImprovements((prev) => prev.filter((item) => item.id !== itemId));
+      setQueuedImprovements((prev) => {
+        const next = prev.filter((item) => item.id !== itemId);
+        // Keep sessionStorage in sync when a spotlight stub is removed
+        if (itemId.startsWith("url-exploit-")) {
+          writeSpotlightStubsToSession(next);
+        }
+        return next;
+      });
       // Skip API call for synthetic url-inject stubs (no DB row)
       if (itemId.startsWith("url-exploit-")) return;
       if (!workspaceId) return;
@@ -1040,7 +1100,12 @@ export function ListingOptimizer({
         setQueuedImprovements((prev) => {
           const existingIds = new Set(prev.map((p) => p.id));
           const fresh = stubs.filter((s) => !existingIds.has(s.id));
-          return fresh.length ? [...prev, ...fresh] : prev;
+          if (!fresh.length) return prev;
+          const next = [...prev, ...fresh];
+          // Persist spotlight stubs to sessionStorage so they survive the
+          // refreshQueuedImprovements DB-fetch replace that fires on mount.
+          writeSpotlightStubsToSession(next);
+          return next;
         });
 
         // Determine whether these are market spotlight keywords or competitor issues
@@ -2065,7 +2130,9 @@ export function ListingOptimizer({
         }
       }
       // Clear the staging queue — provides clean confirmation state now that
-      // the AI has consumed all queued improvements.
+      // the AI has consumed all queued improvements. Also clear sessionStorage
+      // so spotlight stubs don't reappear on the next refreshQueuedImprovements.
+      clearSpotlightStubsFromSession();
       setQueuedImprovements([]);
       setGenerateJustSucceeded(true);
       setWizardStep(2);
