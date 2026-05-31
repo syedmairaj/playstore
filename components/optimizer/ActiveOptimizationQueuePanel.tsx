@@ -2,18 +2,28 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, CheckCircle2, Info, Loader2, Star, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, Info, Loader2, Sparkles, Star, TrendingUp, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import type { ListingImprovementItem } from "@/components/reviews/review-improvements-queue";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+/** Returns true when this queue item came from Market Intelligence Spotlight. */
+function isSpotlightItem(item: ListingImprovementItem): boolean {
+  return Boolean(item.sentimentTag?.startsWith("market_spotlight:"));
+}
+
+/** Human-readable label for a queue pill — strips internal prefixes. */
 export function queueImprovementBadgeLabel(item: ListingImprovementItem): string {
   const tag = item.sentimentTag?.trim();
+  // Strip market_spotlight: prefix so pill reads "fitness" not "market_spotlight:fitness"
+  if (tag?.startsWith("market_spotlight:")) {
+    return tag.replace(/^market_spotlight:/, "").trim() || "Market keyword";
+  }
   if (tag) return tag;
-  const text = item.reviewText.trim();
-  if (text.length <= 20) return text;
-  return `${text.slice(0, 20)}...`;
+  const text = item.reviewText?.trim() ?? "";
+  if (text.length <= 20) return text || "Issue";
+  return `${text.slice(0, 20)}…`;
 }
 
 /**
@@ -48,8 +58,36 @@ function StarRow({ score }: { score: number }) {
   );
 }
 
-/** Rich tooltip popup shown on pill hover — reviewer name, stars, full review text. */
-function PillTooltipContent({ item, ownPackageName, t }: { item: ListingImprovementItem; ownPackageName?: string | null; t: ReturnType<typeof useTranslations<"optimizer.activeQueue">> }) {
+/**
+ * Spotlight tooltip — shown for Market Intelligence keyword pills.
+ * Replaces the reviewer-info tooltip which is meaningless for synthetic items.
+ */
+function SpotlightPillTooltip({ item }: { item: ListingImprovementItem }) {
+  const keyword = (item.sentimentTag ?? "").replace(/^market_spotlight:/, "").trim();
+  return (
+    <div className="space-y-2 text-start">
+      <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/25">
+        <TrendingUp className="size-3 shrink-0" aria-hidden />
+        Market Intelligence · AI Keyword Spotlight
+      </span>
+      <p className="text-[11px] leading-relaxed text-zinc-300">
+        <span className="font-semibold text-white/80">Trending keyword: </span>
+        <span className="text-emerald-300">{keyword}</span>
+      </p>
+      <p className="text-[11px] leading-relaxed text-zinc-400">
+        This keyword was identified as trending in your app's category by real-time analysis of
+        the top 10 chart apps on Google Play. The AI will weave it semantically into your title,
+        short description, and long description to improve discoverability.
+      </p>
+      <p className="text-[10px] text-zinc-600">
+        Source: Market Intelligence → AI Keyword Spotlight
+      </p>
+    </div>
+  );
+}
+
+/** Review-issue tooltip — shown for review-based pain-point pills. */
+function ReviewPillTooltipContent({ item, ownPackageName, t }: { item: ListingImprovementItem; ownPackageName?: string | null; t: ReturnType<typeof useTranslations<"optimizer.activeQueue">> }) {
   const name = item.userName?.trim() || "Anonymous";
   const appLabel = item.packageName ?? item.appId ?? null;
   // country_code is not currently in the ListingImprovementItem schema but may be
@@ -61,17 +99,13 @@ function PillTooltipContent({ item, ownPackageName, t }: { item: ListingImprovem
       : null;
 
   // Derive source classification using the workspace's own package name as ground truth.
-  // This is reliable even for legacy rows where app_id was incorrectly stored:
-  // - If ownPackageName is known: own app iff packageName matches it exactly.
-  // - Fallback (ownPackageName not provided): own app iff appId is non-null AND packageName
-  //   is either null or matches appId (legacy heuristic).
   const isOwnApp = ownPackageName
     ? item.packageName?.trim() === ownPackageName.trim()
     : item.appId !== null && (item.packageName === null || item.packageName === item.appId);
 
   return (
     <div className="space-y-2 text-start">
-      {/* Strategy badge — dynamically resolved from item source fields */}
+      {/* Strategy badge */}
       <span
         className={cn(
           "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold",
@@ -83,25 +117,19 @@ function PillTooltipContent({ item, ownPackageName, t }: { item: ListingImprovem
         {isOwnApp ? t("infoTooltip.pillDefensive") : t("infoTooltip.pillOffensive")}
       </span>
 
-      {/* Header: name • flag+country (if known) • app • stars */}
+      {/* Header: name • flag • app • stars */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] font-semibold text-white/90">
-          👤 {name}
-        </span>
+        <span className="text-[11px] font-semibold text-white/90">👤 {name}</span>
         {flagEmoji && typeof countryCode === "string" && (
           <>
             <span className="text-zinc-600">•</span>
-            <span className="text-[11px] text-zinc-400">
-              {flagEmoji} {countryCode.toUpperCase()}
-            </span>
+            <span className="text-[11px] text-zinc-400">{flagEmoji} {countryCode.toUpperCase()}</span>
           </>
         )}
         {appLabel && (
           <>
             <span className="text-zinc-600">•</span>
-            <span className="max-w-[120px] truncate font-mono text-[10px] text-zinc-500">
-              📍 {appLabel}
-            </span>
+            <span className="max-w-[120px] truncate font-mono text-[10px] text-zinc-500">📍 {appLabel}</span>
           </>
         )}
         {item.score > 0 && (
@@ -115,15 +143,21 @@ function PillTooltipContent({ item, ownPackageName, t }: { item: ListingImprovem
           </>
         )}
       </div>
-      {/* Review snippet */}
-      {item.reviewText.trim() && (
+      {item.reviewText?.trim() && (
         <p className="text-[11px] italic leading-relaxed text-zinc-400">
-          &ldquo;{item.reviewText.trim().slice(0, 240)}
-          {item.reviewText.trim().length > 240 ? "…" : ""}&rdquo;
+          &ldquo;{item.reviewText.trim().slice(0, 240)}{item.reviewText.trim().length > 240 ? "…" : ""}&rdquo;
         </p>
       )}
     </div>
   );
+}
+
+/** Routes to the correct tooltip based on item source. */
+function PillTooltipContent({ item, ownPackageName, t }: { item: ListingImprovementItem; ownPackageName?: string | null; t: ReturnType<typeof useTranslations<"optimizer.activeQueue">> }) {
+  if (isSpotlightItem(item)) {
+    return <SpotlightPillTooltip item={item} />;
+  }
+  return <ReviewPillTooltipContent item={item} ownPackageName={ownPackageName} t={t} />;
 }
 
 export type ActiveOptimizationQueuePanelProps = {
@@ -209,7 +243,12 @@ export function ActiveOptimizationQueuePanel({
           {items.map((item) => (
             <span
               key={item.id}
-              className="inline-flex cursor-default items-center gap-1.5 rounded-lg border border-zinc-700/50 bg-zinc-800/40 px-2.5 py-1 text-xs font-medium text-zinc-500"
+              className={cn(
+                "inline-flex cursor-default items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium",
+                isSpotlightItem(item)
+                  ? "border-emerald-700/40 bg-emerald-900/20 text-emerald-500/70"
+                  : "border-zinc-700/50 bg-zinc-800/40 text-zinc-500",
+              )}
             >
               <CheckCircle2 className="size-3 shrink-0 text-zinc-600" aria-hidden />
               {queueImprovementBadgeLabel(item)}
@@ -337,12 +376,20 @@ export function ActiveOptimizationQueuePanel({
                         >
                           <span
                             tabIndex={0}
-                            className="group inline-flex cursor-default items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-slate-800/70 ps-3 pe-1.5 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-inset ring-slate-700/40 transition-colors hover:border-emerald-500/30 hover:bg-slate-800"
+                            className={cn(
+                              "group inline-flex cursor-default items-center gap-1.5 rounded-lg ps-3 pe-1.5 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors",
+                              isSpotlightItem(item)
+                                // Emerald tint — Market Intelligence keyword
+                                ? "border border-emerald-500/30 bg-emerald-900/20 text-emerald-200 ring-emerald-700/30 hover:border-emerald-500/50 hover:bg-emerald-900/30"
+                                // Default slate — review-based issue
+                                : "border border-rose-500/20 bg-slate-800/70 text-slate-200 ring-slate-700/40 hover:border-rose-500/30 hover:bg-slate-800",
+                            )}
                           >
-                            <CheckCircle2
-                              className="size-3 shrink-0 text-emerald-400"
-                              aria-hidden
-                            />
+                            {isSpotlightItem(item) ? (
+                              <Sparkles className="size-3 shrink-0 text-emerald-400" aria-hidden />
+                            ) : (
+                              <CheckCircle2 className="size-3 shrink-0 text-rose-400" aria-hidden />
+                            )}
                             {queueImprovementBadgeLabel(item)}
 
                             {onRemoveItem && (

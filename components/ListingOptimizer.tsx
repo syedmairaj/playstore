@@ -1889,8 +1889,28 @@ export function ListingOptimizer({
         vulns.length > 0
           ? `Tracked competitor analysis has surfaced the following active user pain-points across rival apps: ${vulns.join("; ")}. DO NOT mention these issues literally in the listing. Instead, aggressively position our app as the definitive solution — emphasise stability, accuracy, seamless synchronisation, and a clean ad-free experience that directly resolves each of these rival weaknesses. Where multiple competitors share the same pain-point, treat it as a high-priority differentiation signal. Keep all target keywords positive and optimised for high-volume Play Store indexing.`
           : "";
+      // ── Split queued items by type ────────────────────────────────────────
+      // Spotlight items (market_spotlight: prefix on sentimentTag) travel as
+      // exploitTargets[] — the v10 prompt builder routes them into SYNTHESIS
+      // PRIORITY 2 (EXPLOIT MARKET INTELLIGENCE block).
+      // Review-based issues travel as userInstruction via the improvements
+      // directive — SYNTHESIS PRIORITY 1 (FIX & REASSURE block).
+      const spotlightQueueItems = queuedImprovements.filter(
+        (item) => item.sentimentTag?.startsWith("market_spotlight:"),
+      );
+      const reviewQueueItems = queuedImprovements.filter(
+        (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
+      );
+
+      // Build exploit targets — keep the "market_spotlight:" prefix so the
+      // server-side prompt builder can split them correctly (buildUserMessage
+      // already does .filter(t => t.startsWith("market_spotlight:"))).
+      const exploitTargets: string[] = spotlightQueueItems.map(
+        (item) => item.sentimentTag!.trim(),
+      );
+
       const improvementsDirective = buildListingImprovementsGenerateDirective(
-        queuedImprovements,
+        reviewQueueItems,
       );
       const effectiveInstruction = [
         inversionDirective,
@@ -1916,6 +1936,8 @@ export function ListingOptimizer({
           ...(effectiveInstruction
             ? { userInstruction: effectiveInstruction }
             : {}),
+          // Market spotlight keywords from Market Intelligence → SYNTHESIS PRIORITY 2
+          ...(exploitTargets.length > 0 ? { exploitTargets } : {}),
         }),
       });
       const json = (await res.json()) as ApiSuccess | ApiError;
