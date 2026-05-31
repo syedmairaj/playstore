@@ -159,7 +159,9 @@ export function OptimizerCreditsConfirmDialog({
                       })}
                       detail={
                         synthesisContext!.reviewItems[0]?.label
-                          ? `e.g. "${synthesisContext!.reviewItems[0].label}"`
+                          ? t("form.confirmSynthesisDetailReview", {
+                              label: synthesisContext!.reviewItems[0].label.slice(0, 50),
+                            })
                           : undefined
                       }
                       color="rose"
@@ -174,7 +176,9 @@ export function OptimizerCreditsConfirmDialog({
                       })}
                       detail={
                         synthesisContext!.marketItems[0]?.keyword
-                          ? `targeting "${synthesisContext!.marketItems[0].keyword}"`
+                          ? t("form.confirmSynthesisDetailMarket", {
+                              keyword: synthesisContext!.marketItems[0].keyword,
+                            })
                           : undefined
                       }
                       color="emerald"
@@ -189,7 +193,9 @@ export function OptimizerCreditsConfirmDialog({
                       })}
                       detail={
                         synthesisContext!.competitorItems[0]
-                          ? `positioning against "${synthesisContext!.competitorItems[0].slice(0, 40)}${synthesisContext!.competitorItems[0].length > 40 ? "…" : ""}"`
+                          ? t("form.confirmSynthesisDetailCompetitor", {
+                              name: synthesisContext!.competitorItems[0].slice(0, 40),
+                            })
                           : undefined
                       }
                       color="violet"
