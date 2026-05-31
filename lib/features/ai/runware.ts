@@ -49,10 +49,75 @@ function runwareModel(): string {
   return raw && raw.length > 0 ? raw : DEFAULT_RUNWARE_MODEL;
 }
 
-function inferSteps(model: string): number {
-  // Schnell (`runware:100@1`) uses ~4 steps; dev / heavier defaults higher.
-  if (model.includes("100@")) return 4;
+function inferSteps(model: string, hasBrandColor: boolean): number {
+  // Schnell (`runware:100@1`) normally uses 4 steps, but colour-specific
+  // prompts need more denoising steps to converge on the correct hue.
+  // 6 steps is the practical upper bound before quality plateaus on schnell.
+  if (model.includes("100@")) return hasBrandColor ? 6 : 4;
   return 20;
+}
+
+// ── Hex → natural language colour descriptor ──────────────────────────────────
+// FLUX was trained on image captions written in English, not CSS.
+// It cannot interpret "#E37400" as a colour — it sees a meaningless string.
+// We must describe the colour in words it was trained on.
+// Strategy: convert hex to HSL, map to the nearest named hue bucket,
+// then generate a rich natural-language descriptor with multiple synonyms.
+
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return { h: h * 360, s, l };
+}
+
+function hexToColorDescription(hex: string): string {
+  const { h, s, l } = hexToHsl(hex);
+
+  // Lightness descriptors
+  const lightnessWord =
+    l > 0.85 ? "very light pale" :
+    l > 0.65 ? "light" :
+    l > 0.45 ? "vivid" :
+    l > 0.25 ? "deep rich" :
+    "very dark";
+
+  // Saturation guard — near-grey colours
+  if (s < 0.12) {
+    if (l > 0.85) return "white, off-white, near-white";
+    if (l > 0.6) return "light grey, silver";
+    if (l > 0.35) return "medium grey, steel grey";
+    return "dark grey, charcoal, near-black";
+  }
+
+  // Map hue angle to colour family + synonym cluster
+  let hueFamily: string;
+  if (h < 15 || h >= 345) hueFamily = "red, crimson, scarlet";
+  else if (h < 30)         hueFamily = "orange-red, vermillion, burnt orange";
+  else if (h < 50)         hueFamily = "orange, amber, tangerine";
+  else if (h < 70)         hueFamily = "yellow-orange, golden yellow, saffron";
+  else if (h < 90)         hueFamily = "yellow, bright yellow, lemon";
+  else if (h < 140)        hueFamily = "green, emerald, lime green";
+  else if (h < 170)        hueFamily = "teal green, sea green, mint";
+  else if (h < 200)        hueFamily = "cyan, teal, turquoise";
+  else if (h < 230)        hueFamily = "sky blue, azure, cerulean";
+  else if (h < 260)        hueFamily = "blue, cobalt blue, royal blue";
+  else if (h < 290)        hueFamily = "blue-violet, indigo, violet blue";
+  else if (h < 320)        hueFamily = "purple, violet, magenta purple";
+  else if (h < 345)        hueFamily = "pink, rose, hot pink";
+  else                     hueFamily = "red, crimson, scarlet";
+
+  return `${lightnessWord} ${hueFamily}`;
 }
 
 function buildPositivePrompt(input: {
@@ -68,11 +133,40 @@ function buildPositivePrompt(input: {
     ? `Short description / positioning: ${short}`
     : "Short description / positioning: (not provided — infer only from app name and category.)";
 
-  const colorLine = input.brandColor?.trim()
-    ? `• Brand colour palette: dominant hue ${input.brandColor.toUpperCase()} — use this as the primary colour anchor for the icon background, motif, or accent. Keep it recognisable but harmonise with the style.`
-    : null;
-
   const variant = input.variantIndex + 1;
+
+  // ── With brand colour ─────────────────────────────────────────────────────
+  // FLUX cannot interpret hex codes — it was trained on image captions.
+  // We translate the hex to a natural-language colour descriptor and repeat
+  // it in multiple positions so the colour is the dominant conditioning signal.
+  if (input.brandColor?.trim()) {
+    const colorDesc = hexToColorDescription(input.brandColor.trim());
+
+    return [
+      // Lead with colour — first tokens get highest attention weight in FLUX
+      `A ${colorDesc} mobile app icon for "${input.appName}".`,
+      `The entire icon uses ${colorDesc} as the dominant background and primary color.`,
+      "",
+      `Category: ${input.category}. ${shortLine}`,
+      "",
+      // Colour repeated mid-prompt for reinforcement
+      `Color scheme: ${colorDesc} dominant background with complementary accent tones.`,
+      `The icon must look unmistakably ${colorDesc} when viewed as a small thumbnail.`,
+      "",
+      "Icon requirements:",
+      "• Square 1:1 frame, 1024×1024, centered subject with generous padding.",
+      "• No text, letters, numbers, watermarks, UI chrome, or device mockups.",
+      "• Simple clean silhouette readable at tiny sizes, high contrast motif.",
+      "• Culturally neutral — suitable for global app stores.",
+      `• Variant ${variant} of 4: use a distinct composition from the other three.`,
+      "",
+      `Style: ${input.style}.`,
+      // Colour closes the prompt for final reinforcement
+      `Final reminder: dominant color is ${colorDesc}. The background MUST be ${colorDesc}.`,
+    ].join("\n");
+  }
+
+  // ── Without brand colour: original prompt unchanged ───────────────────────
   return [
     `Create one mobile app store icon (launcher-style) for the app named «${input.appName}».`,
     `Category: ${input.category}.`,
@@ -85,10 +179,21 @@ function buildPositivePrompt(input: {
     "• Motifs and metaphors must fit the category and feel trustworthy in a global store listing.",
     "• Culturally neutral iconography — must work well for English-speaking and Arabic-speaking users (avoid tiny ambiguous glyphs or region-specific lettering).",
     `• This is creative direction ${variant} of 4: use a clearly distinct composition, focal motif, or layout from the other three variants while staying one coherent product idea.`,
-    ...(colorLine ? [colorLine] : []),
     "",
     `Style influence: ${input.style}.`,
   ].join("\n");
+}
+
+/** Negative prompt — uses natural language, not hex, for the same reason. */
+function buildNegativePrompt(brandColor: string): string {
+  const colorDesc = hexToColorDescription(brandColor.trim());
+  // Describe what colours to AVOID — the opposites of the chosen hue
+  return [
+    `wrong colors, colors that clash with ${colorDesc},`,
+    "random unrelated colors, inconsistent palette, muddy colors,",
+    "text, watermark, letters, numbers, UI chrome, device mockup, screenshot,",
+    "blurry, low quality, distorted, ugly, oversaturated",
+  ].join(" ");
 }
 
 function extractImageRef(row: RunwareInferenceRow): string | null {
@@ -123,7 +228,11 @@ export async function generateAppLogos(input: {
 
   const base = runwareBaseUrl();
   const model = runwareModel();
-  const steps = inferSteps(model);
+  const steps = inferSteps(model, !!input.brandColor?.trim());
+
+  const negPrompt = input.brandColor?.trim()
+    ? buildNegativePrompt(input.brandColor.trim())
+    : undefined;
 
   const tasks = [0, 1, 2, 3].map((i) => ({
     taskType: "imageInference" as const,
@@ -137,6 +246,7 @@ export async function generateAppLogos(input: {
       variantIndex: i,
       brandColor: input.brandColor,
     }),
+    ...(negPrompt ? { negativePrompt: negPrompt } : {}),
     width: 1024,
     height: 1024,
     steps,
