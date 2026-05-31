@@ -1869,24 +1869,37 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                           {t("insightsTabs.queueSectionLabel")}
                         </p>
                         {/* Unified deep-link: pulls ALL queued insights into the optimizer
-                            as exploit_targets so the user doesn't need to queue individually. */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const activeItems = backlogItems.filter((i) => !i.isImplemented);
-                            if (!activeItems.length) return;
-                            const targets = activeItems.map((i) => i.issueTitle).join(",");
-                            const params = new URLSearchParams();
-                            params.set("exploit_targets", targets);
-                            if (primaryAppId) params.set("appId", primaryAppId);
-                            router.push(`/app/${workspaceId}/listing-optimizer?${params.toString()}`);
-                          }}
-                          className="group flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/[0.08] px-3.5 py-2 text-xs font-semibold text-emerald-300 transition-all hover:border-emerald-500/55 hover:bg-emerald-500/[0.14] hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50"
-                        >
-                          <Zap className="size-3.5 shrink-0 text-emerald-400" aria-hidden />
-                          {t("insightsTabs.optimizeAllInsights")}
-                          <ArrowRight className="size-3.5 shrink-0 text-emerald-400/70 transition-transform group-hover:translate-x-0.5" aria-hidden />
-                        </button>
+                            as exploit_targets so the user doesn't need to queue individually.
+                            Capped at 40 items to stay within the Listing Optimizer's schema max.
+                            URLSearchParams.set() handles the encoding — do NOT pre-encode titles
+                            individually (double-encoding breaks the optimizer's URL parser). */}
+                        {(() => {
+                          const activeItems = backlogItems.filter((i) => !i.isImplemented);
+                          const capped = activeItems.slice(0, 40);
+                          const count = capped.length;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!count) return;
+                                const targets = capped.map((i) => i.issueTitle).join(",");
+                                const params = new URLSearchParams();
+                                params.set("exploit_targets", targets);
+                                if (primaryAppId) params.set("appId", primaryAppId);
+                                router.push(`/app/${workspaceId}/listing-optimizer?${params.toString()}`);
+                              }}
+                              className="group flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/[0.08] px-3.5 py-2 text-xs font-semibold text-emerald-300 transition-all hover:border-emerald-500/55 hover:bg-emerald-500/[0.14] hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50"
+                            >
+                              <Zap className="size-3.5 shrink-0 text-emerald-400" aria-hidden />
+                              {t("insightsTabs.optimizeAllInsights")}
+                              {/* Count badge — shows how many insights are being pushed */}
+                              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-300 ring-1 ring-emerald-500/30">
+                                {count}
+                              </span>
+                              <ArrowRight className="size-3.5 shrink-0 text-emerald-400/70 transition-transform group-hover:translate-x-0.5" aria-hidden />
+                            </button>
+                          );
+                        })()}
                       </div>
                     )}
 

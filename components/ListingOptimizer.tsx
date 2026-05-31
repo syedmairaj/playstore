@@ -1108,11 +1108,14 @@ export function ListingOptimizer({
           return next;
         });
 
-        // Determine whether these are market spotlight keywords or competitor issues
-        const hasSpotlight = labels.some((l) => l.startsWith("market_spotlight:"));
-        const spotlightCount = labels.filter((l) => l.startsWith("market_spotlight:")).length;
+        // Determine whether these are market spotlight keywords or review-based issues
+        const spotlightLabels = labels.filter((l) => l.startsWith("market_spotlight:"));
+        const reviewLabels = labels.filter((l) => !l.startsWith("market_spotlight:"));
+        const hasSpotlight = spotlightLabels.length > 0;
+        const hasReviews = reviewLabels.length > 0;
 
         if (hasSpotlight) {
+          const spotlightCount = spotlightLabels.length;
           toast.success(
             spotlightCount === 1
               ? "1 market keyword loaded into optimizer"
@@ -1122,11 +1125,18 @@ export function ListingOptimizer({
               duration: 7000,
             },
           );
-        } else {
-          toast.success(t("activeQueue.exploitTargetsToast"), {
-            description: t("activeQueue.exploitTargetsToastDescription"),
-            duration: 6000,
-          });
+        }
+        if (hasReviews) {
+          const reviewCount = reviewLabels.length;
+          toast.success(
+            reviewCount === 1
+              ? "1 review insight loaded"
+              : `${reviewCount} review insights loaded`,
+            {
+              description: t("activeQueue.exploitTargetsToastDescription"),
+              duration: 6000,
+            },
+          );
         }
       }
     }

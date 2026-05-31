@@ -49,6 +49,9 @@ function isRetryableError(err: unknown): boolean {
     msg.includes("econnrefused") ||
     msg.includes("etimedout") ||
     msg.includes("fetch failed") ||
+    msg.includes("timed out") ||
+    // AbortController abort fires with an AbortError or a plain Error with abort message
+    (err.name === "AbortError") ||
     cause === "ECONNRESET" ||
     cause === "ECONNREFUSED" ||
     cause === "ETIMEDOUT"
@@ -57,9 +60,31 @@ function isRetryableError(err: unknown): boolean {
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1500;
+/** Hard wall-clock timeout per attempt — prevents indefinite hangs when Google Play stalls. */
+const ATTEMPT_TIMEOUT_MS = 12_000;
 
 async function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wraps a promise with a timeout. Rejects with a synthetic ETIMEDOUT-style
+ * error if the promise does not settle within `ms` milliseconds.
+ * Uses AbortController where available so the underlying fetch can be cancelled.
+ */
+async function withTimeout<T>(
+  factory: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+): Promise<T> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => {
+    ac.abort(new Error(`fetchTopCharts timed out after ${ms}ms`));
+  }, ms);
+  try {
+    return await factory(ac.signal);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
@@ -94,21 +119,28 @@ export async function fetchTopCharts({
     }
 
     try {
-      const raw = await (mod as unknown as {
-        list: (opts: {
-          category: string;
-          collection: string;
-          country: string;
-          num: number;
-          fullDetail: boolean;
-        }) => Promise<Array<Record<string, unknown>>>;
-      }).list({
-        category,
-        collection,
-        country,
-        num,
-        fullDetail: false,
-      });
+      // Wrap with a hard timeout so slow Play Store responses don't block
+      // indefinitely. google-play-scraper doesn't natively accept AbortSignal,
+      // so we race the list() call against a timer-triggered rejection.
+      const raw = await withTimeout(
+        (_signal) =>
+          (mod as unknown as {
+            list: (opts: {
+              category: string;
+              collection: string;
+              country: string;
+              num: number;
+              fullDetail: boolean;
+            }) => Promise<Array<Record<string, unknown>>>;
+          }).list({
+            category,
+            collection,
+            country,
+            num,
+            fullDetail: false,
+          }),
+        ATTEMPT_TIMEOUT_MS,
+      );
 
       return raw.map((a) => ({
         appId: String(a.appId ?? ""),
