@@ -108,7 +108,20 @@ export async function POST(request: NextRequest) {
     throw e;
   }
 
-  const { workspaceId, appId: bodyAppId, ...listingInput } = input;
+  const { workspaceId, appId: bodyAppId, activeSignalTypes, ...listingInput } = input;
+
+  // ── Signal quality computation ────────────────────────────────────────────
+  // Counts how many of the three signal channels (reviews, market, competitors)
+  // were active at generation time. Used to populate quality_status / quality_warning
+  // meta fields in the response, which the UI renders as a Quality Status badge.
+  const signalCount = (activeSignalTypes ?? []).length;
+  const qualityMeta =
+    signalCount >= 3
+      ? { quality_status: "All signals active. Synthesis mode: Maximum." as const }
+      : {
+          quality_warning:
+            "Listing generated using partial data. Add Review, Market, or Competitor signals for a more comprehensive strategy." as const,
+        };
 
   if (bodyAppId) {
     const { data: appOk, error: appLookupErr } = await supabase
@@ -355,6 +368,7 @@ export async function POST(request: NextRequest) {
         asoScorePartial: asoScorePartial ? true : undefined,
         retried: retried ? true : undefined,
         shortDescriptionClamped: shortDescriptionClamped ? true : undefined,
+        ...qualityMeta,
       },
     });
   } catch (e) {

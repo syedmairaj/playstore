@@ -93,6 +93,16 @@ type ApiSuccess = {
     retried?: boolean;
     /** Clamp layer trimmed shortDescription to fit ≤80 chars — surfaced as a neutral UI hint. */
     shortDescriptionClamped?: boolean;
+    /**
+     * All three signal channels were active — synthesis quality is maximum.
+     * Shown as a green "Maximum Synthesis" badge in the results area.
+     */
+    quality_status?: "All signals active. Synthesis mode: Maximum.";
+    /**
+     * Fewer than 3 signal channels were active — listing was generated from partial data.
+     * Shown as an amber nudge badge in the results area.
+     */
+    quality_warning?: "Listing generated using partial data. Add Review, Market, or Competitor signals for a more comprehensive strategy.";
   };
 };
 
@@ -1971,6 +1981,13 @@ export function ListingOptimizer({
             : {}),
           // Market spotlight keywords from Market Intelligence → SYNTHESIS PRIORITY 2
           ...(exploitTargets.length > 0 ? { exploitTargets } : {}),
+          // Active signal types — used server-side to compute quality_status / quality_warning meta.
+          // A signal channel counts as active if it has at least one item staged.
+          activeSignalTypes: [
+            ...(reviewQueueItems.length > 0 ? (["reviews"] as const) : []),
+            ...(spotlightQueueItems.length > 0 ? (["market"] as const) : []),
+            ...(vulns.length > 0 ? (["competitors"] as const) : []),
+          ],
         }),
       });
       const json = (await res.json()) as ApiSuccess | ApiError;
@@ -3311,13 +3328,13 @@ export function ListingOptimizer({
                           <p className="max-w-xl text-center text-xs leading-relaxed text-amber-400/80 sm:text-start">
                             {t("form.generateStepGateHint")}
                           </p>
-                        ) : (
-                          <p className="max-w-xl text-center text-xs leading-relaxed text-white/50 sm:text-start">
-                            {isRtl
-                              ? "أضف إشارات من المراجعات أو Market Intel أو Competitor Spy لتحسين النتائج"
-                              : "Add signals from Reviews, Market Intel, or Competitor Spy for stronger results"}
-                          </p>
-                        )}
+                        ) : null}
+                        {/* Pro-tip — always visible below the button, muted so it doesn't compete with the CTA */}
+                        <p className="max-w-sm text-center text-[11px] leading-relaxed text-zinc-500 sm:text-start">
+                          {isRtl
+                            ? "💡 ستحصل على نتائج أفضل مع بيانات المراجعات + السوق + المنافسين. البيانات الجزئية تعمل، لكن التوليف يكون أقوى عند تفعيل جميع الإشارات."
+                            : "💡 Pro-tip: You'll get better results with Reviews + Market + Competitor data. Partial data still works, but synthesis is strongest with all signals active."}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -3346,6 +3363,36 @@ export function ListingOptimizer({
               exit={{ opacity: 0 }}
               transition={{ duration: 0.5, ease: "easeOut" }}
             >
+            {/* ── Quality Status badge ────────────────────────────────────── */}
+            {result && meta && (meta.quality_status ?? meta.quality_warning) ? (
+              <div className={cn(
+                "mb-4 flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm",
+                meta.quality_status
+                  ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-300"
+                  : "border-amber-500/20 bg-amber-500/8 text-amber-300",
+              )}>
+                <span className="mt-0.5 shrink-0 text-base leading-none" aria-hidden>
+                  {meta.quality_status ? "✦" : "◎"}
+                </span>
+                <div className="min-w-0 space-y-0.5">
+                  <p className="font-semibold text-[13px]">
+                    {meta.quality_status
+                      ? (isRtl ? "وضع التوليف الأقصى" : "Maximum Synthesis")
+                      : (isRtl ? "بيانات جزئية" : "Partial Data")}
+                  </p>
+                  <p className="text-[11px] leading-relaxed opacity-80">
+                    {meta.quality_status
+                      ? (isRtl
+                          ? "جميع الإشارات نشطة — المراجعات + السوق + المنافسون. هذا هو أعلى مستوى من التخصيص."
+                          : "All signals active — Reviews + Market + Competitors. This is peak personalisation.")
+                      : (isRtl
+                          ? "تم التوليد ببيانات جزئية. أضف إشارات المراجعات أو السوق أو المنافسين للحصول على استراتيجية أكثر شمولاً."
+                          : "Generated using partial data. Add Review, Market, or Competitor signals for a more comprehensive strategy.")}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {/* ─────────────────────────────────────────────────────────────── */}
             {result ? (
             <OptimizerResultsPanel
               result={result}
