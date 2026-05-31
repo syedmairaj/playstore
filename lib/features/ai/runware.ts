@@ -101,6 +101,9 @@ function hexToColorDescription(hex: string): string {
   }
 
   // Map hue angle to colour family + synonym cluster
+  // NOTE: bucket boundaries are tuned for FLUX's colour vocabulary.
+  // Pure blue peaks ~240°; purple/magenta peak ~290-300°.
+  // #7B1FA2 (h≈282°) is a saturated magenta-purple — keep it in the purple bucket.
   let hueFamily: string;
   if (h < 15 || h >= 345) hueFamily = "red, crimson, scarlet";
   else if (h < 30)         hueFamily = "orange-red, vermillion, burnt orange";
@@ -111,9 +114,9 @@ function hexToColorDescription(hex: string): string {
   else if (h < 170)        hueFamily = "teal green, sea green, mint";
   else if (h < 200)        hueFamily = "cyan, teal, turquoise";
   else if (h < 230)        hueFamily = "sky blue, azure, cerulean";
-  else if (h < 260)        hueFamily = "blue, cobalt blue, royal blue";
-  else if (h < 290)        hueFamily = "blue-violet, indigo, violet blue";
-  else if (h < 320)        hueFamily = "purple, violet, magenta purple";
+  else if (h < 255)        hueFamily = "blue, cobalt blue, royal blue";
+  else if (h < 275)        hueFamily = "blue-violet, indigo, violet blue";
+  else if (h < 330)        hueFamily = "purple, violet, magenta purple";
   else if (h < 345)        hueFamily = "pink, rose, hot pink";
   else                     hueFamily = "red, crimson, scarlet";
 
@@ -255,28 +258,62 @@ export async function generateAppLogos(input: {
     seed: randomInt(1, 2 ** 31 - 1),
   }));
 
-  const res = await fetch(base, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(tasks),
-  });
+  // Runware can occasionally drop connections (ECONNRESET / ETIMEDOUT).
+  // Retry up to 3 times with exponential back-off before propagating.
+  const RUNWARE_TIMEOUT_MS = 55_000; // 55 s — well within Next.js 60 s route limit
+  const MAX_ATTEMPTS = 3;
 
-  const rawText = await res.text();
+  let res: Response | undefined;
+  let lastFetchError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RUNWARE_TIMEOUT_MS);
+    try {
+      res = await fetch(base, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(tasks),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      break; // success — exit retry loop
+    } catch (err) {
+      clearTimeout(timer);
+      lastFetchError = err;
+      const isRetryable =
+        err instanceof Error &&
+        (err.message.includes("ECONNRESET") ||
+          err.message.includes("ETIMEDOUT") ||
+          err.message.includes("fetch failed") ||
+          err.name === "AbortError");
+      if (!isRetryable || attempt === MAX_ATTEMPTS) {
+        throw new RunwareApiError(
+          `Runware request failed after ${attempt} attempt(s): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      // Back-off: 600 ms, 1200 ms before 3rd attempt
+      await new Promise((r) => setTimeout(r, 600 * attempt));
+    }
+  }
+
+  // res is guaranteed to be set here — the loop throws before breaking without assignment
+  const response = res as Response;
+  const rawText = await response.text();
   let json: RunwareResponseBody;
   try {
     json = (rawText ? JSON.parse(rawText) : {}) as RunwareResponseBody;
   } catch {
     throw new RunwareApiError(
-      `Runware returned non-JSON (HTTP ${res.status}): ${rawText.slice(0, 280)}`,
+      `Runware returned non-JSON (HTTP ${response.status}): ${rawText.slice(0, 280)}`,
     );
   }
 
-  if (!res.ok) {
+  if (!response.ok) {
     throw new RunwareApiError(
-      `Runware HTTP ${res.status}: ${rawText.slice(0, 600)}`,
+      `Runware HTTP ${response.status}: ${rawText.slice(0, 600)}`,
     );
   }
 
