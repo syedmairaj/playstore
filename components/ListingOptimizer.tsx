@@ -2765,6 +2765,7 @@ export function ListingOptimizer({
           shortDescription={previewShortDesc}
           creditsRemaining={aiCreditsRemaining}
           onCreditsRemaining={setAiCreditsRemaining}
+          plan={limits.data?.plan ?? "free"}
           initialLogoGenerator={parseLogoGeneratorMetadata(selectedAppRow?.metadata ?? null)}
           onLogoGeneratorPersisted={() => {
             void appsQuery.refetch();

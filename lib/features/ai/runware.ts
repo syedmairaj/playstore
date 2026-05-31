@@ -5,8 +5,8 @@ import { randomInt, randomUUID } from "node:crypto";
 /** Runware REST base (POST JSON array of tasks). Override with `RUNWARE_API_URL` if needed. */
 const DEFAULT_RUNWARE_API_URL = "https://api.runware.ai/v1";
 
-/** FLUX.1 [schnell] — fast distilled model (see Runware model docs). */
-const DEFAULT_RUNWARE_MODEL = "runware:100@1";
+/** FLUX.1 [dev] — full quality model (4× more denoising steps than schnell, sharper icon output). */
+const DEFAULT_RUNWARE_MODEL = "runware:101@1";
 
 export class RunwareNotConfiguredError extends Error {
   readonly code = "logo_generation_unconfigured" as const;
@@ -50,10 +50,12 @@ function runwareModel(): string {
 }
 
 function inferSteps(model: string, hasBrandColor: boolean): number {
-  // Schnell (`runware:100@1`) normally uses 4 steps, but colour-specific
-  // prompts need more denoising steps to converge on the correct hue.
-  // 6 steps is the practical upper bound before quality plateaus on schnell.
+  // Schnell (`runware:100@1`) — fast distilled; 4–6 steps max before quality plateaus.
   if (model.includes("100@")) return hasBrandColor ? 6 : 4;
+  // Dev (`runware:101@1`) — full quality model; 20 steps default, 25 with brand color
+  // for stronger colour convergence. Pro/Growth users get this by default.
+  if (model.includes("101@")) return hasBrandColor ? 25 : 20;
+  // Other models (e.g. SDXL, custom LoRA): sensible default.
   return 20;
 }
 

@@ -1813,6 +1813,8 @@
       "playStoreIconNote": "512×512 is ideal for Google Play Store icon upload.",
       "download1024": "Download High-Res (1024×1024)",
       "downloadHint": "High-res uses the image bytes from the server as-is (dimensions may be below 1024; we do not upscale). If a download is blocked, we open the image in a new tab.",
+      "downloadLockedTitle": "Upgrade to download",
+      "downloadLockedBody": "Free plan users can preview and apply icons to the mockup. Upgrade to Pro or Growth to download production-ready files.",
       "downloadCorsTitle": "Could not package download",
       "downloadCorsBody": "Your browser blocked reading this image URL. It was opened in a new tab — save it from there, or try again later.",
       "downloadPrepareFailed": "Could not prepare the 512×512 PNG. Try the high-res download or open the image in a new tab.",

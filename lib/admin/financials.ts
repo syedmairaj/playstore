@@ -8,7 +8,7 @@ export { getMonthlyServerCostUsd, serverCostForChartDays } from "@/lib/admin/ser
 /** Provider COGS estimates (USD); labeled as estimated in UI when no token-level data. */
 export const ADMIN_COGS = {
   geminiListingPerGeneration: 0.02,
-  runwarePerLogoBatch: 0.012,
+  runwarePerLogoBatch: 0.032, // FLUX.1 [dev] @ ~$0.008/image × 4 images
   /** Small Gemini calls (autofill, suggest) — rough $ per AI credit consumed. */
   geminiSmallPerCredit: 0.0008,
 } as const;

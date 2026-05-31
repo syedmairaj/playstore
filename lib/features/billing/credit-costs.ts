@@ -14,8 +14,8 @@ export const AI_CREDIT_COSTS = {
    * per-generation allowance costs this many credits (see `keyword_track_ai_free_per_generation`).
    */
   keyword_track_ai_per_keyword: 2,
-  /** AI app icon batch (4 variants) via Runware image inference */
-  listing_logo_generation: 8,
+  /** AI app icon batch (4 variants) via Runware FLUX.1 [dev] image inference */
+  listing_logo_generation: 10,
   /** Reserved for bundled ASO workflows */
   aso_growth_pack: 5,
   ad_copy: 1,

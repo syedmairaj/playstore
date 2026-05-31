@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Loader2, Palette, ImageDown } from "lucide-react";
+import { Loader2, Palette, ImageDown, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -261,11 +261,17 @@ export function LogoGeneratorDialog(props: {
   onLogoGeneratorPersisted?: () => void;
   /** Restored from `apps.metadata.logoGenerator` when reopening "Change logo". */
   initialLogoGenerator?: AppLogoGeneratorMetadata | null;
+  /** Workspace plan — free users can preview but cannot download. */
+  plan?: string;
 }) {
   const locale = useLocale();
   const isAr = locale === "ar";
   const t = useTranslations("optimizer.logo");
   const creditCost = AI_CREDIT_COSTS.listing_logo_generation;
+
+  // Free plan users can preview logos in the mockup but cannot download them.
+  // Lock the two download buttons and show an upgrade prompt instead.
+  const isFreePlan = !props.plan || props.plan === "free";
 
   const [style, setStyle] = useState<ListingLogoStyle>("Modern");
   const [brandColor, setBrandColor] = useState<string>("");
@@ -762,22 +768,41 @@ export function LogoGeneratorDialog(props: {
                 >
                   {t("useThis")}
                 </button>
-                <button
-                  type="button"
-                  disabled={busy || !selected}
-                  onClick={() => selected && void downloadPlay512(selected)}
-                  className="inline-flex min-h-[40px] min-w-[10rem] flex-1 items-center justify-center rounded-xl border border-white/20 bg-white/[0.04] px-5 py-2.5 text-sm font-semibold text-white/90 transition hover:border-[#22C55E]/45 hover:bg-[#22C55E]/12 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
-                >
-                  {t("download512")}
-                </button>
-                <button
-                  type="button"
-                  disabled={busy || !selected}
-                  onClick={() => selected && void downloadHighRes(selected)}
-                  className="inline-flex min-h-[40px] min-w-[10rem] flex-1 items-center justify-center rounded-xl border border-white/20 bg-white/[0.04] px-5 py-2.5 text-sm font-semibold text-white/90 transition hover:border-[#22C55E]/45 hover:bg-[#22C55E]/12 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
-                >
-                  {t("download1024")}
-                </button>
+
+                {isFreePlan ? (
+                  /* ── Locked download banner for free plan ──────────── */
+                  <div className="flex flex-1 items-center gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-2.5 sm:flex-none">
+                    <Lock className="size-4 shrink-0 text-amber-300/80" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-amber-200/90">
+                        {t("downloadLockedTitle")}
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-snug text-amber-200/60">
+                        {t("downloadLockedBody")}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── Download buttons for paid plans ────────────────── */
+                  <>
+                    <button
+                      type="button"
+                      disabled={busy || !selected}
+                      onClick={() => selected && void downloadPlay512(selected)}
+                      className="inline-flex min-h-[40px] min-w-[10rem] flex-1 items-center justify-center rounded-xl border border-white/20 bg-white/[0.04] px-5 py-2.5 text-sm font-semibold text-white/90 transition hover:border-[#22C55E]/45 hover:bg-[#22C55E]/12 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                    >
+                      {t("download512")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || !selected}
+                      onClick={() => selected && void downloadHighRes(selected)}
+                      className="inline-flex min-h-[40px] min-w-[10rem] flex-1 items-center justify-center rounded-xl border border-white/20 bg-white/[0.04] px-5 py-2.5 text-sm font-semibold text-white/90 transition hover:border-[#22C55E]/45 hover:bg-[#22C55E]/12 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                    >
+                      {t("download1024")}
+                    </button>
+                  </>
+                )}
               </div>
               <p className="text-balance text-center text-[11px] leading-relaxed text-[#86efac]/88 sm:text-start sm:text-xs">
                 {t("playStoreIconNote")}
