@@ -463,29 +463,55 @@ export function LogoGeneratorDialog(props: {
       return null;
     }
     try {
+      const SIZE = 512;
       const canvas = document.createElement("canvas");
-      canvas.width = 512;
-      canvas.height = 512;
+      canvas.width = SIZE;
+      canvas.height = SIZE;
       const ctx = canvas.getContext("2d");
       if (!ctx) return null;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
-      ctx.clearRect(0, 0, 512, 512);
-
-      // ── Background fill (solid only) ──────────────────────────────────────
-      if (bg === "solid") {
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, 512, 512);
-      }
+      ctx.clearRect(0, 0, SIZE, SIZE);
 
       const w = bmp.width;
       const h = bmp.height;
-      const scale = Math.min(512 / w, 512 / h);
+      const scale = Math.min(SIZE / w, SIZE / h);
       const dw = w * scale;
       const dh = h * scale;
-      const ox = (512 - dw) / 2;
-      const oy = (512 - dh) / 2;
-      ctx.drawImage(bmp, ox, oy, dw, dh);
+      const ox = (SIZE - dw) / 2;
+      const oy = (SIZE - dh) / 2;
+
+      if (bg === "solid") {
+        // ── Solid background: white fill + subtle drop shadow baked in ───────
+        // Shadow gives the icon the same "popping off the home screen" depth
+        // visible in the live preview squircle, baked directly into the PNG.
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, SIZE, SIZE);
+
+        // Draw shadow pass: render the icon slightly offset with a blurred
+        // black composite behind it. We use a secondary offscreen canvas so
+        // the shadow doesn't bleed onto the white background edges.
+        const shadowCanvas = document.createElement("canvas");
+        shadowCanvas.width = SIZE;
+        shadowCanvas.height = SIZE;
+        const sCtx = shadowCanvas.getContext("2d");
+        if (sCtx) {
+          sCtx.shadowColor = "rgba(0,0,0,0.28)";
+          sCtx.shadowBlur = 18;
+          sCtx.shadowOffsetX = 0;
+          sCtx.shadowOffsetY = 5;
+          sCtx.drawImage(bmp, ox, oy, dw, dh);
+          // Composite the shadow layer behind the main image
+          ctx.drawImage(shadowCanvas, 0, 0);
+        }
+
+        // Draw crisp image on top (no shadow on main ctx)
+        ctx.drawImage(bmp, ox, oy, dw, dh);
+      } else {
+        // ── Transparent: preserve alpha, no shadow, no background ────────────
+        ctx.drawImage(bmp, ox, oy, dw, dh);
+      }
+
       return await new Promise<Blob | null>((resolve) => {
         canvas.toBlob((b) => resolve(b), "image/png");
       });

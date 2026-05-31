@@ -159,7 +159,7 @@ function buildPositivePrompt(input: {
       `The icon must look unmistakably ${colorDesc} when viewed as a small thumbnail.`,
       "",
       "Icon requirements:",
-      "• Square 1:1 frame, 1024×1024, centered subject with generous padding.",
+      "• Square 1:1 frame, 1024×1024. The main subject must be perfectly centered and occupy approximately 80% of the canvas area with even padding on all sides.",
       "• No text, letters, numbers, watermarks, UI chrome, or device mockups.",
       "• Simple clean silhouette readable at tiny sizes, high contrast motif.",
       "• Culturally neutral — suitable for global app stores.",
@@ -167,7 +167,7 @@ function buildPositivePrompt(input: {
       "",
       `Style: ${input.style}.`,
       // Colour closes the prompt for final reinforcement
-      `Final reminder: dominant color is ${colorDesc}. The background MUST be ${colorDesc}.`,
+      `Final reminder: dominant color is ${colorDesc}. The background MUST be ${colorDesc}. Subject perfectly centered.`,
     ].join("\n");
   }
 
@@ -179,6 +179,7 @@ function buildPositivePrompt(input: {
     "",
     "Hard requirements:",
     "• Target: 1024×1024 PNG, square 1:1 frame; minimalist, modern, high contrast; crisp silhouette readable at tiny sizes.",
+    "• The main subject must be perfectly centered and occupy approximately 80% of the canvas area with even padding on all sides.",
     "• No text, no letters, no numbers, no logotype, no watermarks, no UI chrome, no device mockups or screenshots.",
     "• Clean background (solid, soft gradient, or very subtle texture); centered subject; generous padding.",
     "• Motifs and metaphors must fit the category and feel trustworthy in a global store listing.",
