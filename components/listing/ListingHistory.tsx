@@ -110,6 +110,14 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     saved: "Saved",
     metricsSavedToast: "Metrics saved for this week.",
 
+    // ── Attribution alert banner ────────────────────────────────────────────
+    alertTitle: "Your last optimisation is working! 🎉",
+    alertBody: "The Attribution Engine detected a {metric} improvement of {delta} since your listing update. Check the card below for the full breakdown.",
+    alertMetricConversion: "conversion rate",
+    alertMetricVisibility: "search visibility",
+    alertMetricVisitors: "store visitor",
+    alertDismiss: "Dismiss",
+
     // ── Timeline / cards ────────────────────────────────────────────────────
     noSnapshots: "No listing generations yet.",
     noSnapshotsHint: "Generate your first AI listing to start tracking performance.",
@@ -181,6 +189,14 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     saving: "جاري الحفظ…",
     saved: "تم الحفظ",
     metricsSavedToast: "تم حفظ مقاييس هذا الأسبوع.",
+
+    // ── Attribution alert banner ────────────────────────────────────────────
+    alertTitle: "تحسينك الأخير يُحدث فارقاً! 🎉",
+    alertBody: "رصد محرك الإسناد تحسناً في {metric} بنسبة {delta} منذ آخر تحديث لقائمتك. اطّلع على البطاقة أدناه للتفاصيل الكاملة.",
+    alertMetricConversion: "معدل التحويل",
+    alertMetricVisibility: "الظهور في البحث",
+    alertMetricVisitors: "زوار المتجر",
+    alertDismiss: "إغلاق",
 
     // ── Timeline / cards ────────────────────────────────────────────────────
     noSnapshots: "لا توجد قوائم مُولَّدة بعد.",
@@ -260,10 +276,12 @@ function DeltaCell({
   label,
   value,
   isRank = false,
+  isRtl = false,
 }: {
   label: string;
   value: string;
   isRank?: boolean;
+  isRtl?: boolean;
 }) {
   const isPositive = value.startsWith("+") || value.startsWith("↑");
   const isNegative =
@@ -272,18 +290,24 @@ function DeltaCell({
       : isRank && value.startsWith("↓");
   const isNeutral = value === "—" || value === "unchanged";
 
+  const showIcon = !isNeutral;
+  const Icon = isPositive ? TrendingUp : isNegative ? TrendingDown : null;
+  const iconColor = isPositive ? "text-emerald-400" : "text-rose-400";
+
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className={cn("flex flex-col gap-0.5", isRtl && "items-end")}>
       <p className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</p>
       <p
         className={cn(
-          "text-sm font-semibold tabular-nums",
+          "flex items-center gap-1 text-sm font-semibold tabular-nums",
+          isRtl && "flex-row-reverse",
           isNeutral && "text-zinc-500",
           !isNeutral && (isPositive ? "text-emerald-400" : isNegative ? "text-rose-400" : "text-zinc-300"),
         )}
       >
-        {isPositive && !isNeutral && <TrendingUp className="mr-1 inline size-3.5 text-emerald-400" aria-hidden />}
-        {isNegative && !isNeutral && <TrendingDown className="mr-1 inline size-3.5 text-rose-400" aria-hidden />}
+        {showIcon && Icon && (
+          <Icon className={cn("inline size-3.5 shrink-0", iconColor)} aria-hidden />
+        )}
         {value}
       </p>
     </div>
@@ -399,10 +423,10 @@ function AttributionCard({
           {/* Delta summary row */}
           {record.verdict !== "pending" && (
             <div className={cn("flex flex-wrap gap-4 pt-1", isRtl && "flex-row-reverse")}>
-              <DeltaCell label={t.conversionChange} value={record.performanceDelta.conversionRateChange} />
-              <DeltaCell label={t.visibilityChange} value={record.performanceDelta.searchVisibilityChange} />
-              <DeltaCell label={t.rankChange} value={record.performanceDelta.rankShift} isRank />
-              <DeltaCell label={t.visitorsChange} value={record.performanceDelta.storeVisitorsChange} />
+              <DeltaCell label={t.conversionChange} value={record.performanceDelta.conversionRateChange} isRtl={isRtl} />
+              <DeltaCell label={t.visibilityChange} value={record.performanceDelta.searchVisibilityChange} isRtl={isRtl} />
+              <DeltaCell label={t.rankChange} value={record.performanceDelta.rankShift} isRank isRtl={isRtl} />
+              <DeltaCell label={t.visitorsChange} value={record.performanceDelta.storeVisitorsChange} isRtl={isRtl} />
             </div>
           )}
         </div>
@@ -439,7 +463,7 @@ function AttributionCard({
                     { label: t.visitorsChange, value: record.performanceDelta.storeVisitorsChange },
                   ].map(({ label, value, isRank }) => (
                     <div key={label} className="rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-3">
-                      <DeltaCell label={label} value={value} isRank={isRank} />
+                      <DeltaCell label={label} value={value} isRank={isRank} isRtl={isRtl} />
                     </div>
                   ))}
                 </div>
@@ -711,7 +735,41 @@ export function ListingHistory({
   const [error, setError] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [alertDismissed, setAlertDismissed] = useState(false);
   const hasFetched = useRef(false);
+
+  // ── Derive attribution alert from most recent "success" record ────────────
+  type AlertData = { metric: string; delta: string } | null;
+  const attributionAlert = ((): AlertData => {
+    if (alertDismissed) return null;
+    const successRecord = attribution.find((r) => r.verdict === "success");
+    if (!successRecord) return null;
+    const pd = successRecord.performanceDelta;
+    // Parse numeric value from strings like "+4.2%", "↑3", etc.
+    function extractPct(val: string): number {
+      const match = val.replace(/[↑↓+]/g, "").replace(/%/g, "").trim();
+      return parseFloat(match) || 0;
+    }
+    // Check each metric for > 3% positive change
+    const candidates: { metric: string; delta: string; magnitude: number }[] = [];
+    const cr = extractPct(pd.conversionRateChange);
+    if (pd.conversionRateChange.startsWith("+") || pd.conversionRateChange.startsWith("↑")) {
+      if (cr >= 3) candidates.push({ metric: t.alertMetricConversion, delta: pd.conversionRateChange, magnitude: cr });
+    }
+    const sv = extractPct(pd.searchVisibilityChange);
+    if (pd.searchVisibilityChange.startsWith("+") || pd.searchVisibilityChange.startsWith("↑")) {
+      if (sv >= 3) candidates.push({ metric: t.alertMetricVisibility, delta: pd.searchVisibilityChange, magnitude: sv });
+    }
+    const visitors = extractPct(pd.storeVisitorsChange);
+    if (pd.storeVisitorsChange.startsWith("+") || pd.storeVisitorsChange.startsWith("↑")) {
+      if (visitors >= 3) candidates.push({ metric: t.alertMetricVisitors, delta: pd.storeVisitorsChange, magnitude: visitors });
+    }
+    // Surface the largest positive signal
+    candidates.sort((a, b) => b.magnitude - a.magnitude);
+    const top = candidates[0];
+    if (!top) return null;
+    return { metric: top.metric, delta: top.delta };
+  })();
 
   const fetchAttribution = useCallback(async () => {
     if (!workspaceId || !appId) return;
@@ -851,6 +909,41 @@ export function ListingHistory({
         isRtl={isRtl}
         onSaved={handleMetricSaved}
       />
+
+      {/* ── Attribution Alert Banner ─────────────────────────────────────── */}
+      <AnimatePresence initial={false}>
+        {attributionAlert && (
+          <motion.div
+            key="attribution-alert"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className={cn(
+              "flex items-start gap-3 rounded-2xl border border-emerald-500/25 bg-emerald-500/8 px-4 py-3.5",
+              isRtl && "flex-row-reverse",
+            )}
+          >
+            <Sparkles className="mt-0.5 size-4 shrink-0 text-emerald-400" aria-hidden />
+            <div className={cn("flex-1 min-w-0", isRtl && "text-end")}>
+              <p className="text-sm font-semibold text-emerald-300">{t.alertTitle}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-emerald-400/70">
+                {t.alertBody
+                  .replace("{metric}", attributionAlert.metric)
+                  .replace("{delta}", attributionAlert.delta)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAlertDismissed(true)}
+              aria-label={t.alertDismiss}
+              className="mt-0.5 shrink-0 text-emerald-500/60 transition-colors hover:text-emerald-400"
+            >
+              <X className="size-3.5" aria-hidden />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Timeline */}
       {loading ? (
