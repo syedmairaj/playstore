@@ -3,16 +3,21 @@
 /**
  * BrandAssetsClient — Brand Assets page.
  *
- * Logo (App Icon) tab: rendered by the shared AppIconGenerator.
- * Banner tab: inline generate → pick → download, no duplication.
+ * Fetches the workspace apps list client-side (same pattern as ListingOptimizer)
+ * so the selected app's id/name/category are always fresh and correct.
+ *
+ * Logo tab: shared AppIconGenerator component.
+ * Banner tab: inline generate → pick → download.
  * Brand Kit CTA: fires logo + banner in parallel.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Loader2, Sparkles, ArrowLeft, Check, Lock, Image as ImageIcon, Layers, Zap } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2, Sparkles, ArrowLeft, Check, Lock, Image as ImageIcon, Layers, Zap, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
+import { workspaceAppsQueryKey } from "@/hooks/use-app-limits";
 import { cn } from "@/lib/utils";
 import { AppIconGenerator } from "@/components/shared/AppIconGenerator";
 
@@ -20,6 +25,7 @@ import { AppIconGenerator } from "@/components/shared/AppIconGenerator";
 type Tab = "logo" | "banner";
 type Page = 1 | 2;
 
+type AppRow = { id: string; name: string; category?: string | null; short_description?: string | null };
 type GenOk = { ok: true; images: string[]; meta?: { creditsCharged?: number; creditsRemaining?: number } };
 type GenErr = { ok: false; error: { code?: string; message: string; remaining?: number; required?: number } };
 
@@ -35,10 +41,8 @@ function BannerSkeleton() {
 // ── Main component ────────────────────────────────────────────────────────────
 export function BrandAssetsClient(props: {
   workspaceId: string;
-  appId: string;
-  appName: string;
-  category: string;
-  shortDescription: string;
+  /** Initial app data from SSR — used as seed only; client fetches fresh list. */
+  initialAppId?: string;
   creditsRemaining: number;
   plan?: string;
   onCreditsRemaining?: (n: number) => void;
@@ -49,9 +53,43 @@ export function BrandAssetsClient(props: {
   const t = useTranslations("brandAssets");
   const isFreePlan = !props.plan || props.plan === "free";
 
-  // ── Local credits state (client-side optimistic update) ───────────────────
+  // ── Credits state ─────────────────────────────────────────────────────────
   const [credits, setCredits] = useState(props.creditsRemaining);
   function updateCredits(n: number) { setCredits(n); props.onCreditsRemaining?.(n); }
+
+  // ── Fetch workspace apps (same pattern as ListingOptimizer) ───────────────
+  const appsQuery = useQuery({
+    queryKey: workspaceAppsQueryKey(props.workspaceId),
+    enabled: Boolean(props.workspaceId),
+    staleTime: 0,
+    queryFn: async (): Promise<AppRow[]> => {
+      const res = await fetch(`/api/workspaces/${props.workspaceId}/apps`, { credentials: "include" });
+      const raw = await res.text();
+      let json: unknown;
+      try { json = raw ? JSON.parse(raw) : {}; } catch { throw new Error(`Apps fetch failed (${res.status})`); }
+      const body = json as { ok?: boolean; apps?: AppRow[]; rows?: AppRow[] };
+      if (!res.ok || body.ok === false) throw new Error("Could not load apps");
+      return body.apps ?? body.rows ?? [];
+    },
+  });
+
+  const appsList: AppRow[] = appsQuery.data ?? [];
+
+  // ── Selected app ──────────────────────────────────────────────────────────
+  const [selectedAppId, setSelectedAppId] = useState<string>(props.initialAppId ?? "");
+
+  // Auto-select first app once list loads
+  useEffect(() => {
+    if (appsList.length > 0 && !selectedAppId) {
+      setSelectedAppId(appsList[0].id);
+    }
+  }, [appsList, selectedAppId]);
+
+  const selectedApp = appsList.find((a) => a.id === selectedAppId) ?? null;
+  const appId = selectedApp?.id ?? "";
+  const appName = selectedApp?.name ?? "";
+  const category = selectedApp?.category ?? "";
+  const shortDescription = selectedApp?.short_description ?? "";
 
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [tab, setTab] = useState<Tab>("logo");
@@ -68,11 +106,23 @@ export function BrandAssetsClient(props: {
   // ── Brand Kit state ───────────────────────────────────────────────────────
   const [kitBusy, setKitBusy] = useState(false);
 
+  // Reset banner results when app changes
+  useEffect(() => {
+    setBannerImages([]); setBannerSelected(null); setBannerPage(1);
+  }, [selectedAppId]);
+
+  // ── Guard: require selected app ───────────────────────────────────────────
+  function requireApp(): boolean {
+    if (!appId || !appName) {
+      toast.message(t("noAppTitle"), { description: t("noAppBody") });
+      return false;
+    }
+    return true;
+  }
+
   // ── Banner generate ───────────────────────────────────────────────────────
   async function runBannerGenerate() {
-    if (!props.appId || !props.appName) {
-      toast.message(t("noAppTitle"), { description: t("noAppBody") }); return;
-    }
+    if (!requireApp()) return;
     const cost = AI_CREDIT_COSTS.banner_generation;
     if (credits < cost) {
       toast.message(t("insufficientTitle"), { description: t("insufficientBody", { rem: credits, req: cost }) }); return;
@@ -81,10 +131,9 @@ export function BrandAssetsClient(props: {
     const toastId = toast.loading(t("generatingBanners"));
     try {
       const body: Record<string, unknown> = {
-        workspaceId: props.workspaceId, appId: props.appId,
-        appName: props.appName, category: props.category, style: bannerStyle,
+        workspaceId: props.workspaceId, appId, appName, category, style: bannerStyle,
       };
-      if (props.shortDescription.trim()) body.shortDescription = props.shortDescription.trim();
+      if (shortDescription.trim()) body.shortDescription = shortDescription.trim();
       if (/^#[0-9a-fA-F]{6}$/.test(bannerColor)) body.brandColor = bannerColor;
       if (bannerTheme.trim()) body.theme = bannerTheme.trim();
 
@@ -113,9 +162,7 @@ export function BrandAssetsClient(props: {
 
   // ── Brand Kit batch ───────────────────────────────────────────────────────
   async function runBrandKit() {
-    if (!props.appId || !props.appName) {
-      toast.message(t("noAppTitle"), { description: t("noAppBody") }); return;
-    }
+    if (!requireApp()) return;
     const cost = AI_CREDIT_COSTS.brand_kit_batch;
     if (credits < cost) {
       toast.message(t("insufficientTitle"), { description: t("insufficientBody", { rem: credits, req: cost }) }); return;
@@ -125,10 +172,9 @@ export function BrandAssetsClient(props: {
     const toastId = toast.loading(t("generatingKit"));
     try {
       const logoBody: Record<string, unknown> = {
-        workspaceId: props.workspaceId, appId: props.appId,
-        appName: props.appName, category: props.category, style: bannerStyle,
+        workspaceId: props.workspaceId, appId, appName, category, style: bannerStyle,
       };
-      if (props.shortDescription.trim()) logoBody.shortDescription = props.shortDescription.trim();
+      if (shortDescription.trim()) logoBody.shortDescription = shortDescription.trim();
       if (/^#[0-9a-fA-F]{6}$/.test(bannerColor)) logoBody.brandColor = bannerColor;
 
       const bannerBody = { ...logoBody };
@@ -138,13 +184,17 @@ export function BrandAssetsClient(props: {
         fetch("/api/listings/logo-generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(logoBody) }),
         fetch("/api/brand-assets/banner-generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bannerBody) }),
       ]);
-      const [logoJson, bannerJson] = await Promise.all([logoRes.json() as Promise<GenOk | GenErr>, bannerRes.json() as Promise<GenOk | GenErr>]);
+      const [logoJson, bannerJson] = await Promise.all([
+        logoRes.json() as Promise<GenOk | GenErr>,
+        bannerRes.json() as Promise<GenOk | GenErr>,
+      ]);
       toast.dismiss(toastId);
 
       const bannerUrls = bannerJson.ok ? (bannerJson as GenOk).images.filter((u) => /^https:\/\//i.test(u)).slice(0, 4) : [];
       setBannerImages(bannerUrls);
 
-      const lastCredits = bannerJson.ok ? (bannerJson as GenOk).meta?.creditsRemaining : logoJson.ok ? (logoJson as GenOk).meta?.creditsRemaining : undefined;
+      const lastCredits = bannerJson.ok ? (bannerJson as GenOk).meta?.creditsRemaining
+        : logoJson.ok ? (logoJson as GenOk).meta?.creditsRemaining : undefined;
       if (typeof lastCredits === "number") updateCredits(lastCredits);
 
       if ((logoJson.ok && (logoJson as GenOk).images.length > 0) || bannerUrls.length > 0) {
@@ -156,13 +206,14 @@ export function BrandAssetsClient(props: {
     finally { setKitBusy(false); }
   }
 
-  // ── Download (banner) ─────────────────────────────────────────────────────
+  // ── Download helper ───────────────────────────────────────────────────────
   function triggerDownload(url: string, filename: string) {
     const a = Object.assign(document.createElement("a"), { href: url, download: filename, rel: "noopener" });
     document.body.appendChild(a); a.click(); a.remove();
   }
 
   const anyBusy = bannerBusy || kitBusy;
+  const appsLoading = appsQuery.isLoading;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -170,21 +221,50 @@ export function BrandAssetsClient(props: {
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-10">
 
         {/* Page header */}
-        <div className="mb-8 space-y-2">
+        <div className="mb-6 space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{t("pageTitle")}</h1>
           <p className="text-sm leading-relaxed text-white/55 sm:text-base">{t("pageSubtitle")}</p>
         </div>
 
-        {/* No-app warning */}
-        {!props.appId && (
-          <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3.5">
-            <Sparkles className="mt-0.5 size-4 shrink-0 text-amber-300/70" aria-hidden />
-            <div>
-              <p className="text-sm font-semibold text-amber-200/90">{t("noAppTitle")}</p>
-              <p className="mt-0.5 text-xs leading-snug text-amber-200/60">{t("noAppBody")}</p>
+        {/* ── App selector ────────────────────────────────────────────────── */}
+        <div className="mb-8">
+          {appsLoading ? (
+            <div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
+              <Loader2 className="size-4 animate-spin text-white/40" aria-hidden />
+              <span className="text-sm text-white/40">{t("loadingApps")}</span>
             </div>
-          </div>
-        )}
+          ) : appsList.length === 0 ? (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3.5">
+              <Sparkles className="mt-0.5 size-4 shrink-0 text-amber-300/70" aria-hidden />
+              <div>
+                <p className="text-sm font-semibold text-amber-200/90">{t("noAppTitle")}</p>
+                <p className="mt-0.5 text-xs leading-snug text-amber-200/60">{t("noAppBody")}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <label htmlFor="ba-app-select" className="text-xs font-medium text-white/55">
+                {t("appSelectorLabel")}
+              </label>
+              <div className="relative">
+                <select
+                  id="ba-app-select"
+                  value={selectedAppId}
+                  onChange={(e) => setSelectedAppId(e.target.value)}
+                  disabled={anyBusy}
+                  className="w-full appearance-none rounded-xl border border-white/[0.12] bg-white/[0.06] px-4 py-2.5 pe-10 text-sm text-white outline-none transition focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/20 disabled:opacity-40"
+                >
+                  {appsList.map((app) => (
+                    <option key={app.id} value={app.id} className="bg-[#0c1018]">
+                      {app.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-white/40" aria-hidden />
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Brand Kit CTA */}
         <div className="mb-8 rounded-2xl border border-[#22C55E]/20 bg-[#22C55E]/[0.06] p-5">
@@ -197,8 +277,12 @@ export function BrandAssetsClient(props: {
               <p className="text-xs leading-relaxed text-white/55">{t("brandKitSubtitle")}</p>
               <p className="text-xs text-amber-200/70">{t("brandKitCredits", { credits: AI_CREDIT_COSTS.brand_kit_batch })}</p>
             </div>
-            <button type="button" disabled={anyBusy || !props.appId} onClick={() => { void runBrandKit(); }}
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#22C55E] px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55">
+            <button
+              type="button"
+              disabled={anyBusy || !appId || appsLoading}
+              onClick={() => { void runBrandKit(); }}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#22C55E] px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55"
+            >
               {kitBusy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Zap className="size-4" aria-hidden />}
               {kitBusy ? t("generating") : t("brandKitCta")}
             </button>
@@ -222,20 +306,25 @@ export function BrandAssetsClient(props: {
         {/* ════════ LOGO TAB — powered by shared AppIconGenerator ═══════════ */}
         {tab === "logo" && (
           <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0c1018]">
-            <AppIconGenerator
-              key={props.appId}
-              workspaceId={props.workspaceId}
-              appId={props.appId}
-              appName={props.appName}
-              category={props.category}
-              shortDescription={props.shortDescription}
-              creditsRemaining={credits}
-              onCreditsRemaining={updateCredits}
-              onIconSelected={() => { /* page mode: no live mockup to update */ }}
-              plan={props.plan}
-              onRequestUpgrade={props.onRequestUpgrade}
-              // No onRequestClose — in page mode "Use this icon" button is hidden
-            />
+            {appId ? (
+              <AppIconGenerator
+                key={appId}
+                workspaceId={props.workspaceId}
+                appId={appId}
+                appName={appName}
+                category={category}
+                shortDescription={shortDescription}
+                creditsRemaining={credits}
+                onCreditsRemaining={updateCredits}
+                onIconSelected={() => { /* page mode: no live mockup */ }}
+                plan={props.plan}
+                onRequestUpgrade={props.onRequestUpgrade}
+              />
+            ) : (
+              <div className="p-8 text-center text-sm text-white/40">
+                {appsLoading ? t("loadingApps") : t("noAppTitle")}
+              </div>
+            )}
           </div>
         )}
 
@@ -290,7 +379,7 @@ export function BrandAssetsClient(props: {
                       ))}
                     </div>
                   </div>
-                  {/* Brand colour swatches */}
+                  {/* Brand colour */}
                   <div className="space-y-2.5">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-medium text-white/60">{t("brandColorLabel")}</span>
@@ -298,7 +387,8 @@ export function BrandAssetsClient(props: {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {[{ hex: "#1A73E8" }, { hex: "#0B8043" }, { hex: "#D93025" }, { hex: "#E37400" }, { hex: "#7B1FA2" }].map(({ hex }) => (
-                        <button key={hex} type="button" disabled={bannerBusy} onClick={() => setBannerColor(bannerColor === hex ? "" : hex)}
+                        <button key={hex} type="button" disabled={bannerBusy}
+                          onClick={() => setBannerColor(bannerColor === hex ? "" : hex)}
                           className={cn("size-7 rounded-full border-2 transition-[border-color,transform,box-shadow] disabled:opacity-40",
                             bannerColor === hex ? "scale-110 border-white/80 shadow-[0_0_0_3px_rgba(255,255,255,0.18)]" : "border-white/20 hover:border-white/50 hover:scale-105")}
                           style={{ backgroundColor: hex }} />
@@ -306,16 +396,17 @@ export function BrandAssetsClient(props: {
                       {bannerColor && <span className="ms-1 font-mono text-[11px] text-white/40">{bannerColor.toUpperCase()}</span>}
                     </div>
                   </div>
-                  {/* Theme field */}
+                  {/* Theme */}
                   <div className="space-y-2">
                     <span className="text-xs font-medium text-white/60">{t("bannerThemeLabel")}</span>
-                    <input type="text" maxLength={150} value={bannerTheme} onChange={(e) => setBannerTheme(e.target.value)}
-                      disabled={bannerBusy} placeholder={t("bannerThemePlaceholder")}
+                    <input type="text" maxLength={150} value={bannerTheme}
+                      onChange={(e) => setBannerTheme(e.target.value)} disabled={bannerBusy}
+                      placeholder={t("bannerThemePlaceholder")}
                       className="w-full rounded-xl border border-white/[0.1] bg-white/[0.06] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/20 disabled:opacity-40" />
                     <p className="text-[11px] text-white/35">{t("bannerThemeHint")}</p>
                   </div>
                 </div>
-                <button type="button" disabled={bannerBusy || !props.appId} onClick={() => { void runBannerGenerate(); }}
+                <button type="button" disabled={bannerBusy || !appId} onClick={() => { void runBannerGenerate(); }}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#22C55E] py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55">
                   {bannerBusy ? <><Loader2 className="size-4 animate-spin" aria-hidden />{t("generating")}</> : <><Layers className="size-4" aria-hidden />{bannerImages.length ? t("regenerate") : t("generateBanners")}</>}
                 </button>
@@ -336,8 +427,7 @@ export function BrandAssetsClient(props: {
                       <button key={`${i}-${src.slice(0,48)}`} type="button" disabled={bannerBusy}
                         onClick={() => setBannerSelected(src)}
                         className={cn(
-                          "group relative aspect-[2/1] overflow-hidden rounded-xl border p-1 transition-[border-color,box-shadow] duration-200 focus:outline-none",
-                          "motion-safe:hover:-translate-y-[2px] motion-safe:hover:border-[#22C55E]/45",
+                          "group relative aspect-[2/1] overflow-hidden rounded-xl border p-1 transition-[border-color,box-shadow] duration-200 focus:outline-none motion-safe:hover:-translate-y-[2px] motion-safe:hover:border-[#22C55E]/45",
                           bannerSelected === src ? "border-[#22C55E]/60 shadow-[0_6px_18px_-6px_rgba(34,197,94,0.28)] ring-2 ring-[#22C55E]/40" : "border-white/[0.08] hover:border-white/[0.15]",
                           bannerBusy && "pointer-events-none opacity-55",
                         )}>
@@ -369,7 +459,7 @@ export function BrandAssetsClient(props: {
                     </div>
                   ) : (
                     <button type="button" disabled={!bannerSelected}
-                      onClick={() => bannerSelected && triggerDownload(bannerSelected, `banner-${props.appName.replace(/\s+/g, "-").toLowerCase()}-1024x500.png`)}
+                      onClick={() => bannerSelected && triggerDownload(bannerSelected, `banner-${appName.replace(/\s+/g, "-").toLowerCase()}-1024x500.png`)}
                       className="w-full rounded-xl border border-white/[0.12] bg-white/[0.04] py-2.5 text-xs font-semibold text-white/80 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#ecfdf5] disabled:cursor-not-allowed disabled:opacity-45">
                       {t("downloadBanner")}
                     </button>

@@ -1916,7 +1916,9 @@
     "downloadLockedTitle": "Upgrade to download",
     "downloadLockedBody": "Free plan users can preview assets. Upgrade to Pro or Growth to download production-ready files.",
     "upgrade": "Upgrade",
-    "backToConfigure": "Back to configure"
+    "backToConfigure": "Back to configure",
+    "loadingApps": "Loading apps…",
+    "appSelectorLabel": "Select app"
   },
   "addApp": {
     "title": "Add New App",

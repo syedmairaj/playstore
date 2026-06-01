@@ -19,24 +19,18 @@ export default async function BrandAssetsPage({
     redirect(`/${locale}/login?next=/${locale}/app/${workspaceId}/brand-assets`);
   }
 
-  // Fetch workspace credits + plan + first app (with category/short_description)
-  const [wsRow, appsRow, { normalized: plan }] = await Promise.all([
+  // Only fetch what can't be done client-side: credits + billing plan.
+  // The apps list is fetched client-side by BrandAssetsClient via React Query
+  // (same pattern as ListingOptimizer) so it's always fresh and correct.
+  const [wsRow, { normalized: plan }] = await Promise.all([
     supabase
       .from("workspaces")
       .select("ai_credits_remaining")
       .eq("id", workspaceId)
       .maybeSingle(),
-    supabase
-      .from("apps")
-      .select("id, name, category, short_description")
-      .eq("workspace_id", workspaceId)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle(),
     resolveWorkspaceBillingPlan(supabase, workspaceId, user.id),
   ]);
 
-  const firstApp = appsRow.data;
   const creditsRemaining =
     typeof wsRow.data?.ai_credits_remaining === "number"
       ? wsRow.data.ai_credits_remaining
@@ -47,10 +41,6 @@ export default async function BrandAssetsPage({
       <Suspense fallback={null}>
         <BrandAssetsClient
           workspaceId={workspaceId}
-          appId={firstApp?.id ?? ""}
-          appName={firstApp?.name ?? ""}
-          category={firstApp?.category ?? ""}
-          shortDescription={firstApp?.short_description ?? ""}
           creditsRemaining={creditsRemaining}
           plan={plan}
         />

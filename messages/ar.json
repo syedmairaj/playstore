@@ -1916,7 +1916,9 @@
     "downloadLockedTitle": "الترقية مطلوبة للتنزيل",
     "downloadLockedBody": "يمكن لمستخدمي الخطة المجانية معاينة الأصول. قم بالترقية إلى Pro أو Growth لتنزيل الملفات الجاهزة للنشر.",
     "upgrade": "ترقية",
-    "backToConfigure": "العودة إلى الإعداد"
+    "backToConfigure": "العودة إلى الإعداد",
+    "loadingApps": "جاري تحميل التطبيقات…",
+    "appSelectorLabel": "اختر التطبيق"
   },
   "addApp": {
     "title": "إضافة تطبيق جديد",
