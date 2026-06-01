@@ -125,6 +125,38 @@ function hexToColorDescription(hex: string): string {
   return `${lightnessWord} ${hueFamily}`;
 }
 
+// ── Style-specific visual vocabulary ("Looka tuning") ────────────────────────
+// FLUX responds to visual vocabulary, not category names.
+// These modifiers are placed early in the prompt (high attention weight) so the
+// model internalises the geometry before it resolves the subject.
+const STYLE_MODIFIERS: Record<string, string> = {
+  Minimalist:    "simple flat geometry, 2-color palette, minimal lines, generous whitespace, clean vector shapes",
+  Modern:        "soft depth, vibrant color, smooth rounded corners, professional polish, contemporary graphic design",
+  Bold:          "thick outlines, maximum contrast, oversized focal element, eye-catching, graphic impact",
+  Playful:       "friendly rounded shapes, bright saturated palette, dynamic energy, approachable cartoon geometry",
+  Professional:  "precise geometry, muted tones, structured layout, corporate trustworthy design, refined detail",
+  "Flat Design": "pure flat illustration, zero shadows, solid fills, hard edges, icon-system coherence",
+};
+
+// ── Dual-concept detector ─────────────────────────────────────────────────────
+// Detects patterns like "salt and sugar", "sun & moon", "fire / ice".
+// When two distinct visual subjects are present, FLUX needs explicit canvas
+// splitting instructions — otherwise it either picks one or blends them badly.
+function detectDualConcept(text: string): boolean {
+  return /\b(and|&|\+|vs\.?|versus|with|plus|\/)\b/i.test(text.trim());
+}
+
+// ── Compositional rules block ─────────────────────────────────────────────────
+// Appended to every prompt. Placed before style and subject so FLUX builds the
+// geometry scaffold first, then fills it with content.
+const COMPOSITIONAL_RULES = [
+  "Composition: perfect symmetry or rule-of-thirds balance, subject occupies 80% of canvas with even padding.",
+  "Negative space: use smart negative space so the icon reads clearly at 64×64 pixels.",
+  "Style constraint: NO photorealism. Prioritise clean vector-style geometry, solid shapes, intentional graphic design.",
+  "No text, letters, numbers, logotype, watermarks, UI chrome, device mockups, or screenshots anywhere.",
+  "Culturally neutral iconography suitable for global English and Arabic-speaking markets.",
+].join(" ");
+
 function buildPositivePrompt(input: {
   appName: string;
   category: string;
@@ -132,74 +164,105 @@ function buildPositivePrompt(input: {
   style: string;
   variantIndex: number;
   brandColor?: string;
+  customPrompt?: string;
 }): string {
   const short = input.shortDescription?.trim();
-  const shortLine = short
-    ? `Short description / positioning: ${short}`
-    : "Short description / positioning: (not provided — infer only from app name and category.)";
-
   const variant = input.variantIndex + 1;
 
+  // ── Style vocabulary ──────────────────────────────────────────────────────
+  // Use the rich visual descriptor if available; fall back to the raw style name.
+  const styleVocab = STYLE_MODIFIERS[input.style] ?? input.style;
+
+  // ── Custom concept + dual-concept handling ────────────────────────────────
+  const rawConcept = input.customPrompt?.trim() ?? "";
+  const isDual = rawConcept.length > 0 && detectDualConcept(rawConcept);
+
+  // Dual-concept structural injection — placed BEFORE the concept line so FLUX
+  // knows the canvas structure before it tries to resolve the two subjects.
+  const dualStructure = isDual
+    ? "Composition: split the canvas into two distinct visual areas, one per concept. Unity: single unified background color and consistent palette to bind both concepts into one coherent icon."
+    : null;
+
+  const conceptLine = rawConcept
+    ? `Visual subject (prioritise this): ${rawConcept}.`
+    : null;
+
+  // ── App context block ─────────────────────────────────────────────────────
+  const contextLines = [
+    `App: "${input.appName}". Category: ${input.category}.`,
+    short ? `Positioning: ${short}.` : null,
+  ].filter(Boolean).join(" ");
+
+  // ── Variant seed directive ────────────────────────────────────────────────
+  const variantLine = `Variant ${variant} of 4: use a clearly distinct focal motif, layout, or perspective from the other three while remaining one coherent product icon.`;
+
   // ── With brand colour ─────────────────────────────────────────────────────
-  // FLUX cannot interpret hex codes — it was trained on image captions.
-  // We translate the hex to a natural-language colour descriptor and repeat
-  // it in multiple positions so the colour is the dominant conditioning signal.
   if (input.brandColor?.trim()) {
     const colorDesc = hexToColorDescription(input.brandColor.trim());
 
     return [
-      // Lead with colour — first tokens get highest attention weight in FLUX
-      `A ${colorDesc} mobile app icon for "${input.appName}".`,
-      `The entire icon uses ${colorDesc} as the dominant background and primary color.`,
+      // 1. Style-first opening — highest attention weight on geometry and color
+      `A ${colorDesc} mobile app icon. Style: ${styleVocab}.`,
+      `The entire icon uses ${colorDesc} as the dominant background and primary accent. The icon must look unmistakably ${colorDesc} at thumbnail size.`,
       "",
-      `Category: ${input.category}. ${shortLine}`,
+      // 2. Compositional rules — scaffold before subject
+      COMPOSITIONAL_RULES,
       "",
-      // Colour repeated mid-prompt for reinforcement
-      `Color scheme: ${colorDesc} dominant background with complementary accent tones.`,
-      `The icon must look unmistakably ${colorDesc} when viewed as a small thumbnail.`,
+      // 3. Dual-concept structure (only when needed)
+      ...(dualStructure ? [dualStructure, ""] : []),
+      // 4. Subject / concept
+      ...(conceptLine ? [conceptLine, ""] : []),
+      // 5. App context
+      contextLines,
       "",
-      "Icon requirements:",
-      "• Square 1:1 frame, 1024×1024. The main subject must be perfectly centered and occupy approximately 80% of the canvas area with even padding on all sides.",
-      "• No text, letters, numbers, watermarks, UI chrome, or device mockups.",
-      "• Simple clean silhouette readable at tiny sizes, high contrast motif.",
-      "• Culturally neutral — suitable for global app stores.",
-      `• Variant ${variant} of 4: use a distinct composition from the other three.`,
-      "",
-      `Style: ${input.style}.`,
-      // Colour closes the prompt for final reinforcement
-      `Final reminder: dominant color is ${colorDesc}. The background MUST be ${colorDesc}. Subject perfectly centered.`,
-    ].join("\n");
+      // 6. Color lock — repeated at end for FLUX attention reinforcement
+      variantLine,
+      `Color lock: background MUST be ${colorDesc}. Dominant hue is ${colorDesc}. Complementary accent tones only.`,
+    ].filter((l) => l !== null).join("\n");
   }
 
-  // ── Without brand colour: original prompt unchanged ───────────────────────
+  // ── Without brand colour ──────────────────────────────────────────────────
   return [
-    `Create one mobile app store icon (launcher-style) for the app named «${input.appName}».`,
-    `Category: ${input.category}.`,
-    shortLine,
+    // 1. Style-first opening
+    `A mobile app icon in ${styleVocab} style, 1024×1024 square canvas.`,
     "",
-    "Hard requirements:",
-    "• Target: 1024×1024 PNG, square 1:1 frame; minimalist, modern, high contrast; crisp silhouette readable at tiny sizes.",
-    "• The main subject must be perfectly centered and occupy approximately 80% of the canvas area with even padding on all sides.",
-    "• No text, no letters, no numbers, no logotype, no watermarks, no UI chrome, no device mockups or screenshots.",
-    "• Clean background (solid, soft gradient, or very subtle texture); centered subject; generous padding.",
-    "• Motifs and metaphors must fit the category and feel trustworthy in a global store listing.",
-    "• Culturally neutral iconography — must work well for English-speaking and Arabic-speaking users (avoid tiny ambiguous glyphs or region-specific lettering).",
-    `• This is creative direction ${variant} of 4: use a clearly distinct composition, focal motif, or layout from the other three variants while staying one coherent product idea.`,
+    // 2. Compositional rules — scaffold before subject
+    COMPOSITIONAL_RULES,
     "",
-    `Style influence: ${input.style}.`,
-  ].join("\n");
+    // 3. Dual-concept structure (only when needed)
+    ...(dualStructure ? [dualStructure, ""] : []),
+    // 4. Subject / concept
+    ...(conceptLine ? [conceptLine, ""] : []),
+    // 5. App context
+    contextLines,
+    "",
+    // 6. Variant direction
+    variantLine,
+  ].filter((l) => l !== null).join("\n");
 }
 
-/** Negative prompt — uses natural language, not hex, for the same reason. */
-function buildNegativePrompt(brandColor: string): string {
-  const colorDesc = hexToColorDescription(brandColor.trim());
-  // Describe what colours to AVOID — the opposites of the chosen hue
-  return [
-    `wrong colors, colors that clash with ${colorDesc},`,
-    "random unrelated colors, inconsistent palette, muddy colors,",
-    "text, watermark, letters, numbers, UI chrome, device mockup, screenshot,",
-    "blurry, low quality, distorted, ugly, oversaturated",
+/**
+ * Negative prompt — applied to every request, not just when brand color is set.
+ * Without a negative prompt FLUX freely generates photorealism, text artifacts,
+ * and muddy palettes. This baseline eliminates the most common failure modes.
+ * When a brand color is supplied we also block clashing hues.
+ */
+function buildNegativePrompt(brandColor?: string): string {
+  const base = [
+    "photorealistic, photograph, 3D render, CGI, lens flare, depth of field, bokeh,",
+    "text, letters, numbers, words, logotype, watermark, signature, UI chrome, device mockup, screenshot,",
+    "blurry, noisy, low quality, pixelated, distorted, ugly, deformed, extra limbs,",
+    "cluttered composition, busy background, complex texture, gradient noise,",
+    "two separate icons, split frame, dual panels, collage layout,",
+    "oversaturated, washed out, muddy colors, inconsistent palette",
   ].join(" ");
+
+  if (brandColor?.trim()) {
+    const colorDesc = hexToColorDescription(brandColor.trim());
+    return `wrong colors, colors that clash with ${colorDesc}, random unrelated colors, ${base}`;
+  }
+
+  return base;
 }
 
 function extractImageRef(row: RunwareInferenceRow): string | null {
@@ -226,6 +289,8 @@ export async function generateAppLogos(input: {
   shortDescription?: string;
   style: string;
   brandColor?: string;
+  /** Optional custom concept from paid users — appended to the generation prompt. */
+  customPrompt?: string;
 }): Promise<string[]> {
   const apiKey = process.env.RUNWARE_API_KEY?.trim();
   if (!apiKey) {
@@ -236,9 +301,9 @@ export async function generateAppLogos(input: {
   const model = runwareModel();
   const steps = inferSteps(model, !!input.brandColor?.trim());
 
-  const negPrompt = input.brandColor?.trim()
-    ? buildNegativePrompt(input.brandColor.trim())
-    : undefined;
+  // Always apply a negative prompt — baseline blocks photorealism/text artifacts
+  // for every generation. Brand color variant additionally blocks clashing hues.
+  const negPrompt = buildNegativePrompt(input.brandColor?.trim() ? input.brandColor : undefined);
 
   const tasks = [0, 1, 2, 3].map((i) => ({
     taskType: "imageInference" as const,
@@ -251,8 +316,9 @@ export async function generateAppLogos(input: {
       style: input.style.trim(),
       variantIndex: i,
       brandColor: input.brandColor,
+      customPrompt: input.customPrompt,
     }),
-    ...(negPrompt ? { negativePrompt: negPrompt } : {}),
+    negativePrompt: negPrompt,
     width: 1024,
     height: 1024,
     steps,
