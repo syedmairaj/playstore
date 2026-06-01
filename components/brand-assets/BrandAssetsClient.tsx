@@ -112,14 +112,23 @@ export function BrandAssetsClient(props: {
   const [bannerTheme, setBannerTheme] = useState("");
   const [bannerStyle, setBannerStyle] = useState("Modern");
   const [bannerColor, setBannerColor] = useState("");
+  // Phase 1: Brand Kit — place app icon on banner at download time
+  const [bannerAddIcon, setBannerAddIcon] = useState(false);
+  // Phase 2: Text overlays — baked into the PNG at download time only
+  const [bannerHeadline, setBannerHeadline] = useState("");
+  const [bannerSubline, setBannerSubline] = useState("");
 
   // ── Brand Kit state ───────────────────────────────────────────────────────
   const [kitBusy, setKitBusy] = useState(false);
 
-  // Reset banner results when app changes
+  // Reset banner results + pre-fill headline when app changes
   useEffect(() => {
     setBannerImages([]); setBannerSelected(null); setBannerPage(1);
-  }, [selectedAppId]);
+    // Pre-fill headline from short description — user can edit or clear
+    if (shortDescription) {
+      setBannerHeadline(shortDescription.split(".")[0].trim().slice(0, 40));
+    }
+  }, [selectedAppId, shortDescription]);
 
   // ── Guard: require selected app ───────────────────────────────────────────
   function requireApp(): boolean {
@@ -225,10 +234,185 @@ export function BrandAssetsClient(props: {
     finally { setKitBusy(false); }
   }
 
-  // ── Download helper ───────────────────────────────────────────────────────
-  function triggerDownload(url: string, filename: string) {
-    const a = Object.assign(document.createElement("a"), { href: url, download: filename, rel: "noopener" });
+  // ── Banner download — bake-at-download canvas compositor ─────────────────
+  // The preview grid always shows the clean raw AI image.
+  // Compositing (icon overlay + text overlay) only happens here, at download.
+  async function downloadComposited(bannerUrl: string, filename: string) {
+    const W = 1024, H = 576;
+
+    // Fetch banner blob
+    let bannerBlob: Blob | null = null;
+    try {
+      const r = await fetch(bannerUrl, { mode: "cors", credentials: "omit", cache: "no-store" });
+      if (r.ok) bannerBlob = await r.blob();
+    } catch { /* fall through to direct link */ }
+
+    if (!bannerBlob) {
+      // CORS blocked — open directly
+      window.open(bannerUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    let bannerBmp: ImageBitmap;
+    try { bannerBmp = await createImageBitmap(bannerBlob); }
+    catch { window.open(bannerUrl, "_blank", "noopener,noreferrer"); return; }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { window.open(bannerUrl, "_blank", "noopener,noreferrer"); return; }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+
+    // 1. Draw banner image scaled to fill canvas
+    ctx.drawImage(bannerBmp, 0, 0, W, H);
+    bannerBmp.close();
+
+    // 2. Phase 1 — Brand Kit: draw app icon (bottom-right, 150×150, drop shadow)
+    if (bannerAddIcon) {
+      const iconUrl = selectedApp?.metadata
+        ? (() => {
+            const lg = selectedApp.metadata as Record<string, unknown>;
+            const raw = (lg.logoGenerator as Record<string, unknown> | undefined);
+            return typeof raw?.selectedUrl === "string" ? raw.selectedUrl : null;
+          })()
+        : null;
+
+      if (iconUrl) {
+        try {
+          const iconRes = await fetch(iconUrl, { mode: "cors", credentials: "omit", cache: "no-store" });
+          if (iconRes.ok) {
+            const iconBlob = await iconRes.blob();
+            const iconBmp = await createImageBitmap(iconBlob);
+            const ICON = 150;
+            const ix = W - ICON - 20;   // 20px from right edge
+            const iy = H - ICON - 20;   // 20px from bottom edge
+            // Draw shadow pass on offscreen canvas
+            const sc = document.createElement("canvas"); sc.width = W; sc.height = H;
+            const sCtx = sc.getContext("2d");
+            if (sCtx) {
+              sCtx.shadowColor = "rgba(0,0,0,0.45)";
+              sCtx.shadowBlur = 24;
+              sCtx.shadowOffsetX = 0;
+              sCtx.shadowOffsetY = 6;
+              // Rounded-square clip for the icon
+              sCtx.beginPath();
+              const r = ICON * 0.22; // ~22% corner radius — matches Play Store squircle
+              sCtx.moveTo(ix + r, iy);
+              sCtx.lineTo(ix + ICON - r, iy);
+              sCtx.arcTo(ix + ICON, iy, ix + ICON, iy + r, r);
+              sCtx.lineTo(ix + ICON, iy + ICON - r);
+              sCtx.arcTo(ix + ICON, iy + ICON, ix + ICON - r, iy + ICON, r);
+              sCtx.lineTo(ix + r, iy + ICON);
+              sCtx.arcTo(ix, iy + ICON, ix, iy + ICON - r, r);
+              sCtx.lineTo(ix, iy + r);
+              sCtx.arcTo(ix, iy, ix + r, iy, r);
+              sCtx.closePath();
+              sCtx.clip();
+              sCtx.drawImage(iconBmp, ix, iy, ICON, ICON);
+              ctx.drawImage(sc, 0, 0);
+            }
+            // Crisp icon pass on main canvas (no shadow — shadow was composited above)
+            ctx.save();
+            ctx.beginPath();
+            const ri = ICON * 0.22;
+            ctx.moveTo(ix + ri, iy);
+            ctx.lineTo(ix + ICON - ri, iy);
+            ctx.arcTo(ix + ICON, iy, ix + ICON, iy + ri, ri);
+            ctx.lineTo(ix + ICON, iy + ICON - ri);
+            ctx.arcTo(ix + ICON, iy + ICON, ix + ICON - ri, iy + ICON, ri);
+            ctx.lineTo(ix + ri, iy + ICON);
+            ctx.arcTo(ix, iy + ICON, ix, iy + ICON - ri, ri);
+            ctx.lineTo(ix, iy + ri);
+            ctx.arcTo(ix, iy, ix + ri, iy, ri);
+            ctx.closePath();
+            ctx.clip();
+            ctx.drawImage(iconBmp, ix, iy, ICON, ICON);
+            ctx.restore();
+            iconBmp.close();
+          }
+        } catch { /* icon fetch failed — continue without icon */ }
+      }
+    }
+
+    // 3. Phase 2 — Text overlays: headline + subline in right-hand third
+    const headline = bannerHeadline.trim();
+    const subline = bannerSubline.trim();
+
+    if (headline || subline) {
+      // Text block anchored in the right third: x starts at 65% of width
+      const TX = Math.round(W * 0.65);
+      const TW = W - TX - 32; // 32px right margin
+
+      // Helper: wrap text to max width and return lines
+      function wrapText(c: CanvasRenderingContext2D, text: string, font: string, maxW: number): string[] {
+        c.font = font;
+        const words = text.split(" ");
+        const lines: string[] = [];
+        let line = "";
+        for (const w of words) {
+          const test = line ? `${line} ${w}` : w;
+          if (c.measureText(test).width > maxW && line) {
+            lines.push(line);
+            line = w;
+          } else { line = test; }
+        }
+        if (line) lines.push(line);
+        return lines;
+      }
+
+      // Headline
+      if (headline) {
+        const hFont = `bold 42px system-ui, -apple-system, sans-serif`;
+        const hLines = wrapText(ctx, headline, hFont, TW);
+        const hLineH = 52;
+        const hBlockH = hLines.length * hLineH;
+        const subLines = subline
+          ? wrapText(ctx, subline, `500 28px system-ui, -apple-system, sans-serif`, TW)
+          : [];
+        const subBlockH = subLines.length * 36;
+        const totalH = hBlockH + (subline ? subBlockH + 12 : 0);
+        let ty = Math.round((H - totalH) / 2); // vertically centred
+
+        ctx.font = hFont;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        // Text shadow for readability over any background
+        ctx.shadowColor = "rgba(0,0,0,0.65)";
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 2;
+        ctx.fillStyle = "#ffffff";
+        for (const line of hLines) {
+          ctx.fillText(line, TX, ty, TW);
+          ty += hLineH;
+        }
+
+        // Subline
+        if (subline && subLines.length > 0) {
+          ty += 12;
+          ctx.font = `500 28px system-ui, -apple-system, sans-serif`;
+          ctx.shadowBlur = 8;
+          ctx.fillStyle = "rgba(255,255,255,0.85)";
+          for (const sl of subLines) {
+            ctx.fillText(sl, TX, ty, TW);
+            ty += 36;
+          }
+        }
+        // Reset shadow
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    // 4. Export PNG and trigger download
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/png"));
+    if (!blob) { window.open(bannerUrl, "_blank", "noopener,noreferrer"); return; }
+    const u = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), { href: u, download: filename, rel: "noopener" });
     document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(u);
   }
 
   const anyBusy = bannerBusy || kitBusy;
@@ -450,6 +634,67 @@ export function BrandAssetsClient(props: {
                       className="w-full rounded-xl border border-white/[0.1] bg-white/[0.06] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/20 disabled:opacity-40" />
                     <p className="text-[11px] text-white/35">{t("bannerThemeHint")}</p>
                   </div>
+
+                  {/* ── Download enhancements ─────────────────────────────────
+                       These are BAKE-AT-DOWNLOAD only. The preview grid always
+                       shows the clean raw AI image. Compositing happens only
+                       when the user clicks Download.                         */}
+                  <div className="space-y-4 border-t border-white/[0.06] pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-white/30">
+                      {t("downloadEnhancementsLabel")}
+                    </p>
+
+                    {/* Phase 1: Brand Kit toggle */}
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <div className="relative mt-0.5 shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={bannerAddIcon}
+                          onChange={(e) => setBannerAddIcon(e.target.checked)}
+                          disabled={bannerBusy}
+                          className="sr-only"
+                        />
+                        <div className={cn(
+                          "flex size-5 items-center justify-center rounded border-2 transition-colors",
+                          bannerAddIcon
+                            ? "border-[#22C55E] bg-[#22C55E]"
+                            : "border-white/25 bg-white/[0.04]",
+                          "disabled:opacity-40",
+                        )}>
+                          {bannerAddIcon && <Check className="size-3 text-white" />}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-xs font-medium text-white/75">{t("bannerAddIconLabel")}</span>
+                        <p className="mt-0.5 text-[11px] leading-snug text-white/35">{t("bannerAddIconHint")}</p>
+                      </div>
+                    </label>
+
+                    {/* Phase 2: Headline field */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-white/60">{t("bannerHeadlineLabel")}</span>
+                        <span className="ms-auto text-[10px] text-white/28">{bannerHeadline.length}/40</span>
+                      </div>
+                      <input type="text" maxLength={40} value={bannerHeadline}
+                        onChange={(e) => setBannerHeadline(e.target.value)} disabled={bannerBusy}
+                        placeholder={t("bannerHeadlinePlaceholder")}
+                        className="w-full rounded-xl border border-white/[0.1] bg-white/[0.06] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/20 disabled:opacity-40" />
+                    </div>
+
+                    {/* Phase 2: Subline field */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-white/60">{t("bannerSublineLabel")}</span>
+                        <span className="ms-auto text-[10px] text-white/28">{bannerSubline.length}/80</span>
+                      </div>
+                      <input type="text" maxLength={80} value={bannerSubline}
+                        onChange={(e) => setBannerSubline(e.target.value)} disabled={bannerBusy}
+                        placeholder={t("bannerSublinePlaceholder")}
+                        className="w-full rounded-xl border border-white/[0.1] bg-white/[0.06] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/20 disabled:opacity-40" />
+                      <p className="text-[11px] text-white/30">{t("bannerOverlayHint")}</p>
+                    </div>
+                  </div>
                 </div>
                 <button type="button" disabled={bannerBusy || !appId} onClick={() => { void runBannerGenerate(); }}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#22C55E] py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55">
@@ -504,7 +749,10 @@ export function BrandAssetsClient(props: {
                     </div>
                   ) : (
                     <button type="button" disabled={!bannerSelected}
-                      onClick={() => bannerSelected && triggerDownload(bannerSelected, `banner-${appName.replace(/\s+/g, "-").toLowerCase()}-1024x500.png`)}
+                      onClick={() => bannerSelected && void downloadComposited(
+                        bannerSelected,
+                        `banner-${appName.replace(/\s+/g, "-").toLowerCase()}-1024x576.png`,
+                      )}
                       className="w-full rounded-xl border border-white/[0.12] bg-white/[0.04] py-2.5 text-xs font-semibold text-white/80 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#ecfdf5] disabled:cursor-not-allowed disabled:opacity-45">
                       {t("downloadBanner")}
                     </button>

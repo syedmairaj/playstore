@@ -1943,7 +1943,15 @@
       "deleted": "تم حذف الأصل",
       "deleteError": "تعذّر حذف الأصل. حاول مرة أخرى.",
       "loadError": "تعذّر تحميل أصول المخزن."
-    }
+    },
+    "downloadEnhancementsLabel": "دمج عند التنزيل",
+    "bannerAddIconLabel": "إضافة أيقونة التطبيق إلى البانر",
+    "bannerAddIconHint": "تضع أيقونة تطبيقك (أسفل اليمين) على ملف PNG المنزّل. تبقى المعاينة نظيفة.",
+    "bannerHeadlineLabel": "العنوان الرئيسي (اختياري)",
+    "bannerHeadlinePlaceholder": "مثال: تتبع عاداتك في 60 ثانية",
+    "bannerSublineLabel": "العنوان الفرعي (اختياري)",
+    "bannerSublinePlaceholder": "مثال: بسيط. قوي. مجاني.",
+    "bannerOverlayHint": "يُدمج النص في ملف PNG المنزّل فقط — تبقى المعاينة نظيفة."
   },
   "addApp": {
     "title": "إضافة تطبيق جديد",

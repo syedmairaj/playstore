@@ -1943,7 +1943,15 @@
       "deleted": "Asset deleted",
       "deleteError": "Could not delete asset. Try again.",
       "loadError": "Could not load vault assets."
-    }
+    },
+    "downloadEnhancementsLabel": "Bake into download",
+    "bannerAddIconLabel": "Add App Icon to banner",
+    "bannerAddIconHint": "Places your generated app icon (bottom-right) onto the downloaded PNG. Preview stays clean.",
+    "bannerHeadlineLabel": "Headline (optional)",
+    "bannerHeadlinePlaceholder": "e.g. Track habits in 60 seconds",
+    "bannerSublineLabel": "Subline (optional)",
+    "bannerSublinePlaceholder": "e.g. Simple. Powerful. Free.",
+    "bannerOverlayHint": "Text is baked into the downloaded PNG only — the preview stays clean."
   },
   "addApp": {
     "title": "Add New App",
