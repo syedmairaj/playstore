@@ -227,6 +227,10 @@ export function BrandAssetsClient(props: {
 
   // ── Logo generate ─────────────────────────────────────────────────────────
   async function runLogoGenerate() {
+    if (!props.appId || !props.appName) {
+      toast.message(t("noAppTitle"), { description: t("noAppBody") });
+      return;
+    }
     if (props.creditsRemaining < logoCreditCost) {
       toast.message(t("insufficientTitle"), { description: t("insufficientBody", { rem: props.creditsRemaining, req: logoCreditCost }) });
       return;
@@ -266,6 +270,10 @@ export function BrandAssetsClient(props: {
 
   // ── Banner generate ───────────────────────────────────────────────────────
   async function runBannerGenerate() {
+    if (!props.appId || !props.appName) {
+      toast.message(t("noAppTitle"), { description: t("noAppBody") });
+      return;
+    }
     const cost = AI_CREDIT_COSTS.banner_generation;
     if (props.creditsRemaining < cost) {
       toast.message(t("insufficientTitle"), { description: t("insufficientBody", { rem: props.creditsRemaining, req: cost }) });
@@ -306,6 +314,10 @@ export function BrandAssetsClient(props: {
 
   // ── Brand Kit batch ───────────────────────────────────────────────────────
   async function runBrandKit() {
+    if (!props.appId || !props.appName) {
+      toast.message(t("noAppTitle"), { description: t("noAppBody") });
+      return;
+    }
     const cost = AI_CREDIT_COSTS.brand_kit_batch;
     if (props.creditsRemaining < cost) {
       toast.message(t("insufficientTitle"), { description: t("insufficientBody", { rem: props.creditsRemaining, req: cost }) });
@@ -318,21 +330,30 @@ export function BrandAssetsClient(props: {
     setBannerSelected(null);
     const toastId = toast.loading(t("generatingKit"));
     try {
-      const sharedBody: Record<string, unknown> = {
+      // Base body shared by both calls — only include fields each route accepts
+      const logoBody: Record<string, unknown> = {
         workspaceId: props.workspaceId, appId: props.appId,
         appName: props.appName, category: props.category, style,
       };
-      if (props.shortDescription.trim()) sharedBody.shortDescription = props.shortDescription.trim();
-      if (/^#[0-9a-fA-F]{6}$/.test(brandColor)) sharedBody.brandColor = brandColor;
-      if (bannerTheme.trim()) sharedBody.bannerTheme = bannerTheme.trim();
+      if (props.shortDescription.trim()) logoBody.shortDescription = props.shortDescription.trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(brandColor)) logoBody.brandColor = brandColor;
+      // Do NOT send customPrompt in kit mode — leave blank so AI picks concept
 
-      // Fire both in parallel — each deducts from its own credit pool
+      const bannerBody: Record<string, unknown> = {
+        workspaceId: props.workspaceId, appId: props.appId,
+        appName: props.appName, category: props.category, style,
+      };
+      if (props.shortDescription.trim()) bannerBody.shortDescription = props.shortDescription.trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(brandColor)) bannerBody.brandColor = brandColor;
+      if (bannerTheme.trim()) bannerBody.theme = bannerTheme.trim(); // correct key: "theme"
+
+      // Fire both in parallel — each route gets its own clean body
       const [logoRes, bannerRes] = await Promise.all([
         fetch("/api/listings/logo-generate", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sharedBody),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(logoBody),
         }),
         fetch("/api/brand-assets/banner-generate", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sharedBody),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bannerBody),
         }),
       ]);
       const [logoJson, bannerJson] = await Promise.all([
@@ -406,6 +427,17 @@ export function BrandAssetsClient(props: {
             {t("pageSubtitle")}
           </p>
         </div>
+
+        {/* ── No-app warning (shown when workspace has no apps yet) ────── */}
+        {!props.appId && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3.5">
+            <Sparkles className="mt-0.5 size-4 shrink-0 text-amber-300/70" aria-hidden />
+            <div>
+              <p className="text-sm font-semibold text-amber-200/90">{t("noAppTitle")}</p>
+              <p className="mt-0.5 text-xs leading-snug text-amber-200/60">{t("noAppBody")}</p>
+            </div>
+          </div>
+        )}
 
         {/* ── Brand Kit CTA ─────────────────────────────────────────────── */}
         <div className="mb-8 rounded-2xl border border-[#22C55E]/20 bg-[#22C55E]/[0.06] p-5">

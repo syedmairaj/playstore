@@ -1857,6 +1857,8 @@
     "brandKitSubtitle": "Generate 4 icon variants + 4 banner variants in one click. App name and colour used for both.",
     "brandKitCredits": "{credits} credits total (10 logo + 20 banner)",
     "brandKitCta": "Generate Brand Kit",
+    "noAppTitle": "No app selected",
+    "noAppBody": "Add an app in the AI Listing Optimizer first, then come back here to generate brand assets.",
     "logoCredits": "10 credits per batch · 12 with custom concept",
     "bannerCredits": "20 credits per batch · 4 variants · 1024×500 px",
     "styleLabel": "Visual style",
