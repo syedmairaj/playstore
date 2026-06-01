@@ -1849,7 +1849,10 @@
       "upgrade": "Upgrade",
       "iconUpdated": "App icon updated",
       "mockupHint": "Want to preview this icon on a phone mockup?",
-      "mockupHintLink": "Open in AI Listing Optimizer →"
+      "mockupHintLink": "Open in AI Listing Optimizer →",
+      "setAsAppIcon": "Set as App Icon",
+      "iconSaved": "App icon saved",
+      "iconSavedDesc": "This icon is now set as your app icon. Open AI Listing Optimizer to preview it on the phone mockup."
     }
   },
   "brandAssets": {

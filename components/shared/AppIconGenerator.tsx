@@ -340,8 +340,13 @@ export function AppIconGenerator(props: AppIconGeneratorProps) {
       const json = (await res.json()) as { ok?: boolean; error?: { message?: string } };
       if (!res.ok || json.ok !== true) { toast.error(json.error?.message ?? t("applyError")); return; }
       props.onIconSelected(url);
-      toast.success(t("iconUpdated"));
-      props.onRequestClose?.();
+      // In page mode show a richer confirmation since there's no visible mockup update
+      if (props.onRequestClose) {
+        toast.success(t("iconUpdated"));
+        props.onRequestClose();
+      } else {
+        toast.success(t("iconSaved"), { description: t("iconSavedDesc") });
+      }
     } catch { toast.error(t("networkError")); }
     finally { setBusy(false); }
   }
@@ -550,14 +555,14 @@ export function AppIconGenerator(props: AppIconGeneratorProps) {
           {/* Actions */}
           {images.length > 0 && (
             <div className="space-y-3">
-              {/* Use this icon — only shown when onRequestClose is wired (dialog mode) */}
-              {props.onRequestClose && (
-                <button type="button" disabled={busy || !selected}
-                  onClick={() => selected && void applyIcon(selected)}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#22C55E] py-3 text-sm font-semibold text-white shadow-[0_6px_20px_-8px_rgba(34,197,94,0.45)] transition hover:bg-[#16a34a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45">
-                  {t("useThis")}
-                </button>
-              )}
+              {/* Primary CTA — label differs by context:
+                  Dialog mode (Listing Optimizer): "Use this icon" → applies to live mockup, closes dialog.
+                  Page mode (Brand Assets): "Set as App Icon" → saves to app record, no mockup feedback needed. */}
+              <button type="button" disabled={busy || !selected}
+                onClick={() => selected && void applyIcon(selected)}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#22C55E] py-3 text-sm font-semibold text-white shadow-[0_6px_20px_-8px_rgba(34,197,94,0.45)] transition hover:bg-[#16a34a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45">
+                {props.onRequestClose ? t("useThis") : t("setAsAppIcon")}
+              </button>
 
               {/* Download or free lock */}
               {isFreePlan ? (
