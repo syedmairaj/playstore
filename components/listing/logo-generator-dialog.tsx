@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Loader2, Palette, ImageDown, Lock } from "lucide-react";
+import { Loader2, Palette, ImageDown, Lock, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -261,20 +261,27 @@ export function LogoGeneratorDialog(props: {
   onLogoGeneratorPersisted?: () => void;
   /** Restored from `apps.metadata.logoGenerator` when reopening "Change logo". */
   initialLogoGenerator?: AppLogoGeneratorMetadata | null;
-  /** Workspace plan — free users can preview but cannot download. */
+  /** Workspace plan — free users can preview but cannot download or use custom prompts. */
   plan?: string;
+  /** Called when a free user clicks the upgrade CTA — opens parent upgrade modal. */
+  onRequestUpgrade?: () => void;
 }) {
   const locale = useLocale();
   const isAr = locale === "ar";
   const t = useTranslations("optimizer.logo");
-  const creditCost = AI_CREDIT_COSTS.listing_logo_generation;
 
-  // Free plan users can preview logos in the mockup but cannot download them.
-  // Lock the two download buttons and show an upgrade prompt instead.
+  // Free plan users can preview logos in the mockup but cannot download or use custom prompts.
   const isFreePlan = !props.plan || props.plan === "free";
 
   const [style, setStyle] = useState<ListingLogoStyle>("Modern");
   const [brandColor, setBrandColor] = useState<string>("");
+  const [customPrompt, setCustomPrompt] = useState<string>("");
+
+  // Dynamic credit cost — custom prompt runs cost 12, basic generation costs 10.
+  const creditCost =
+    !isFreePlan && customPrompt.trim()
+      ? AI_CREDIT_COSTS.listing_logo_generation_custom
+      : AI_CREDIT_COSTS.listing_logo_generation;
   const [bgStyle, setBgStyle] = useState<BgStyle>("solid");
   const [images, setImages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -371,6 +378,10 @@ export function LogoGeneratorDialog(props: {
       // Only send brandColor when it's a valid 6-digit hex
       if (/^#[0-9a-fA-F]{6}$/.test(brandColor)) {
         body.brandColor = brandColor;
+      }
+      // Only paid users can use custom prompts (free plan gate is enforced in UI)
+      if (!isFreePlan && customPrompt.trim()) {
+        body.customPrompt = customPrompt.trim();
       }
 
       const res = await fetch("/api/listings/logo-generate", {
@@ -659,6 +670,11 @@ export function LogoGeneratorDialog(props: {
             </p>
             <p className="text-sm leading-relaxed text-amber-200/90 sm:text-[15px]">
               {t("creditsWarning", { credits: creditCost })}
+              {!isFreePlan && customPrompt.trim() && (
+                <span className="ms-1 text-amber-300/60 text-xs">
+                  {t("creditsCustomNote")}
+                </span>
+              )}
             </p>
             <p className="text-xs leading-relaxed text-white/50 sm:text-[13px]">{t("sizeNote")}</p>
           </DialogHeader>
@@ -710,6 +726,60 @@ export function LogoGeneratorDialog(props: {
               transparentHint={t("bgTransparentHint")}
               disabled={busy}
             />
+
+            {/* Custom Icon Concept — paid plans only */}
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="size-3.5 shrink-0 text-white/50" aria-hidden />
+                <span className="text-xs font-medium text-white/70">{t("customPromptLabel")}</span>
+                {isFreePlan ? (
+                  <span className="ms-auto inline-flex items-center gap-1 rounded-full border border-amber-400/25 bg-amber-400/[0.08] px-2 py-0.5 text-[10px] font-semibold text-amber-300/80">
+                    <Lock className="size-3 shrink-0" aria-hidden />
+                    {t("customPromptProBadge")}
+                  </span>
+                ) : (
+                  <span className="ms-auto text-[10px] text-white/30">
+                    {customPrompt.trim().length}/300
+                  </span>
+                )}
+              </div>
+              <div className="relative">
+                <textarea
+                  disabled={busy || isFreePlan}
+                  maxLength={300}
+                  rows={3}
+                  value={isFreePlan ? "" : customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  placeholder={
+                    isFreePlan
+                      ? t("customPromptLockedPlaceholder")
+                      : t("customPromptPlaceholder")
+                  }
+                  className={cn(
+                    "w-full resize-none rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed outline-none transition",
+                    "focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/25",
+                    isFreePlan
+                      ? "cursor-not-allowed border-white/[0.06] bg-white/[0.02] text-white/20 placeholder:text-white/18"
+                      : "border-white/[0.1] bg-white/[0.06] text-white placeholder:text-white/35",
+                  )}
+                />
+                {isFreePlan && (
+                  <button
+                    type="button"
+                    onClick={props.onRequestUpgrade}
+                    className="absolute inset-0 flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-black/30 text-xs font-semibold text-amber-300/90 backdrop-blur-[1px] transition hover:bg-black/40"
+                  >
+                    <Lock className="size-3.5 shrink-0" aria-hidden />
+                    {t("customPromptUpgradeCta")}
+                  </button>
+                )}
+              </div>
+              {!isFreePlan && (
+                <p className="text-[11px] leading-snug text-white/38">
+                  {t("customPromptHint")}
+                </p>
+              )}
+            </div>
           </div>
 
           {/* ── Action barrier → Generate button ─────────────────────────── */}

@@ -1833,7 +1833,14 @@
       "bgSolidHint": "تعبئة بيضاء — متوافقة مع Play Store",
       "bgTransparent": "شفاف",
       "bgTransparentHint": "قناة ألفا محفوظة — للاستخدام التسويقي",
-      "bgStyleLabel": "نمط الخلفية"
+      "bgStyleLabel": "نمط الخلفية",
+      "customPromptLabel": "مفهوم الأيقونة المخصص",
+      "customPromptProBadge": "Pro",
+      "customPromptPlaceholder": "مثال: صاروخ بسيط ينطلق من شاشة هاتف، خلفية داكنة…",
+      "customPromptLockedPlaceholder": "قم بالترقية إلى Pro لوصف مفهوم أيقونتك الخاصة",
+      "customPromptUpgradeCta": "قم بالترقية إلى Pro لاستخدام المطالبات المخصصة",
+      "customPromptHint": "صف الموضوع البصري أو الرمز الذي تريده (بحد أقصى 300 حرف). اتركه فارغاً للمفاهيم التي يختارها الذكاء الاصطناعي.",
+      "creditsCustomNote": "(+2 للمفهوم المخصص)"
     }
   },
   "addApp": {

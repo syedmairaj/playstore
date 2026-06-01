@@ -2766,6 +2766,7 @@ export function ListingOptimizer({
           creditsRemaining={aiCreditsRemaining}
           onCreditsRemaining={setAiCreditsRemaining}
           plan={limits.data?.plan ?? "free"}
+          onRequestUpgrade={() => setUpgradeOpen(true)}
           initialLogoGenerator={parseLogoGeneratorMetadata(selectedAppRow?.metadata ?? null)}
           onLogoGeneratorPersisted={() => {
             void appsQuery.refetch();

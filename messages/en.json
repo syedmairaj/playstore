@@ -1833,7 +1833,14 @@
       "bgSolidHint": "White fill — Play Store compliant",
       "bgTransparent": "Transparent",
       "bgTransparentHint": "Alpha preserved — for marketing use",
-      "bgStyleLabel": "Background style"
+      "bgStyleLabel": "Background style",
+      "customPromptLabel": "Custom icon concept",
+      "customPromptProBadge": "Pro",
+      "customPromptPlaceholder": "e.g. a minimalist rocket launching from a phone screen, dark background…",
+      "customPromptLockedPlaceholder": "Upgrade to Pro to describe your own icon concept",
+      "customPromptUpgradeCta": "Upgrade to Pro to use custom prompts",
+      "customPromptHint": "Describe the visual subject or motif you want (max 300 chars). Leave blank for AI-driven concepts.",
+      "creditsCustomNote": "(+2 for custom concept)"
     }
   },
   "addApp": {
