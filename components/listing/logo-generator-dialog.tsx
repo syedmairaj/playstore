@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Loader2, Palette, ImageDown, Lock, Sparkles } from "lucide-react";
+import { Loader2, Lock, Sparkles, ArrowLeft, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -38,16 +38,15 @@ type LogoGenErr = {
 };
 
 type BgStyle = "solid" | "transparent";
+type Page = 1 | 2;
 
 // ── Brand colour presets ──────────────────────────────────────────────────────
-// Five common, distinct hues that cover dark / mid / light brand palettes.
-// The last swatch is always the custom-color input — rendered separately.
 const BRAND_COLOR_PRESETS = [
-  { hex: "#1A73E8", label: "Blue"    },
-  { hex: "#0B8043", label: "Green"   },
-  { hex: "#D93025", label: "Red"     },
-  { hex: "#E37400", label: "Orange"  },
-  { hex: "#7B1FA2", label: "Purple"  },
+  { hex: "#1A73E8", label: "Blue"   },
+  { hex: "#0B8043", label: "Green"  },
+  { hex: "#D93025", label: "Red"    },
+  { hex: "#E37400", label: "Orange" },
+  { hex: "#7B1FA2", label: "Purple" },
 ] as const;
 
 // ── Skeleton tile ─────────────────────────────────────────────────────────────
@@ -64,10 +63,6 @@ function LogoSkeletonTile() {
 }
 
 // ── Brand Color Picker ────────────────────────────────────────────────────────
-// Compact inline control: 5 preset swatches + a custom colour input.
-// Selecting a preset clears the custom input; picking a custom colour
-// deselects all presets. Selecting the active preset again deselects it
-// (reverts to "no brand colour").
 
 function BrandColorPicker({
   value,
@@ -91,8 +86,7 @@ function BrandColorPicker({
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-1.5">
-        <Palette className="size-3.5 shrink-0 text-white/50" aria-hidden />
-        <span className="text-xs font-medium text-white/70">{label}</span>
+        <span className="text-xs font-medium text-white/60">{label}</span>
         {value && (
           <button
             type="button"
@@ -129,7 +123,7 @@ function BrandColorPicker({
           );
         })}
 
-        {/* Custom colour swatch — clicking opens the native colour picker */}
+        {/* Custom colour swatch */}
         <button
           type="button"
           disabled={disabled}
@@ -147,19 +141,16 @@ function BrandColorPicker({
           )}
           style={isCustom ? { backgroundColor: value } : undefined}
         >
-          {/* Hue-wheel gradient shown when no custom colour is active */}
           {!isCustom && (
             <span
               className="absolute inset-0 rounded-full"
               style={{
-                background:
-                  "conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)",
+                background: "conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)",
                 opacity: 0.85,
               }}
               aria-hidden
             />
           )}
-          {/* Hidden native colour input */}
           <input
             ref={customInputRef}
             type="color"
@@ -172,72 +163,11 @@ function BrandColorPicker({
           />
         </button>
 
-        {/* Live hex preview when a colour is set */}
         {value && (
-          <span className="ms-1 font-mono text-[11px] tracking-wide text-white/50">
+          <span className="ms-1 font-mono text-[11px] tracking-wide text-white/40">
             {value.toUpperCase()}
           </span>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ── Background Style Toggle ───────────────────────────────────────────────────
-// Two-option pill toggle. Used only at download-time — does not affect the
-// live preview or the Runware generation prompt.
-
-function BgStyleToggle({
-  value,
-  onChange,
-  heading,
-  solidLabel,
-  solidHint,
-  transparentLabel,
-  transparentHint,
-  disabled,
-}: {
-  value: BgStyle;
-  onChange: (v: BgStyle) => void;
-  heading: string;
-  solidLabel: string;
-  solidHint: string;
-  transparentLabel: string;
-  transparentHint: string;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="space-y-2.5">
-      <div className="flex items-center gap-1.5">
-        <ImageDown className="size-3.5 shrink-0 text-white/50" aria-hidden />
-        <span className="text-xs font-medium text-white/70">{heading}</span>
-      </div>
-      <div className="flex gap-2">
-        {(
-          [
-            { v: "solid" as BgStyle, label: solidLabel, hint: solidHint },
-            { v: "transparent" as BgStyle, label: transparentLabel, hint: transparentHint },
-          ] as const
-        ).map(({ v, label, hint }) => (
-          <button
-            key={v}
-            type="button"
-            disabled={disabled}
-            title={hint}
-            onClick={() => onChange(v)}
-            className={cn(
-              "flex-1 rounded-xl border px-3 py-2 text-left text-xs transition-colors duration-150",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]",
-              "disabled:cursor-not-allowed disabled:opacity-40",
-              value === v
-                ? "border-[#22C55E]/45 bg-[#22C55E]/10 font-semibold text-[#86efac]"
-                : "border-white/[0.1] bg-white/[0.03] font-medium text-white/55 hover:border-white/20 hover:text-white/75",
-            )}
-          >
-            <span className="block">{label}</span>
-            <span className="mt-0.5 block text-[10px] font-normal opacity-70 leading-tight">{hint}</span>
-          </button>
-        ))}
       </div>
     </div>
   );
@@ -255,39 +185,46 @@ export function LogoGeneratorDialog(props: {
   shortDescription: string;
   creditsRemaining: number | null;
   onCreditsRemaining: (n: number) => void;
-  /** Called first on successful PATCH so the parent can update live preview without waiting for refetch. */
   onLogoSelected: (httpsUrl: string) => void;
-  /** Called after logo generator metadata is saved to `apps` (regenerate / selection). */
   onLogoGeneratorPersisted?: () => void;
-  /** Restored from `apps.metadata.logoGenerator` when reopening "Change logo". */
   initialLogoGenerator?: AppLogoGeneratorMetadata | null;
-  /** Workspace plan — free users can preview but cannot download or use custom prompts. */
   plan?: string;
-  /** Called when a free user clicks the upgrade CTA — opens parent upgrade modal. */
   onRequestUpgrade?: () => void;
 }) {
   const locale = useLocale();
   const isAr = locale === "ar";
   const t = useTranslations("optimizer.logo");
 
-  // Free plan users can preview logos in the mockup but cannot download or use custom prompts.
   const isFreePlan = !props.plan || props.plan === "free";
 
+  // ── Page state ───────────────────────────────────────────────────────────────
+  const [page, setPage] = useState<Page>(1);
+
+  // ── Config state ─────────────────────────────────────────────────────────────
   const [style, setStyle] = useState<ListingLogoStyle>("Modern");
   const [brandColor, setBrandColor] = useState<string>("");
+  const [bgStyle, setBgStyle] = useState<BgStyle>("solid");
   const [customPrompt, setCustomPrompt] = useState<string>("");
 
-  // Dynamic credit cost — custom prompt runs cost 12, basic generation costs 10.
+  // Dynamic credit cost
   const creditCost =
     !isFreePlan && customPrompt.trim()
       ? AI_CREDIT_COSTS.listing_logo_generation_custom
       : AI_CREDIT_COSTS.listing_logo_generation;
-  const [bgStyle, setBgStyle] = useState<BgStyle>("solid");
+
+  // ── Results state ────────────────────────────────────────────────────────────
   const [images, setImages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const persistSelectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasOpenRef = useRef(false);
+
+  // Reset page to 1 when dialog closes
+  useEffect(() => {
+    if (!props.open) {
+      setPage(1);
+    }
+  }, [props.open]);
 
   // Restore state when dialog opens with an existing logo session
   useEffect(() => {
@@ -297,12 +234,17 @@ export function LogoGeneratorDialog(props: {
     const lg = props.initialLogoGenerator;
     if (lg?.generatedUrls?.length) {
       setImages(lg.generatedUrls);
-      setSelected(
-        lg.selectedUrl && lg.generatedUrls.includes(lg.selectedUrl) ? lg.selectedUrl : null,
-      );
+      const sel =
+        lg.selectedUrl && lg.generatedUrls.includes(lg.selectedUrl)
+          ? lg.selectedUrl
+          : null;
+      setSelected(sel);
+      // If we have previous results, land on page 2
+      setPage(2);
     } else {
       setImages([]);
       setSelected(null);
+      setPage(1);
     }
   }, [props.open, props.initialLogoGenerator]);
 
@@ -314,7 +256,7 @@ export function LogoGeneratorDialog(props: {
     };
   }, []);
 
-  // ── Persist helpers ─────────────────────────────────────────────────────────
+  // ── Persist helpers ──────────────────────────────────────────────────────────
 
   async function persistLogoGeneratorState(meta: AppLogoGeneratorMetadata) {
     const res = await fetch(`/api/workspaces/${props.workspaceId}/apps/${props.appId}`, {
@@ -345,7 +287,7 @@ export function LogoGeneratorDialog(props: {
     }, 400);
   }
 
-  // ── Generate ────────────────────────────────────────────────────────────────
+  // ── Generate ─────────────────────────────────────────────────────────────────
 
   async function runGenerate() {
     if (
@@ -363,6 +305,8 @@ export function LogoGeneratorDialog(props: {
     setBusy(true);
     setImages([]);
     setSelected(null);
+    // Move to page 2 immediately so skeleton grid shows there
+    setPage(2);
     const toastId = toast.loading(t("generating"));
     try {
       const body: Record<string, unknown> = {
@@ -375,11 +319,9 @@ export function LogoGeneratorDialog(props: {
       if (props.shortDescription.trim()) {
         body.shortDescription = props.shortDescription.trim();
       }
-      // Only send brandColor when it's a valid 6-digit hex
       if (/^#[0-9a-fA-F]{6}$/.test(brandColor)) {
         body.brandColor = brandColor;
       }
-      // Only paid users can use custom prompts (free plan gate is enforced in UI)
       if (!isFreePlan && customPrompt.trim()) {
         body.customPrompt = customPrompt.trim();
       }
@@ -392,6 +334,7 @@ export function LogoGeneratorDialog(props: {
       const json = (await res.json()) as LogoGenOk | LogoGenErr;
       toast.dismiss(toastId);
       if (!json.ok) {
+        setPage(1); // bounce back to config on error
         if (res.status === 402 || json.error.code === "insufficient_credits") {
           const rem = json.error.remaining;
           const req =
@@ -440,20 +383,17 @@ export function LogoGeneratorDialog(props: {
     } catch {
       toast.dismiss(toastId);
       toast.error(t("networkError"));
+      setPage(1);
     } finally {
       setBusy(false);
     }
   }
 
-  // ── Canvas download helpers ─────────────────────────────────────────────────
+  // ── Canvas download helpers ──────────────────────────────────────────────────
 
   async function fetchRemoteImageBlob(url: string): Promise<Blob | null> {
     try {
-      const res = await fetch(url, {
-        mode: "cors",
-        credentials: "omit",
-        cache: "no-store",
-      });
+      const res = await fetch(url, { mode: "cors", credentials: "omit", cache: "no-store" });
       if (!res.ok) return null;
       return await res.blob();
     } catch {
@@ -461,11 +401,6 @@ export function LogoGeneratorDialog(props: {
     }
   }
 
-  /**
-   * Renders the image onto a 512×512 canvas.
-   * When `bg === "solid"`, fills the canvas white first (Play Store compliant).
-   * When `bg === "transparent"`, leaves alpha channel intact.
-   */
   async function blobTo512PngBlob(blob: Blob, bg: BgStyle): Promise<Blob | null> {
     let bmp: ImageBitmap | undefined;
     try {
@@ -493,15 +428,8 @@ export function LogoGeneratorDialog(props: {
       const oy = (SIZE - dh) / 2;
 
       if (bg === "solid") {
-        // ── Solid background: white fill + subtle drop shadow baked in ───────
-        // Shadow gives the icon the same "popping off the home screen" depth
-        // visible in the live preview squircle, baked directly into the PNG.
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, SIZE, SIZE);
-
-        // Draw shadow pass: render the icon slightly offset with a blurred
-        // black composite behind it. We use a secondary offscreen canvas so
-        // the shadow doesn't bleed onto the white background edges.
         const shadowCanvas = document.createElement("canvas");
         shadowCanvas.width = SIZE;
         shadowCanvas.height = SIZE;
@@ -512,14 +440,10 @@ export function LogoGeneratorDialog(props: {
           sCtx.shadowOffsetX = 0;
           sCtx.shadowOffsetY = 5;
           sCtx.drawImage(bmp, ox, oy, dw, dh);
-          // Composite the shadow layer behind the main image
           ctx.drawImage(shadowCanvas, 0, 0);
         }
-
-        // Draw crisp image on top (no shadow on main ctx)
         ctx.drawImage(bmp, ox, oy, dw, dh);
       } else {
-        // ── Transparent: preserve alpha, no shadow, no background ────────────
         ctx.drawImage(bmp, ox, oy, dw, dh);
       }
 
@@ -552,9 +476,7 @@ export function LogoGeneratorDialog(props: {
     const index = variantIndex(url);
     const blob = await fetchRemoteImageBlob(url);
     if (!blob) {
-      toast.message(t("downloadCorsTitle"), {
-        description: t("downloadCorsBody"),
-      });
+      toast.message(t("downloadCorsTitle"), { description: t("downloadCorsBody") });
       window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
@@ -579,9 +501,7 @@ export function LogoGeneratorDialog(props: {
     const index = variantIndex(url);
     const blob = await fetchRemoteImageBlob(url);
     if (!blob) {
-      toast.message(t("downloadCorsTitle"), {
-        description: t("downloadCorsBody"),
-      });
+      toast.message(t("downloadCorsTitle"), { description: t("downloadCorsBody") });
       window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
@@ -596,8 +516,6 @@ export function LogoGeneratorDialog(props: {
       }),
     );
   }
-
-  // ── Apply to app ────────────────────────────────────────────────────────────
 
   async function applyIcon(url: string) {
     if (!/^https:\/\//i.test(url)) {
@@ -622,18 +540,11 @@ export function LogoGeneratorDialog(props: {
           body: JSON.stringify(body),
         },
       );
-      const json = (await res.json()) as {
-        ok?: boolean;
-        error?: { message?: string };
-      };
+      const json = (await res.json()) as { ok?: boolean; error?: { message?: string } };
       if (!res.ok || json.ok !== true) {
         toast.error(json.error?.message ?? t("applyError"));
         return;
       }
-      // ── "Icon-to-Screen Magic" ─────────────────────────────────────────────
-      // onLogoSelected updates previewIconUrl in ListingOptimizer, which flows
-      // into LivePreviewPhone's iconUrl prop. PreviewSquircleMark re-mounts on
-      // key={iconSrc} change, triggering the built-in fade-in zoom-in animation.
       props.onLogoSelected(url);
       toast.success(t("logoUpdated"));
       props.onOpenChange(false);
@@ -646,182 +557,291 @@ export function LogoGeneratorDialog(props: {
 
   const showSkeletonGrid = busy && images.length === 0;
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent
         dir={isAr ? "rtl" : "ltr"}
         className={cn(
-          "max-h-[min(92vh,900px)] max-w-[min(96vw,720px)] overflow-y-auto border border-white/[0.1] bg-[#0c1018] p-0 text-white shadow-2xl sm:rounded-2xl",
+          "max-h-[min(92vh,860px)] max-w-[min(96vw,680px)] overflow-y-auto border border-white/[0.1] bg-[#0c1018] p-0 text-white shadow-2xl sm:rounded-2xl",
           isAr && "font-arabic",
         )}
         overlayClassName="bg-black/70 backdrop-blur-md"
       >
-        <div className="space-y-8 p-7 sm:p-10">
 
-          {/* ── Header ───────────────────────────────────────────────────── */}
-          <DialogHeader className="space-y-3 text-start sm:space-y-3.5">
-            <DialogTitle className="text-2xl font-semibold tracking-tight text-white sm:text-[1.65rem]">
-              {t("title")}
-            </DialogTitle>
-            <p className="text-[15px] leading-relaxed text-white/72 sm:text-base">
-              {t("subtitle")}
-            </p>
-            <p className="text-sm leading-relaxed text-amber-200/90 sm:text-[15px]">
+        {/* ── Step bar ─────────────────────────────────────────────────────── */}
+        <div className="flex items-stretch border-b border-white/[0.07]">
+          {/* Step 1 tab */}
+          <button
+            type="button"
+            onClick={() => setPage(1)}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-2.5 border-b-2 px-4 py-3.5 text-xs font-medium transition-colors duration-150",
+              "focus-visible:outline-none",
+              page === 1
+                ? "border-[#22C55E] text-[#86efac]"
+                : "border-transparent text-white/38 hover:text-white/55",
+            )}
+          >
+            <span
+              className={cn(
+                "flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold transition-colors",
+                page === 1
+                  ? "bg-[#22C55E] text-white"
+                  : page === 2
+                    ? "bg-[#22C55E]/20 text-[#86efac]"
+                    : "bg-white/[0.08] text-white/38",
+              )}
+            >
+              {page === 2 ? <Check className="size-2.5" /> : "1"}
+            </span>
+            {t("step1Label")}
+          </button>
+
+          {/* Divider */}
+          <div className="w-px self-stretch bg-white/[0.07]" />
+
+          {/* Step 2 tab */}
+          <button
+            type="button"
+            disabled={images.length === 0 && !busy}
+            onClick={() => images.length > 0 && setPage(2)}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-2.5 border-b-2 px-4 py-3.5 text-xs font-medium transition-colors duration-150",
+              "focus-visible:outline-none disabled:cursor-default",
+              page === 2
+                ? "border-[#22C55E] text-[#86efac]"
+                : images.length > 0
+                  ? "border-transparent text-white/38 hover:text-white/55"
+                  : "border-transparent text-white/20",
+            )}
+          >
+            <span
+              className={cn(
+                "flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold transition-colors",
+                page === 2
+                  ? "bg-[#22C55E] text-white"
+                  : "bg-white/[0.08] text-white/38",
+              )}
+            >
+              2
+            </span>
+            {t("step2Label")}
+          </button>
+        </div>
+
+        {/* ════════════════ PAGE 1 — Configure ════════════════════════════════ */}
+        {page === 1 && (
+          <div className="space-y-7 p-7 sm:p-9">
+
+            {/* Header */}
+            <DialogHeader className="space-y-2 text-start">
+              <DialogTitle className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
+                {t("title")}
+              </DialogTitle>
+              <p className="text-sm leading-relaxed text-white/58 sm:text-[15px]">
+                {t("subtitle")}
+              </p>
+            </DialogHeader>
+
+            {/* Credits pill */}
+            <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/20 bg-amber-400/[0.07] px-3 py-1.5 text-xs font-medium text-amber-200/85">
+              <Sparkles className="size-3 shrink-0" aria-hidden />
               {t("creditsWarning", { credits: creditCost })}
               {!isFreePlan && customPrompt.trim() && (
-                <span className="ms-1 text-amber-300/60 text-xs">
-                  {t("creditsCustomNote")}
-                </span>
+                <span className="text-amber-300/55">{t("creditsCustomNote")}</span>
               )}
-            </p>
-            <p className="text-xs leading-relaxed text-white/50 sm:text-[13px]">{t("sizeNote")}</p>
-          </DialogHeader>
+            </div>
 
-          {/* ══ Settings block ═══════════════════════════════════════════
-               Visual style · Brand colour · Background style
-               All three are "inputs" that feed into generation.
-               Separated from the action button by a border.            */}
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5 space-y-6">
+            {/* ── Settings card ──────────────────────────────────────────────── */}
+            <div className="space-y-6 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
 
-            {/* Visual style */}
-            <div className="space-y-2.5">
-              <label className="text-xs font-medium text-white/70" htmlFor="logo-style">
-                {t("styleLabel")}
-              </label>
-              <select
-                id="logo-style"
+              {/* Visual style — chips */}
+              <div className="space-y-2.5">
+                <span className="text-xs font-medium text-white/60">{t("styleLabel")}</span>
+                <div className="flex flex-wrap gap-2">
+                  {LISTING_LOGO_STYLES.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setStyle(s)}
+                      className={cn(
+                        "rounded-lg border px-3.5 py-1.5 text-xs font-medium transition-colors duration-150",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-1 focus-visible:ring-offset-[#0c1018]",
+                        "disabled:cursor-not-allowed disabled:opacity-40",
+                        style === s
+                          ? "border-[#22C55E]/50 bg-[#22C55E]/12 text-[#86efac]"
+                          : "border-white/[0.1] bg-white/[0.04] text-white/55 hover:border-white/20 hover:text-white/80",
+                      )}
+                    >
+                      {t(`styles.${s}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Brand colour */}
+              <BrandColorPicker
+                value={brandColor}
+                onChange={setBrandColor}
+                label={t("brandColorLabel")}
+                noneLabel={t("brandColorNone")}
+                customLabel={t("brandColorCustom")}
                 disabled={busy}
-                value={style}
-                onChange={(e) => setStyle(e.target.value as ListingLogoStyle)}
-                className="w-full max-w-md rounded-xl border border-white/[0.1] bg-white/[0.06] px-3 py-2.5 text-sm text-white outline-none transition focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/25 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]"
-              >
-                {LISTING_LOGO_STYLES.map((s) => (
-                  <option key={s} value={s}>
-                    {t(`styles.${s}`)}
-                  </option>
-                ))}
-              </select>
-            </div>
+              />
 
-            {/* Brand colour */}
-            <BrandColorPicker
-              value={brandColor}
-              onChange={setBrandColor}
-              label={t("brandColorLabel")}
-              noneLabel={t("brandColorNone")}
-              customLabel={t("brandColorCustom")}
-              disabled={busy}
-            />
-
-            {/* Background style — set before generating so intent is clear */}
-            <BgStyleToggle
-              value={bgStyle}
-              onChange={setBgStyle}
-              heading={t("bgStyleLabel")}
-              solidLabel={t("bgSolid")}
-              solidHint={t("bgSolidHint")}
-              transparentLabel={t("bgTransparent")}
-              transparentHint={t("bgTransparentHint")}
-              disabled={busy}
-            />
-
-            {/* Custom Icon Concept — paid plans only */}
-            <div className="space-y-2.5">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="size-3.5 shrink-0 text-white/50" aria-hidden />
-                <span className="text-xs font-medium text-white/70">{t("customPromptLabel")}</span>
-                {isFreePlan ? (
-                  <span className="ms-auto inline-flex items-center gap-1 rounded-full border border-amber-400/25 bg-amber-400/[0.08] px-2 py-0.5 text-[10px] font-semibold text-amber-300/80">
-                    <Lock className="size-3 shrink-0" aria-hidden />
-                    {t("customPromptProBadge")}
-                  </span>
-                ) : (
-                  <span className="ms-auto text-[10px] text-white/30">
-                    {customPrompt.trim().length}/300
-                  </span>
-                )}
+              {/* Background style */}
+              <div className="space-y-2.5">
+                <span className="text-xs font-medium text-white/60">{t("bgStyleLabel")}</span>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { v: "solid" as BgStyle, label: t("bgSolid"), hint: t("bgSolidHint") },
+                      { v: "transparent" as BgStyle, label: t("bgTransparent"), hint: t("bgTransparentHint") },
+                    ] as const
+                  ).map(({ v, label, hint }) => (
+                    <button
+                      key={v}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setBgStyle(v)}
+                      className={cn(
+                        "flex-1 rounded-xl border px-3 py-2.5 text-left text-xs transition-colors duration-150",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-1 focus-visible:ring-offset-[#0c1018]",
+                        "disabled:cursor-not-allowed disabled:opacity-40",
+                        bgStyle === v
+                          ? "border-[#22C55E]/45 bg-[#22C55E]/10 font-semibold text-[#86efac]"
+                          : "border-white/[0.1] bg-white/[0.03] font-medium text-white/50 hover:border-white/20 hover:text-white/70",
+                      )}
+                    >
+                      <span className="block">{label}</span>
+                      <span className="mt-0.5 block text-[10px] font-normal opacity-65 leading-tight">{hint}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="relative">
-                <textarea
-                  disabled={busy || isFreePlan}
-                  maxLength={300}
-                  rows={3}
-                  value={isFreePlan ? "" : customPrompt}
-                  onChange={(e) => setCustomPrompt(e.target.value)}
-                  placeholder={
-                    isFreePlan
-                      ? t("customPromptLockedPlaceholder")
-                      : t("customPromptPlaceholder")
-                  }
-                  className={cn(
-                    "w-full resize-none rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed outline-none transition",
-                    "focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/25",
-                    isFreePlan
-                      ? "cursor-not-allowed border-white/[0.06] bg-white/[0.02] text-white/20 placeholder:text-white/18"
-                      : "border-white/[0.1] bg-white/[0.06] text-white placeholder:text-white/35",
+
+              {/* Custom Icon Concept */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="size-3.5 shrink-0 text-white/45" aria-hidden />
+                  <span className="text-xs font-medium text-white/60">{t("customPromptLabel")}</span>
+                  {isFreePlan ? (
+                    <span className="ms-auto inline-flex items-center gap-1 rounded border border-amber-400/25 bg-amber-400/[0.08] px-1.5 py-0.5 text-[10px] font-semibold text-amber-300/75">
+                      <Lock className="size-2.5 shrink-0" aria-hidden />
+                      {t("customPromptProBadge")}
+                    </span>
+                  ) : (
+                    <span className="ms-auto text-[10px] text-white/28">
+                      {customPrompt.trim().length}/300
+                    </span>
                   )}
-                />
-                {isFreePlan && (
-                  <button
-                    type="button"
-                    onClick={props.onRequestUpgrade}
-                    className="absolute inset-0 flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-black/30 text-xs font-semibold text-amber-300/90 backdrop-blur-[1px] transition hover:bg-black/40"
-                  >
-                    <Lock className="size-3.5 shrink-0" aria-hidden />
-                    {t("customPromptUpgradeCta")}
-                  </button>
+                </div>
+                <div className="relative">
+                  <textarea
+                    disabled={busy || isFreePlan}
+                    maxLength={300}
+                    rows={3}
+                    value={isFreePlan ? "" : customPrompt}
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    placeholder={
+                      isFreePlan
+                        ? t("customPromptLockedPlaceholder")
+                        : t("customPromptPlaceholder")
+                    }
+                    className={cn(
+                      "w-full resize-none rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed outline-none transition",
+                      "focus:border-[#22C55E]/45 focus:ring-2 focus:ring-[#22C55E]/20",
+                      isFreePlan
+                        ? "cursor-not-allowed border-white/[0.05] bg-white/[0.015] text-white/20 placeholder:text-white/15"
+                        : "border-white/[0.1] bg-white/[0.06] text-white placeholder:text-white/30",
+                    )}
+                  />
+                  {isFreePlan && (
+                    <button
+                      type="button"
+                      onClick={props.onRequestUpgrade}
+                      className="absolute inset-0 flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-black/35 text-xs font-semibold text-amber-300/85 backdrop-blur-[1px] transition hover:bg-black/45"
+                    >
+                      <Lock className="size-3.5 shrink-0" aria-hidden />
+                      {t("customPromptUpgradeCta")}
+                    </button>
+                  )}
+                </div>
+                {!isFreePlan && (
+                  <p className="text-[11px] leading-snug text-white/35">
+                    {t("customPromptHint")}
+                  </p>
                 )}
               </div>
-              {!isFreePlan && (
-                <p className="text-[11px] leading-snug text-white/38">
-                  {t("customPromptHint")}
-                </p>
-              )}
             </div>
-          </div>
 
-          {/* ── Action barrier → Generate button ─────────────────────────── */}
-          <div className="flex flex-wrap gap-3">
+            {/* Generate button */}
             <button
               type="button"
               disabled={busy}
               onClick={() => { void runGenerate(); }}
-              className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-[#22C55E] px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#16a34a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45"
+              className={cn(
+                "flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-semibold text-white shadow-lg transition",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]",
+                "disabled:cursor-not-allowed disabled:opacity-45",
+                "bg-[#22C55E] hover:bg-[#16a34a]",
+              )}
             >
               {busy ? (
                 <>
                   <Loader2
-                    className="size-4 shrink-0 opacity-90 motion-reduce:opacity-70 motion-reduce:animate-none motion-safe:animate-[spin_1.35s_linear_infinite]"
+                    className="size-4 shrink-0 motion-reduce:animate-none motion-safe:animate-[spin_1.35s_linear_infinite]"
                     aria-hidden
                   />
-                  <span>{t("generatingShort")}</span>
+                  {t("generatingShort")}
                 </>
               ) : images.length ? (
-                t("regenerate")
+                <>
+                  <Sparkles className="size-4 shrink-0" aria-hidden />
+                  {t("regenerate")}
+                </>
               ) : (
-                t("generate")
+                <>
+                  <Sparkles className="size-4 shrink-0" aria-hidden />
+                  {t("generate")}
+                </>
               )}
             </button>
-          </div>
 
-          {/* ── Skeleton grid ────────────────────────────────────────────── */}
-          {showSkeletonGrid ? (
-            <div className="space-y-4">
-              <p className="text-xs text-white/50">{t("generating")}</p>
+            <p className="text-[11px] leading-relaxed text-white/35 sm:text-xs">
+              {t("sizeNote")}
+            </p>
+          </div>
+        )}
+
+        {/* ════════════════ PAGE 2 — Pick & Download ══════════════════════════ */}
+        {page === 2 && (
+          <div className="space-y-6 p-7 sm:p-9">
+
+            {/* Header */}
+            <div className="space-y-1.5">
+              <h2 className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
+                {t("step2Title")}
+              </h2>
+              <p className="text-sm leading-relaxed text-white/55">
+                {t("pickHint")}
+              </p>
+            </div>
+
+            {/* Skeleton grid while generating */}
+            {showSkeletonGrid ? (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5">
                 {[0, 1, 2, 3].map((i) => (
                   <LogoSkeletonTile key={i} />
                 ))}
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {/* ── Logo grid + actions ──────────────────────────────────────── */}
-          {images.length > 0 ? (
-            <div className="space-y-6">
-              <p className="text-xs leading-relaxed text-white/50 sm:text-[13px]">{t("pickHint")}</p>
+            {/* Logo grid */}
+            {images.length > 0 ? (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5">
                 {images.map((src, i) => (
                   <button
@@ -834,16 +854,26 @@ export function LogoGeneratorDialog(props: {
                       schedulePersistLogoSelection(src, images);
                     }}
                     className={cn(
-                      "group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-black/35 p-1.5 shadow-[0_4px_12px_-4px_rgba(0,0,0,0.45),0_14px_28px_-12px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.06]",
+                      "group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-black/35 p-1.5",
+                      "shadow-[0_4px_12px_-4px_rgba(0,0,0,0.45),0_14px_28px_-12px_rgba(0,0,0,0.55)]",
+                      "ring-1 ring-white/[0.06]",
                       "transition-[transform,box-shadow,border-color,opacity,ring-color] duration-200 ease-out will-change-transform",
                       "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018]",
-                      "motion-safe:hover:-translate-y-[2px] motion-safe:hover:border-[#22C55E]/45 motion-safe:hover:shadow-[0_8px_20px_-6px_rgba(34,197,94,0.22),0_20px_40px_-16px_rgba(0,0,0,0.55)] motion-safe:hover:ring-[#22C55E]/15",
+                      "motion-safe:hover:-translate-y-[2px] motion-safe:hover:border-[#22C55E]/45",
+                      "motion-safe:hover:shadow-[0_8px_20px_-6px_rgba(34,197,94,0.22),0_20px_40px_-16px_rgba(0,0,0,0.55)]",
+                      "motion-safe:hover:ring-[#22C55E]/15",
                       selected === src
                         ? "border-[#22C55E]/60 ring-2 ring-[#22C55E]/40 shadow-[0_6px_18px_-6px_rgba(34,197,94,0.28),0_18px_36px_-14px_rgba(0,0,0,0.55)]"
                         : "hover:border-white/[0.12]",
                       busy && "pointer-events-none opacity-55",
                     )}
                   >
+                    {/* Selected checkmark */}
+                    {selected === src && (
+                      <span className="absolute right-2.5 top-2.5 z-10 flex size-5 items-center justify-center rounded-full bg-[#22C55E] shadow-md">
+                        <Check className="size-3 text-white" />
+                      </span>
+                    )}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={src}
@@ -853,39 +883,50 @@ export function LogoGeneratorDialog(props: {
                   </button>
                 ))}
               </div>
+            ) : null}
 
-              {/* ── Action buttons ──────────────────────────────────────── */}
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-stretch">
+            {/* Action buttons — only when we have results */}
+            {images.length > 0 && (
+              <div className="space-y-3">
+                {/* Primary: apply */}
                 <button
                   type="button"
                   disabled={busy || !selected}
                   onClick={() => selected && void applyIcon(selected)}
-                  className="inline-flex min-h-[40px] min-w-[10rem] flex-1 items-center justify-center rounded-xl bg-[#22C55E] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_20px_-8px_rgba(34,197,94,0.45)] transition hover:bg-[#16a34a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#22C55E] py-3 text-sm font-semibold text-white shadow-[0_6px_20px_-8px_rgba(34,197,94,0.45)] transition hover:bg-[#16a34a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   {t("useThis")}
                 </button>
 
+                {/* Download row or free lock */}
                 {isFreePlan ? (
-                  /* ── Locked download banner for free plan ──────────── */
-                  <div className="flex flex-1 items-center gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-2.5 sm:flex-none">
-                    <Lock className="size-4 shrink-0 text-amber-300/80" aria-hidden />
+                  <div className="flex items-center gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3">
+                    <Lock className="size-4 shrink-0 text-amber-300/75" aria-hidden />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold text-amber-200/90">
                         {t("downloadLockedTitle")}
                       </p>
-                      <p className="mt-0.5 text-[11px] leading-snug text-amber-200/60">
+                      <p className="mt-0.5 text-[11px] leading-snug text-amber-200/55">
                         {t("downloadLockedBody")}
                       </p>
                     </div>
+                    {props.onRequestUpgrade && (
+                      <button
+                        type="button"
+                        onClick={props.onRequestUpgrade}
+                        className="shrink-0 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold text-amber-300/90 transition hover:bg-amber-400/18"
+                      >
+                        Upgrade
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  /* ── Download buttons for paid plans ────────────────── */
-                  <>
+                  <div className="flex gap-2.5">
                     <button
                       type="button"
                       disabled={busy || !selected}
                       onClick={() => selected && void downloadPlay512(selected)}
-                      className="inline-flex min-h-[40px] min-w-[10rem] flex-1 items-center justify-center rounded-xl border border-white/20 bg-white/[0.04] px-5 py-2.5 text-sm font-semibold text-white/90 transition hover:border-[#22C55E]/45 hover:bg-[#22C55E]/12 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                      className="flex-1 rounded-xl border border-white/[0.12] bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-white/80 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-1 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       {t("download512")}
                     </button>
@@ -893,20 +934,35 @@ export function LogoGeneratorDialog(props: {
                       type="button"
                       disabled={busy || !selected}
                       onClick={() => selected && void downloadHighRes(selected)}
-                      className="inline-flex min-h-[40px] min-w-[10rem] flex-1 items-center justify-center rounded-xl border border-white/20 bg-white/[0.04] px-5 py-2.5 text-sm font-semibold text-white/90 transition hover:border-[#22C55E]/45 hover:bg-[#22C55E]/12 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                      className="flex-1 rounded-xl border border-white/[0.12] bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-white/80 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#ecfdf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/45 focus-visible:ring-offset-1 focus-visible:ring-offset-[#0c1018] disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       {t("download1024")}
                     </button>
-                  </>
+                  </div>
                 )}
+
+                <p className="text-center text-[11px] leading-relaxed text-[#86efac]/70 sm:text-start sm:text-xs">
+                  {t("playStoreIconNote")}
+                </p>
+                <p className="text-[11px] leading-relaxed text-white/35 sm:text-xs">
+                  {t("downloadHint")}
+                </p>
               </div>
-              <p className="text-balance text-center text-[11px] leading-relaxed text-[#86efac]/88 sm:text-start sm:text-xs">
-                {t("playStoreIconNote")}
-              </p>
-              <p className="text-[11px] leading-relaxed text-white/42 sm:text-xs">{t("downloadHint")}</p>
+            )}
+
+            {/* Back to configure */}
+            <div className="border-t border-white/[0.06] pt-4">
+              <button
+                type="button"
+                onClick={() => setPage(1)}
+                className="flex items-center gap-1.5 text-xs text-white/38 transition hover:text-white/60 focus-visible:outline-none"
+              >
+                <ArrowLeft className="size-3.5" aria-hidden />
+                {t("backToConfigure")}
+              </button>
             </div>
-          ) : null}
-        </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

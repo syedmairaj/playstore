@@ -1840,7 +1840,11 @@
       "customPromptLockedPlaceholder": "Upgrade to Pro to describe your own icon concept",
       "customPromptUpgradeCta": "Upgrade to Pro to use custom prompts",
       "customPromptHint": "Describe the visual subject or motif you want (max 300 chars). Leave blank for AI-driven concepts.",
-      "creditsCustomNote": "(+2 for custom concept)"
+      "creditsCustomNote": "(+2 for custom concept)",
+      "step1Label": "Configure",
+      "step2Label": "Pick & Download",
+      "step2Title": "Pick your icon",
+      "backToConfigure": "Back to configure"
     }
   },
   "addApp": {

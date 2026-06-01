@@ -1840,7 +1840,11 @@
       "customPromptLockedPlaceholder": "قم بالترقية إلى Pro لوصف مفهوم أيقونتك الخاصة",
       "customPromptUpgradeCta": "قم بالترقية إلى Pro لاستخدام المطالبات المخصصة",
       "customPromptHint": "صف الموضوع البصري أو الرمز الذي تريده (بحد أقصى 300 حرف). اتركه فارغاً للمفاهيم التي يختارها الذكاء الاصطناعي.",
-      "creditsCustomNote": "(+2 للمفهوم المخصص)"
+      "creditsCustomNote": "(+2 للمفهوم المخصص)",
+      "step1Label": "الإعداد",
+      "step2Label": "اختر وحمّل",
+      "step2Title": "اختر أيقونتك",
+      "backToConfigure": "العودة إلى الإعداد"
     }
   },
   "addApp": {
