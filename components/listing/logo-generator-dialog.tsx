@@ -652,13 +652,10 @@ export function LogoGeneratorDialog(props: {
               </p>
             </DialogHeader>
 
-            {/* Credits pill */}
+            {/* Credits pill — always shows both tiers so users know upfront */}
             <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/20 bg-amber-400/[0.07] px-3 py-1.5 text-xs font-medium text-amber-200/85">
               <Sparkles className="size-3 shrink-0" aria-hidden />
-              {t("creditsWarning", { credits: creditCost })}
-              {!isFreePlan && customPrompt.trim() && (
-                <span className="text-amber-300/55">{t("creditsCustomNote")}</span>
-              )}
+              {t("creditsWarning")}
             </div>
 
             {/* ── Settings card ──────────────────────────────────────────────── */}

@@ -1786,7 +1786,7 @@
       "selectAppFirstHint": "Select a workspace app first to generate and save a logo.",
       "addWorkspaceAppForLogo": "Add a workspace app above to enable AI logo generation and save it to your app.",
       "inlineHint": "Each run uses {credits, plural, one {# AI credit} other {# AI credits}} to generate four variants.",
-      "creditsWarning": "Each run uses {credits, plural, one {# AI credit} other {# AI credits}}.",
+      "creditsWarning": "10 credits per batch · 12 with custom concept",
       "sizeNote": "Use “Download PNG (512×512)” for Play-ready assets. “High-res” saves the model file as returned (often 1024×1024; never upscaled).",
       "styleLabel": "Visual style",
       "styles": {
