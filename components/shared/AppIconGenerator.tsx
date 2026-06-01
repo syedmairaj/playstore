@@ -18,6 +18,7 @@ import { Loader2, Lock, Sparkles, ArrowLeft, Check } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "@/i18n/navigation";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
+import { saveGeneratedAssetsToVault } from "@/lib/brand-assets/save-to-vault";
 import { buildLogoDownloadFilename } from "@/lib/listing/logo-download-filename";
 import {
   LISTING_LOGO_STYLES,
@@ -262,6 +263,14 @@ export function AppIconGenerator(props: AppIconGeneratorProps) {
       setImages(urls);
       if (urls.length > 0) {
         await persistState({ generatedUrls: urls, selectedUrl: null, updatedAt: new Date().toISOString() });
+        // Fire-and-forget: save to Vault in background — doesn't block UI
+        void saveGeneratedAssetsToVault({
+          workspaceId: props.workspaceId,
+          appId: props.appId,
+          assetType: "icon",
+          imageUrls: urls,
+          meta: { style, brandColor: brandColor || undefined, hasCustomPrompt: !!customPrompt.trim() },
+        });
       }
       if (typeof ok.meta?.creditsRemaining === "number") props.onCreditsRemaining(ok.meta.creditsRemaining);
       toast.success(t("generateSuccess"));

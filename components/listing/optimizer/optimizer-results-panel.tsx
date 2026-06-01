@@ -634,15 +634,24 @@ export function OptimizerResultsPanel({
                   : t("logo.addWorkspaceAppForLogo")}
               </p>
             ) : null}
-            {/* Brand Assets deep-link — seamless navigation to the full Brand Assets module */}
+            {/* Brand Assets links */}
             {workspaceId && (
-              <Link
-                href={`/app/${workspaceId}/brand-assets`}
-                className="inline-flex items-center gap-1 text-[11px] text-emerald-400/60 transition hover:text-emerald-300/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/55"
-              >
-                {t("logo.openBrandAssets")}
-                <span aria-hidden>→</span>
-              </Link>
+              <div className="flex flex-wrap items-center gap-3">
+                <Link
+                  href={`/app/${workspaceId}/brand-assets`}
+                  className="inline-flex items-center gap-1 text-[11px] text-emerald-400/60 transition hover:text-emerald-300/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/55"
+                >
+                  {t("logo.openBrandAssets")}
+                  <span aria-hidden>→</span>
+                </Link>
+                <Link
+                  href={`/app/${workspaceId}/brand-assets?mode=vault`}
+                  className="inline-flex items-center gap-1 text-[11px] text-white/35 transition hover:text-white/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/55"
+                >
+                  {t("logo.viewVault")}
+                  <span aria-hidden>→</span>
+                </Link>
+              </div>
             )}
           </div>
         </div>

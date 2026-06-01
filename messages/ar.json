@@ -1852,7 +1852,8 @@
       "mockupHintLink": "افتح في محسّن القائمة ←",
       "setAsAppIcon": "تعيين كأيقونة التطبيق",
       "iconSaved": "تم حفظ أيقونة التطبيق",
-      "iconSavedDesc": "تم تعيين هذه الأيقونة لتطبيقك. افتح محسّن القائمة لمعاينتها على نموذج الهاتف."
+      "iconSavedDesc": "تم تعيين هذه الأيقونة لتطبيقك. افتح محسّن القائمة لمعاينتها على نموذج الهاتف.",
+      "viewVault": "عرض المخزن"
     }
   },
   "brandAssets": {
@@ -1923,7 +1924,26 @@
     "upgrade": "ترقية",
     "backToConfigure": "العودة إلى الإعداد",
     "loadingApps": "جاري تحميل التطبيقات…",
-    "appSelectorLabel": "اختر التطبيق"
+    "appSelectorLabel": "اختر التطبيق",
+    "modeGenerate": "توليد",
+    "modeVault": "المخزن",
+    "vault": {
+      "filterAll": "الكل",
+      "filterIcons": "الأيقونات",
+      "filterBanners": "البانرات",
+      "typeIcon": "أيقونة",
+      "typeBanner": "بانر",
+      "empty": "لا توجد أصول بعد",
+      "emptyHint": "ولِّد أيقونات أو بانرات — ستُحفظ هنا تلقائياً.",
+      "loadMore": "تحميل المزيد",
+      "refresh": "تحديث",
+      "download": "تنزيل",
+      "delete": "حذف",
+      "deleteConfirm": "حذف هذا الأصل؟ لا يمكن التراجع عن هذا الإجراء.",
+      "deleted": "تم حذف الأصل",
+      "deleteError": "تعذّر حذف الأصل. حاول مرة أخرى.",
+      "loadError": "تعذّر تحميل أصول المخزن."
+    }
   },
   "addApp": {
     "title": "إضافة تطبيق جديد",

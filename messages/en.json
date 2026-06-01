@@ -1852,7 +1852,8 @@
       "mockupHintLink": "Open in AI Listing Optimizer →",
       "setAsAppIcon": "Set as App Icon",
       "iconSaved": "App icon saved",
-      "iconSavedDesc": "This icon is now set as your app icon. Open AI Listing Optimizer to preview it on the phone mockup."
+      "iconSavedDesc": "This icon is now set as your app icon. Open AI Listing Optimizer to preview it on the phone mockup.",
+      "viewVault": "View Vault"
     }
   },
   "brandAssets": {
@@ -1923,7 +1924,26 @@
     "upgrade": "Upgrade",
     "backToConfigure": "Back to configure",
     "loadingApps": "Loading apps…",
-    "appSelectorLabel": "Select app"
+    "appSelectorLabel": "Select app",
+    "modeGenerate": "Generate",
+    "modeVault": "My Vault",
+    "vault": {
+      "filterAll": "All",
+      "filterIcons": "Icons",
+      "filterBanners": "Banners",
+      "typeIcon": "Icon",
+      "typeBanner": "Banner",
+      "empty": "No assets yet",
+      "emptyHint": "Generate icons or banners — they'll be saved here automatically.",
+      "loadMore": "Load more",
+      "refresh": "Refresh",
+      "download": "Download",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this asset? This cannot be undone.",
+      "deleted": "Asset deleted",
+      "deleteError": "Could not delete asset. Try again.",
+      "loadError": "Could not load vault assets."
+    }
   },
   "addApp": {
     "title": "Add New App",

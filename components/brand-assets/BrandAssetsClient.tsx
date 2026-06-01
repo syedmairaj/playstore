@@ -12,13 +12,16 @@
  */
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Sparkles, ArrowLeft, Check, Lock, Image as ImageIcon, Layers, Zap, ChevronDown } from "lucide-react";
+import { Loader2, Sparkles, ArrowLeft, Check, Lock, Image as ImageIcon, Layers, Zap, ChevronDown, Archive } from "lucide-react";
 import { toast } from "sonner";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import { workspaceAppsQueryKey } from "@/hooks/use-app-limits";
 import { parseLogoGeneratorMetadata } from "@/lib/apps/logo-generator-metadata";
+import { saveGeneratedAssetsToVault } from "@/lib/brand-assets/save-to-vault";
+import { VaultGrid } from "@/components/brand-assets/VaultGrid";
 import { cn } from "@/lib/utils";
 import { AppIconGenerator } from "@/components/shared/AppIconGenerator";
 
@@ -92,7 +95,13 @@ export function BrandAssetsClient(props: {
   const category = selectedApp?.category ?? "";
   const shortDescription = selectedApp?.short_description ?? "";
 
-  // ── Tab state ─────────────────────────────────────────────────────────────
+  // ── Top-level mode: Generate vs My Vault ────────────────────────────────
+  const searchParams = useSearchParams();
+  const [mode, setMode] = useState<"generate" | "vault">(
+    searchParams.get("mode") === "vault" ? "vault" : "generate",
+  );
+
+  // ── Tab state (within Generate mode) ─────────────────────────────────────
   const [tab, setTab] = useState<Tab>("logo");
 
   // ── Banner state ──────────────────────────────────────────────────────────
@@ -155,6 +164,15 @@ export function BrandAssetsClient(props: {
       const ok = json as GenOk;
       const urls = ok.images.filter((u) => /^https:\/\//i.test(u)).slice(0, 4);
       setBannerImages(urls);
+      if (urls.length > 0) {
+        void saveGeneratedAssetsToVault({
+          workspaceId: props.workspaceId,
+          appId,
+          assetType: "banner",
+          imageUrls: urls,
+          meta: { style: bannerStyle, brandColor: bannerColor || undefined, theme: bannerTheme || undefined },
+        });
+      }
       if (typeof ok.meta?.creditsRemaining === "number") updateCredits(ok.meta.creditsRemaining);
       toast.success(t("bannersReady"));
     } catch { toast.dismiss(toastId); toast.error(t("networkError")); setBannerPage(1); }
@@ -226,6 +244,30 @@ export function BrandAssetsClient(props: {
           <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{t("pageTitle")}</h1>
           <p className="text-sm leading-relaxed text-white/55 sm:text-base">{t("pageSubtitle")}</p>
         </div>
+
+        {/* ── Generate / My Vault top tabs ─────────────────────────────── */}
+        <div className="mb-8 flex gap-1 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1">
+          {([
+            { key: "generate" as const, label: t("modeGenerate"), icon: <Sparkles className="size-4 shrink-0" aria-hidden /> },
+            { key: "vault"    as const, label: t("modeVault"),    icon: <Archive className="size-4 shrink-0" aria-hidden /> },
+          ]).map(({ key, label, icon }) => (
+            <button key={key} type="button" onClick={() => setMode(key)}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors duration-150 focus-visible:outline-none",
+                mode === key ? "bg-[#22C55E]/15 text-[#86efac] ring-1 ring-[#22C55E]/30" : "text-white/45 hover:text-white/70",
+              )}>
+              {icon}{label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── My Vault ─────────────────────────────────────────────────── */}
+        {mode === "vault" && (
+          <VaultGrid workspaceId={props.workspaceId} appId={appId || undefined} />
+        )}
+
+        {/* ── Generate mode ────────────────────────────────────────────── */}
+        {mode === "generate" && (<>
 
         {/* ── App selector ────────────────────────────────────────────────── */}
         <div className="mb-8">
@@ -479,6 +521,7 @@ export function BrandAssetsClient(props: {
             )}
           </div>
         )}
+        </>)} {/* end Generate mode */}
       </div>
     </div>
   );
