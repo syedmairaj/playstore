@@ -18,6 +18,7 @@ import { Loader2, Sparkles, ArrowLeft, Check, Lock, Image as ImageIcon, Layers, 
 import { toast } from "sonner";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import { workspaceAppsQueryKey } from "@/hooks/use-app-limits";
+import { parseLogoGeneratorMetadata } from "@/lib/apps/logo-generator-metadata";
 import { cn } from "@/lib/utils";
 import { AppIconGenerator } from "@/components/shared/AppIconGenerator";
 
@@ -25,7 +26,7 @@ import { AppIconGenerator } from "@/components/shared/AppIconGenerator";
 type Tab = "logo" | "banner";
 type Page = 1 | 2;
 
-type AppRow = { id: string; name: string; category?: string | null; short_description?: string | null };
+type AppRow = { id: string; name: string; category?: string | null; short_description?: string | null; metadata?: Record<string, unknown> | null };
 type GenOk = { ok: true; images: string[]; meta?: { creditsCharged?: number; creditsRemaining?: number } };
 type GenErr = { ok: false; error: { code?: string; message: string; remaining?: number; required?: number } };
 
@@ -316,7 +317,9 @@ export function BrandAssetsClient(props: {
                 shortDescription={shortDescription}
                 creditsRemaining={credits}
                 onCreditsRemaining={updateCredits}
-                onIconSelected={() => { /* page mode: no live mockup */ }}
+                onIconSelected={() => { /* page mode: no live mockup to update */ }}
+                onIconPersisted={() => { void appsQuery.refetch(); }}
+                initialLogoGenerator={parseLogoGeneratorMetadata(selectedApp?.metadata ?? null)}
                 plan={props.plan}
                 onRequestUpgrade={props.onRequestUpgrade}
               />
