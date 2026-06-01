@@ -14,8 +14,14 @@ export const AI_CREDIT_COSTS = {
    * per-generation allowance costs this many credits (see `keyword_track_ai_free_per_generation`).
    */
   keyword_track_ai_per_keyword: 2,
-  /** AI app icon batch (4 variants) via Runware FLUX.1 [dev] image inference */
+  /** AI app icon batch (4 variants) via Runware FLUX.1 [dev] — basic generation */
   listing_logo_generation: 10,
+  /** AI app icon batch with user-supplied custom prompt — paid plan only */
+  listing_logo_generation_custom: 12,
+  /** Google Play feature graphic banner (1024×500, 4 variants) via Runware */
+  banner_generation: 20,
+  /** Brand Kit batch: logo batch + banner batch in one click (30 = 10 + 20) */
+  brand_kit_batch: 30,
   /** Reserved for bundled ASO workflows */
   aso_growth_pack: 5,
   ad_copy: 1,
