@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Loader2, Lock, Sparkles, ArrowLeft, Check } from "lucide-react";
 import { toast } from "sonner";
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import {
   Dialog,
   DialogContent,
@@ -569,6 +570,12 @@ export function LogoGeneratorDialog(props: {
         )}
         overlayClassName="bg-black/70 backdrop-blur-md"
       >
+        {/* Always-present DialogTitle — visible on page 1, sr-only on page 2 */}
+        {page === 2 ? (
+          <VisuallyHidden.Root asChild>
+            <DialogTitle>{t("title")}</DialogTitle>
+          </VisuallyHidden.Root>
+        ) : null}
 
         {/* ── Step bar ─────────────────────────────────────────────────────── */}
         <div className="flex items-stretch border-b border-white/[0.07]">
