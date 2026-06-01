@@ -1868,7 +1868,7 @@
     "noAppTitle": "No app selected",
     "noAppBody": "Add an app in the AI Listing Optimizer first, then come back here to generate brand assets.",
     "logoCredits": "10 credits per batch · 12 with custom concept",
-    "bannerCredits": "20 credits per batch · 4 variants · 1024×500 px",
+    "bannerCredits": "20 credits per batch · 4 variants · 1024×576 px (crop to 1024×500 for Play Store feature graphic slot)",
     "styleLabel": "Visual style",
     "styles": {
       "Minimalist": "Minimalist",
@@ -1894,7 +1894,7 @@
     "bannerThemeLabel": "Banner theme / mood (optional)",
     "bannerThemePlaceholder": "e.g. dark space, tropical summer, clean white tech…",
     "bannerThemeHint": "Describe a mood or visual theme for the banner background.",
-    "bannerSizeNote": "Generates 4 variants at 1024×500 px — the exact size required by Google Play for the feature graphic slot.",
+    "bannerSizeNote": "Generates at 1024×576 px (16:9). Crop 38px from top and bottom to get the exact 1024×500 px required by Google Play Store for the feature graphic slot.",
     "bannerDownloadHint": "Download the PNG and upload directly to Google Play Console → Store listing → Feature graphic.",
     "step1Label": "Configure",
     "step2Label": "Pick & Download",

@@ -386,8 +386,11 @@ export async function generateAppBanners(input: {
       theme: input.theme,
     }),
     negativePrompt: negPrompt,
+    // FLUX only supports specific dimension pairs — 1024×500 is invalid and causes a 502.
+    // 1024×576 (16:9) is the closest supported landscape, ideal for Play Store feature graphic.
+    // Users export at 1024×500 by cropping 38px top/bottom — noted in the UI.
     width: 1024,
-    height: 500,
+    height: 576,
     steps,
     outputFormat: "PNG" as const,
     outputType: "URL" as const,
