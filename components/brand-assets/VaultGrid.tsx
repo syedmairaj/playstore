@@ -18,8 +18,8 @@ function formatDate(iso: string, locale: string): string {
 }
 
 function AssetCard({
-  asset, onDelete, locale,
-}: { asset: VaultAsset; onDelete: (id: string) => void; locale: string }) {
+  asset, onDelete, locale, workspaceId,
+}: { asset: VaultAsset; onDelete: (id: string) => void; locale: string; workspaceId: string }) {
   const t = useTranslations("brandAssets.vault");
   const [deleting, setDeleting] = useState(false);
   const isWide = asset.assetType === "banner";
@@ -28,7 +28,7 @@ function AssetCard({
     if (!confirm(t("deleteConfirm"))) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/brand-assets/${asset.id}?workspaceId=${encodeURIComponent("")}`, {
+      const res = await fetch(`/api/brand-assets/${asset.id}?workspaceId=${encodeURIComponent(workspaceId)}`, {
         method: "DELETE",
       });
       if (!res.ok) { toast.error(t("deleteError")); return; }
@@ -188,7 +188,7 @@ export function VaultGrid({
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {assets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} onDelete={handleDeleted} locale={locale} />
+              <AssetCard key={asset.id} asset={asset} onDelete={handleDeleted} locale={locale} workspaceId={workspaceId} />
             ))}
           </div>
           {hasMore && (
