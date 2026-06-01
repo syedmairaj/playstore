@@ -1808,7 +1808,7 @@
       "insufficientTitle": "رصيد الذكاء الاصطناعي غير كافٍ",
       "insufficientBody": "لديك {rem, plural, one {رصيد واحد} other {# أرصدة}}؛ هذا التشغيل يحتاج {req, plural, one {رصيدًا واحدًا} other {# أرصدة}}.",
       "pickHint": "اضغط على أيقونة لتحديدها، ثم استخدم الإجراءات أدناه.",
-      "useThis": "استخدم هذه الأيقونة",
+      "useThis": "تطبيق على النموذج",
       "changeLogo": "تغيير أيقونة التطبيق",
       "download512": "تنزيل PNG (٥١٢×٥١٢)",
       "playStoreIconNote": "يُعدّ مقاس 512×512 مثاليًا لرفع أيقونة المتجر في Google Play.",

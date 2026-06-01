@@ -1808,7 +1808,7 @@
       "insufficientTitle": "Not enough AI credits",
       "insufficientBody": "You have {rem, plural, one {# credit} other {# credits}}; this run needs {req, plural, one {# credit} other {# credits}}.",
       "pickHint": "Tap an icon to select it, then use the actions below.",
-      "useThis": "Use this icon",
+      "useThis": "Apply to Mockup",
       "changeLogo": "Change App Icon",
       "download512": "Download PNG (512×512)",
       "playStoreIconNote": "512×512 is ideal for Google Play Store icon upload.",
