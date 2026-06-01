@@ -634,6 +634,16 @@ export function OptimizerResultsPanel({
                   : t("logo.addWorkspaceAppForLogo")}
               </p>
             ) : null}
+            {/* Brand Assets deep-link — seamless navigation to the full Brand Assets module */}
+            {workspaceId && (
+              <Link
+                href={`/app/${workspaceId}/brand-assets`}
+                className="inline-flex items-center gap-1 text-[11px] text-emerald-400/60 transition hover:text-emerald-300/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/55"
+              >
+                {t("logo.openBrandAssets")}
+                <span aria-hidden>→</span>
+              </Link>
+            )}
           </div>
         </div>
       </div>
