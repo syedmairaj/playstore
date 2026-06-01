@@ -10,9 +10,15 @@ export type WorkspaceAppListRow = {
   metadata?: Record<string, unknown> | null;
   /** HTTPS app icon when `apps.icon_url` column exists (preferred over metadata). */
   icon_url?: string | null;
-  /** Play Store category — used for AI icon/banner generation. */
+  /**
+   * Play Store category — extracted from metadata.category.
+   * Used for AI icon/banner generation in Brand Assets.
+   */
   category?: string | null;
-  /** Play Store short description — used for AI generation context. */
+  /**
+   * Play Store short description — extracted from metadata.short_description.
+   * Used for AI generation context in Brand Assets.
+   */
   short_description?: string | null;
 };
 
@@ -29,9 +35,26 @@ function looksLikeMissingColumn(message: string): boolean {
   );
 }
 
+/** Extract category and short_description from a metadata JSON blob. */
+function metaStr(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function extractMeta(r: Record<string, unknown>): { category: string | null; short_description: string | null } {
+  const meta = (r.metadata as Record<string, unknown> | null | undefined) ?? {};
+  return {
+    category: metaStr(meta.category),
+    short_description:
+      metaStr(meta.short_description) ??
+      metaStr((meta as Record<string, unknown>).shortDescription),
+  };
+}
+
 /**
  * Lists workspace apps for pickers and the listing optimizer.
  * If `apps.metadata` is missing in the DB, falls back to `id,name` without failing the page.
+ * category and short_description are extracted from the metadata JSON blob —
+ * they are NOT separate DB columns.
  */
 export async function queryWorkspaceAppsList(
   supabase: SupabaseClient,
@@ -44,61 +67,80 @@ export async function queryWorkspaceAppsList(
       .eq("workspace_id", workspaceId)
       .order("name", { ascending: true });
 
-  // Helper to extract category/short_description safely from a raw row
-  function extractAppFields(r: Record<string, unknown>): WorkspaceAppListRow {
-    return {
-      id: String(r.id ?? ""),
-      name: String(r.name ?? ""),
-      package_name:
-        typeof r.package_name === "string" && r.package_name.trim()
-          ? r.package_name.trim()
-          : null,
-      target_countries: Array.isArray(r.target_countries)
-        ? (r.target_countries as string[])
-        : null,
-      metadata:
-        (r.metadata as Record<string, unknown> | null | undefined) ?? null,
-      icon_url:
-        typeof r.icon_url === "string" && r.icon_url.trim()
-          ? r.icon_url.trim()
-          : null,
-      category:
-        typeof r.category === "string" && r.category.trim()
-          ? r.category.trim()
-          : null,
-      short_description:
-        typeof r.short_description === "string" && r.short_description.trim()
-          ? r.short_description.trim()
-          : null,
-    };
-  }
-
-  const withIcon = await base("id,name,package_name,target_countries,metadata,icon_url,category,short_description");
+  const withIcon = await base("id,name,package_name,target_countries,metadata,icon_url");
   if (!withIcon.error) {
     const raw = (withIcon.data ?? []) as unknown as Array<Record<string, unknown>>;
-    return { rows: raw.map(extractAppFields), error: null };
+    const rows = raw.map((r) => {
+      const { category, short_description } = extractMeta(r);
+      return {
+        id: String(r.id ?? ""),
+        name: String(r.name ?? ""),
+        package_name:
+          typeof r.package_name === "string" && r.package_name.trim()
+            ? r.package_name.trim()
+            : null,
+        target_countries: Array.isArray(r.target_countries)
+          ? (r.target_countries as string[])
+          : null,
+        metadata: (r.metadata as Record<string, unknown> | null | undefined) ?? null,
+        icon_url:
+          typeof r.icon_url === "string" && r.icon_url.trim()
+            ? r.icon_url.trim()
+            : null,
+        category,
+        short_description,
+      };
+    });
+    return { rows, error: null };
   }
 
   if (looksLikeMissingColumn(withIcon.error.message ?? "")) {
-    const metaOnly = await base("id,name,package_name,target_countries,metadata,category,short_description");
+    const metaOnly = await base("id,name,package_name,target_countries,metadata");
     if (!metaOnly.error) {
       const raw = (metaOnly.data ?? []) as unknown as Array<Record<string, unknown>>;
-      return {
-        rows: raw.map((r) => ({ ...extractAppFields(r), icon_url: null })),
-        error: null,
-      };
+      const rows = raw.map((r) => {
+        const { category, short_description } = extractMeta(r);
+        return {
+          id: String(r.id ?? ""),
+          name: String(r.name ?? ""),
+          package_name:
+            typeof r.package_name === "string" && r.package_name.trim()
+              ? r.package_name.trim()
+              : null,
+          target_countries: Array.isArray(r.target_countries)
+            ? (r.target_countries as string[])
+            : null,
+          metadata: (r.metadata as Record<string, unknown> | null | undefined) ?? null,
+          icon_url: null as null,
+          category,
+          short_description,
+        };
+      });
+      return { rows, error: null };
     }
 
     if (looksLikeMissingColumn(metaOnly.error.message ?? "")) {
-      const names = await base("id,name,package_name,target_countries,category,short_description");
+      const names = await base("id,name,package_name,target_countries");
       if (names.error) {
         return { rows: [], error: { message: names.error.message } };
       }
       const raw = (names.data ?? []) as unknown as Array<Record<string, unknown>>;
-      return {
-        rows: raw.map((r) => ({ ...extractAppFields(r), metadata: null, icon_url: null })),
-        error: null,
-      };
+      const rows = raw.map((r) => ({
+        id: String(r.id ?? ""),
+        name: String(r.name ?? ""),
+        package_name:
+          typeof r.package_name === "string" && r.package_name.trim()
+            ? r.package_name.trim()
+            : null,
+        target_countries: Array.isArray(r.target_countries)
+          ? (r.target_countries as string[])
+          : null,
+        metadata: null as null,
+        icon_url: null as null,
+        category: null as null,
+        short_description: null as null,
+      }));
+      return { rows, error: null };
     }
 
     return { rows: [], error: { message: metaOnly.error.message } };
