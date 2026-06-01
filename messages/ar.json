@@ -1847,7 +1847,9 @@
       "backToConfigure": "العودة إلى الإعداد",
       "openBrandAssets": "إدارة الأصول البصرية",
       "upgrade": "ترقية",
-      "iconUpdated": "تم تحديث أيقونة التطبيق"
+      "iconUpdated": "تم تحديث أيقونة التطبيق",
+      "mockupHint": "هل تريد معاينة الأيقونة على نموذج هاتف؟",
+      "mockupHintLink": "افتح في محسّن القائمة ←"
     }
   },
   "brandAssets": {

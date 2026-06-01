@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Loader2, Lock, Sparkles, ArrowLeft, Check } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "@/i18n/navigation";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import { buildLogoDownloadFilename } from "@/lib/listing/logo-download-filename";
 import {
@@ -590,6 +591,19 @@ export function AppIconGenerator(props: AppIconGeneratorProps) {
 
               <p className="text-center text-[11px] leading-relaxed text-[#86efac]/70 sm:text-start sm:text-xs">{t("playStoreIconNote")}</p>
               <p className="text-[11px] leading-relaxed text-white/35 sm:text-xs">{t("downloadHint")}</p>
+
+              {/* Page mode only: guide users to Listing Optimizer for mockup preview */}
+              {!props.onRequestClose && props.workspaceId && (
+                <p className="text-[11px] leading-snug text-white/40 sm:text-xs">
+                  {t("mockupHint")}{" "}
+                  <Link
+                    href={`/app/${props.workspaceId}/listing-optimizer`}
+                    className="underline underline-offset-2 transition hover:text-white/70"
+                  >
+                    {t("mockupHintLink")}
+                  </Link>
+                </p>
+              )}
             </div>
           )}
 

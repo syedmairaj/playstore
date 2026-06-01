@@ -1847,7 +1847,9 @@
       "backToConfigure": "Back to configure",
       "openBrandAssets": "Manage in Brand Assets",
       "upgrade": "Upgrade",
-      "iconUpdated": "App icon updated"
+      "iconUpdated": "App icon updated",
+      "mockupHint": "Want to preview this icon on a phone mockup?",
+      "mockupHintLink": "Open in AI Listing Optimizer →"
     }
   },
   "brandAssets": {
