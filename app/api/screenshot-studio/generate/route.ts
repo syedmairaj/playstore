@@ -69,7 +69,10 @@ const bodySchema = z.object({
   category: z.string().trim().max(120).default(""),
   shortDescription: z.string().trim().max(2000).optional(),
   style: z.enum(LISTING_LOGO_STYLES),
+  /** Primary brand colour — dominant background tint */
   brandColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  /** Secondary brand colour — used for gradient stop 2 */
+  primaryColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   theme: z.string().trim().max(150).optional(),
   headlineOverride: z.string().trim().max(40).optional(),
   sublineOverride: z.string().trim().max(70).optional(),
@@ -79,9 +82,16 @@ const bodySchema = z.object({
 
 // ─── Negative prompt ──────────────────────────────────────────────────────────
 
+// Every term that could cause FLUX to render a phone/device in the background.
+// The background must be PURE atmosphere — the Android frame is composited by
+// the canvas layer, never drawn by the AI model.
 const BASE_NEGATIVE =
+  "phone, smartphone, mobile phone, iPhone, Apple iPhone, iOS device, " +
+  "Android phone, device mockup, phone frame, phone outline, phone silhouette, " +
+  "screen bezel, notch, dynamic island, home button, phone screen, " +
+  "tablet, iPad, laptop, computer, monitor, device, gadget, " +
   "text, letters, words, fonts, typography, headlines, captions, watermark, " +
-  "phone frame, device mockup, screen bezel, UI chrome, app interface, " +
+  "UI chrome, app interface, app screenshot, interface mockup, " +
   "amateurish, clip art, stock photo look, AI-generated artefacts, " +
   "blurry, noisy, grainy, oversaturated, distorted, cheap, cluttered, " +
   "portrait of person, realistic face, photorealistic human, " +
@@ -255,6 +265,7 @@ async function runBackground(opts: {
   shortDescription?: string;
   style: string;
   brandColor?: string;
+  primaryColor?: string;
   theme?: string;
   headlineOverride?: string;
   sublineOverride?: string;
@@ -277,38 +288,55 @@ async function runBackground(opts: {
 
     const {
       jobId, userId, workspaceId, appId, appName, category,
-      shortDescription, style, brandColor, theme,
+      shortDescription, style, brandColor, primaryColor, theme,
       headlineOverride, sublineOverride, locale,
     } = opts;
 
-    // ── Tier 1: listing lookup ───────────────────────────────────────────
+    // ── Tier 1: full listing intelligence lookup ─────────────────────────
+    // Pull every signal the Listing Optimizer generated so the screenshots
+    // are semantically synchronized with the store listing.
     let listingTitle: string | undefined;
     let listingShortDesc: string | undefined;
     let listingFeatures: string | undefined;
+    let screenshotCaptions: string[] | undefined;
+    let keywordSuggestions: string[] | undefined;
+    let strategySummary: string | undefined;
+    let ctaSuggestions: string[] | undefined;
     let optimizedForConversion = false;
 
     try {
-      // Use a fresh server Supabase client for the background context
-      const { createClient: createServerClient } = await import(
-        "@/lib/supabase/server"
-      );
+      const { createClient: createServerClient } = await import("@/lib/supabase/server");
       const supabase = await createServerClient();
-      const hydration = await loadLatestListingHydrationForApp(
-        supabase, workspaceId, appId,
-      );
+      const hydration = await loadLatestListingHydrationForApp(supabase, workspaceId, appId);
       if (hydration?.output?.title) {
-        listingTitle = hydration.output.title;
+        listingTitle     = hydration.output.title;
         listingShortDesc = hydration.output.shortDescription ?? undefined;
-        listingFeatures = hydration.appFeatures?.trim() || undefined;
+        listingFeatures  = hydration.appFeatures?.trim() || undefined;
+
+        // Screenshot captions: up to 5 pre-optimized slot captions
+        if (Array.isArray(hydration.output.screenshotCaptions) && hydration.output.screenshotCaptions.length > 0) {
+          screenshotCaptions = hydration.output.screenshotCaptions as string[];
+        }
+        // Top keywords for theme alignment
+        if (Array.isArray(hydration.output.keywordSuggestions) && hydration.output.keywordSuggestions.length > 0) {
+          keywordSuggestions = hydration.output.keywordSuggestions as string[];
+        }
+        // Strategic positioning summary
+        strategySummary = (hydration.output.strategySummary ?? hydration.output.strategicNote) as string | undefined;
+        // CTA suggestions
+        if (Array.isArray(hydration.output.ctaSuggestions) && hydration.output.ctaSuggestions.length > 0) {
+          ctaSuggestions = hydration.output.ctaSuggestions as string[];
+        }
         optimizedForConversion = true;
       }
-    } catch { /* non-fatal */ }
+    } catch { /* non-fatal — falls through to Tier 2 */ }
 
-    // ── Gemini: 6-slide narrative arc (single call) ──────────────────────
+    // ── Gemini: 6-slide narrative arc, synchronized with listing themes ──
     const pack = await generateScreenshotPack({
       appName, category,
       shortDescription: listingShortDesc ?? shortDescription,
       listingTitle, features: listingFeatures,
+      screenshotCaptions, keywordSuggestions, strategySummary, ctaSuggestions,
       style, brandColor, theme,
       headlineOverride, sublineOverride,
       locale, optimizedForConversion,
@@ -323,19 +351,22 @@ async function runBackground(opts: {
           headline: slide.headline,
           subline: slide.subline,
           uiFocus: slide.uiFocus,
-          style, brandColor, locale,
-          slideIndex: i,
+          style, brandColor, primaryColor,
+          locale, slideIndex: i,
+          inferredMood: pack.inferredMood,
         }).catch((): LayoutMap => ({
           backgroundPrompt:
-            `${style} atmospheric background for ${category} app, ` +
-            `${brandColor ? `${brandColor} accent, ` : ""}` +
-            "clean professional gradient, generous whitespace, premium quality",
-          negativeAdditions: "",
+            `${style} brand-identity background for ${category} app, ` +
+            `${brandColor ? `dominant ${brandColor} brand color, ` : ""}` +
+            "identity-synced premium gradient, generous whitespace, top-10 app quality",
+          negativeAdditions: "phone, smartphone, iPhone, Android phone, device, mockup, screen, bezel, notch, generic, template, clip-art, amateurish",
           textPosition: "bottom",
           textColor: "#ffffff",
           accentColor: brandColor ?? "#22C55E",
-          backgroundMood: "modern gradient",
-          uiMockDescription: `${appName} main screen`,
+          accentColorSecondary: primaryColor ?? "#16a34a",
+          backgroundMood: "modern brand gradient",
+          uiMockDescription: `${appName} main dashboard screen`,
+          backgroundLuminance: "dark",
         })),
       ),
     );
@@ -492,7 +523,7 @@ export async function POST(request: NextRequest) {
 
   const {
     workspaceId, appId, appName, category, shortDescription,
-    style, brandColor, theme, headlineOverride, sublineOverride,
+    style, brandColor, primaryColor, theme, headlineOverride, sublineOverride,
   } = input;
 
   // Resolve locale: body → workspace DB fallback
@@ -597,7 +628,7 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       ledgerId: debit.ledgerId,
       workspaceId, appId, appName, category, shortDescription,
-      style, brandColor, theme, headlineOverride, sublineOverride, locale,
+      style, brandColor, primaryColor, theme, headlineOverride, sublineOverride, locale,
       clientIp,
     }),
   );

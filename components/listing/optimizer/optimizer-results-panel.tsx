@@ -837,6 +837,9 @@ export function OptimizerResultsPanel({
                 <p className="text-sm leading-relaxed text-zinc-200/85">
                   {result.abTestVariant.hypothesis}
                 </p>
+                <p className="mt-1.5 text-[11px] leading-snug text-zinc-500">
+                  {t("results.abTestVariant.hypothesisHint")}
+                </p>
               </div>
             </div>
             <p className="mt-3 text-[11px] text-zinc-500">

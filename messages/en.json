@@ -1721,8 +1721,9 @@
         "label": "A/B Title Variant",
         "hint": "Test this alternate title against your current title using Play Store Listing Experiments.",
         "titleBLabel": "Variant B Title",
-        "hypothesisLabel": "Hypothesis",
-        "copy": "Copy Variant B"
+        "hypothesisLabel": "Strategic Positioning",
+        "copy": "Copy Variant B",
+        "hypothesisHint": "Define your target user segment and value hook. This positioning acts as the anchor for all AI-generated assets, ensuring visual and narrative consistency."
       }
     },
     "empty": {
@@ -1972,9 +1973,9 @@
     "screenshotRendering": "Rendering…",
     "screenshotRendersReady": "Screenshots ready — review and export below.",
     "screenshotRenderFailed": "Render failed. Please try again.",
-    "screenshotExportAll": "Export All (Play Store + App Store)",
-    "screenshotExportPlayStore": "Play Store (1080×1920)",
-    "screenshotExportAppStore": "App Store (1242×2208)",
+    "screenshotExportAll": "Export All (Play Store)",
+    "screenshotExportPlayStore": "Play Store · 1080×1920 px · Android only",
+    "screenshotExportAppStore": "",
     "screenshotExportHint": "Phone frame + text are composited at export — preview shows raw background.",
     "screenshotExporting": "Compositing & exporting…",
     "screenshotFromVault": "Last session",
@@ -2012,7 +2013,19 @@
     "screenshotJobProgress": "{done} of {total} slides ready",
     "screenshotJobCompleted": "All {total} screenshots ready!",
     "screenshotJobFailed": "Generation failed. Credits refunded.",
-    "screenshotJobTimeout": "Taking longer than expected — still working…"
+    "screenshotJobTimeout": "Taking longer than expected — still working…",
+    "primaryColorLabel": "Secondary brand colour (optional)",
+    "primaryColorHint": "Creates a brand gradient. Pairs with your primary colour above.",
+    "androidOnlyBadge": "Android only · 1080×1920 px · Play Store",
+    "brandMirrorBadge": "Brand Mirror — identity-synced generation",
+    "listingSyncBadge": "Synced with AI Listing Optimizer",
+    "listingSyncHint": "Screenshots are semantically aligned with your optimized store listing — same keywords, same strategic theme.",
+    "slotValueProp1": "Value Prop 1",
+    "slotValueProp2": "Value Prop 2",
+    "slotFeature1": "Feature 1",
+    "slotFeature2": "Feature 2",
+    "slotFeature3": "Feature 3",
+    "slotTrustCta": "Trust & CTA"
   },
   "addApp": {
     "title": "Add New App",

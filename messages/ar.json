@@ -1721,8 +1721,9 @@
         "label": "نسخة A/B للعنوان",
         "hint": "اختبر هذا العنوان البديل مقابل عنوانك الحالي باستخدام تجارب قائمة المتجر في Play.",
         "titleBLabel": "عنوان النسخة B",
-        "hypothesisLabel": "الفرضية",
-        "copy": "نسخ النسخة B"
+        "hypothesisLabel": "التموضع الاستراتيجي",
+        "copy": "نسخ النسخة B",
+        "hypothesisHint": "حدّد شريحة المستخدم المستهدف وقيمتك الجوهرية. يعمل هذا التموضع كمرجع لجميع الأصول التي يولّدها الذكاء الاصطناعي، مما يضمن اتساق الصورة والسرد."
       }
     },
     "empty": {
@@ -1972,9 +1973,9 @@
     "screenshotRendering": "جارٍ التصيير…",
     "screenshotRendersReady": "لقطات الشاشة جاهزة — راجع وصدّر.",
     "screenshotRenderFailed": "فشل التصيير. حاول مجدداً.",
-    "screenshotExportAll": "تصدير الكل (Play Store + App Store)",
-    "screenshotExportPlayStore": "Play Store (١٠٨٠×١٩٢٠)",
-    "screenshotExportAppStore": "App Store (١٢٤٢×٢٢٠٨)",
+    "screenshotExportAll": "تصدير الكل (Play Store)",
+    "screenshotExportPlayStore": "Play Store · ١٠٨٠×١٩٢٠ بكسل · Android فقط",
+    "screenshotExportAppStore": "",
     "screenshotExportHint": "يُدمج إطار الهاتف والنص عند التصدير — تعرض المعاينة الخلفية الخام.",
     "screenshotExporting": "جارٍ التركيب والتصدير…",
     "screenshotFromVault": "من الجلسة السابقة",
@@ -2012,7 +2013,19 @@
     "screenshotJobProgress": "{done} من أصل {total} شرائح جاهزة",
     "screenshotJobCompleted": "كل الـ{total} لقطات شاشة جاهزة!",
     "screenshotJobFailed": "فشل التوليد. تم استرداد الأرصدة.",
-    "screenshotJobTimeout": "يستغرق وقتاً أطول من المعتاد — لا يزال يعمل…"
+    "screenshotJobTimeout": "يستغرق وقتاً أطول من المعتاد — لا يزال يعمل…",
+    "primaryColorLabel": "اللون الثانوي للعلامة التجارية (اختياري)",
+    "primaryColorHint": "ينشئ تدرجاً لونياً. يُزاوَج مع لونك الأساسي أعلاه.",
+    "androidOnlyBadge": "Android فقط · ١٠٨٠×١٩٢٠ بكسل · Play Store",
+    "brandMirrorBadge": "Brand Mirror — توليد متزامن مع هوية التطبيق",
+    "listingSyncBadge": "متزامن مع محسّن القائمة بالذكاء الاصطناعي",
+    "listingSyncHint": "لقطات الشاشة متوافقة مع قائمتك المحسّنة — نفس الكلمات المفتاحية، نفس الاستراتيجية.",
+    "slotValueProp1": "القيمة المقترحة ١",
+    "slotValueProp2": "القيمة المقترحة ٢",
+    "slotFeature1": "الميزة ١",
+    "slotFeature2": "الميزة ٢",
+    "slotFeature3": "الميزة ٣",
+    "slotTrustCta": "الثقة والدعوة"
   },
   "addApp": {
     "title": "إضافة تطبيق جديد",

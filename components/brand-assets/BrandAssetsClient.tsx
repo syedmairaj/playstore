@@ -66,118 +66,350 @@ function Skeleton({ aspect }: { aspect: string }) {
   );
 }
 
-// ── SVG Pixel 9 phone frame ───────────────────────────────────────────────────
+// ── SVG Google Pixel 9 Pro — Android-only, hard-coded, no iOS assets ─────────
+//
+// Distinguishing Android authenticity markers vs iPhone/iOS:
+//   ✓ PILL-SHAPED front camera (Pixel 9 Pro) — NOT a circle (generic) or
+//     Dynamic Island cutout (iPhone 15/16). The pill is Android-exclusive.
+//   ✓ USB-C port centred at the bottom — Apple uses Lightning/USB-C but the
+//     port shape + position differ; combined with dual speakers it reads Android.
+//   ✓ DUAL bottom speaker grilles (left + right of USB-C) — iPhones have one
+//     speaker grille slot. Dual symmetric grilles = Android flagship signature.
+//   ✓ Volume UP + Volume DOWN as two separate buttons on the LEFT side — iOS
+//     devices have a mute toggle + two volume buttons; Pixel has two clean bars.
+//   ✓ Power/lock button on the RIGHT — standard Android placement.
+//   ✓ No notch, no Dynamic Island, no Face ID sensor bar — Pixel-correct.
+//
+// Viewbox 320×690 — proportionally scaled by compositor to fill frame zone.
+// Drop-shadow and screen-sheen parameters preserved from previous version.
+
 const PIXEL9_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 690" fill="none">
-  <rect x="8" y="2" width="304" height="686" rx="42" ry="42" fill="#1a1a1a" stroke="#333" stroke-width="2"/>
-  <rect x="18" y="14" width="284" height="662" rx="34" ry="34" fill="#0a0a0a"/>
-  <rect x="0" y="180" width="6" height="60" rx="3" fill="#222"/>
-  <rect x="0" y="260" width="6" height="90" rx="3" fill="#222"/>
-  <rect x="314" y="200" width="6" height="80" rx="3" fill="#222"/>
-  <rect x="136" y="20" width="48" height="14" rx="7" fill="#111"/>
-  <rect x="126" y="672" width="68" height="6" rx="3" fill="#222"/>
-  <rect x="20" y="36" width="280" height="640" rx="30" ry="30" fill="url(#sg)" opacity="0.06"/>
-  <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%" stop-color="#fff" stop-opacity="0.4"/>
-    <stop offset="100%" stop-color="#000" stop-opacity="0"/>
-  </linearGradient></defs>
+  <defs>
+    <linearGradient id="pg9sheen" x1="0" y1="0" x2="0.28" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.7"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="pg9body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#232323"/>
+      <stop offset="100%" stop-color="#141414"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ── Body ── Pixel 9 Pro has slightly flatter sides than rounded predecessors -->
+  <rect x="5" y="1" width="310" height="688" rx="44" ry="44" fill="url(#pg9body)" stroke="#2e2e2e" stroke-width="1.2"/>
+
+  <!-- ── Screen glass inset ── -->
+  <rect x="13" y="11" width="294" height="668" rx="36" ry="36" fill="#040404"/>
+
+  <!-- ── Active screen area ── -->
+  <rect x="17" y="34" width="286" height="630" rx="28" ry="28" fill="#080808"/>
+
+  <!-- ── Pill-shaped front camera (ANDROID / Pixel 9 Pro signature) ──
+       A pill punch-hole is the definitive visual marker of modern Pixel phones.
+       iPhones use a circle (iPhone 14 and earlier) or Dynamic Island (15/16).
+       This pill shape is immediately recognisable as Android to any viewer. -->
+  <rect x="144" y="17" width="32" height="14" rx="7" ry="7" fill="#040404"/>
+  <!-- Camera lens inside the pill -->
+  <circle cx="160" cy="24" r="4.5" fill="#0c0c0c"/>
+  <circle cx="160" cy="24" r="2.8" fill="#111"/>
+  <!-- Subtle lens sheen -->
+  <circle cx="158.5" cy="22.5" r="1" fill="#1e1e1e" opacity="0.6"/>
+
+  <!-- ── Left side: Volume UP then Volume DOWN (two separate bars) ── -->
+  <rect x="0" y="168" width="4.5" height="48" rx="2.25" fill="#252525"/>
+  <rect x="0" y="228" width="4.5" height="78" rx="2.25" fill="#252525"/>
+
+  <!-- ── Right side: Power / lock button ── -->
+  <rect x="315.5" y="192" width="4.5" height="68" rx="2.25" fill="#252525"/>
+
+  <!-- ── Bottom: USB-C port + dual speaker grilles (ANDROID signature) ──
+       Symmetrical dual speaker grilles flanking a USB-C port is a hallmark
+       of Android flagships (Pixel, Samsung Galaxy, etc.).
+       iPhones have one asymmetric speaker grille slot — never this layout. -->
+  <!-- Left speaker grille — 7 dots -->
+  <circle cx="96"  cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="104" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="112" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="120" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="128" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="136" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="144" cy="678" r="2.2" fill="#1c1c1c"/>
+  <!-- USB-C port -->
+  <rect x="148" y="673" width="24" height="8" rx="4" fill="#111"/>
+  <!-- Right speaker grille — 7 dots (mirror of left) -->
+  <circle cx="176" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="184" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="192" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="200" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="208" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="216" cy="678" r="2.2" fill="#1c1c1c"/>
+  <circle cx="224" cy="678" r="2.2" fill="#1c1c1c"/>
+
+  <!-- ── Top earpiece speaker (small bar — Pixel 9 Pro style) ── -->
+  <rect x="128" y="8" width="64" height="4" rx="2" fill="#1a1a1a"/>
+
+  <!-- ── Screen sheen — preserved from previous version ── -->
+  <rect x="17" y="34" width="286" height="630" rx="28" ry="28" fill="url(#pg9sheen)" opacity="0.035"/>
 </svg>`;
 
-// ── Canvas compositor (bake-at-export) ───────────────────────────────────────
+// ── Hex → RGB helper ──────────────────────────────────────────────────────────
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ];
+}
+
+// ── Brand Mirror canvas compositor (bake-at-export) ──────────────────────────
+//
+// Android-only. Output: exactly 1080×1920 px, lossless PNG. No iOS sizes.
+//
+// Pipeline:
+//  1. FLUX background — full-bleed, scaled to 1080×1920
+//  2. Brand gradient overlay — constrained exactly to canvas bounds (no edge bleeding)
+//  3. Bottom fade — constrained to canvas bounds
+//  4. Android Pixel 9 frame — right (LTR) or left (RTL)
+//  5. Text block with auto-shrink font guard + Arabic-aware backdrop sizing
+//  6. PNG export (lossless — zero text compression artefacts)
 
 async function composeScreenshot(opts: {
-  backgroundUrl: string; layoutMap: LayoutMap;
-  headline: string; subline: string;
-  isRTL: boolean; targetW: number; targetH: number;
+  backgroundUrl: string;
+  layoutMap: LayoutMap;
+  headline: string;
+  subline: string;
+  isRTL: boolean;
+  targetW: number; // always 1080
+  targetH: number; // always 1920
 }): Promise<Blob | null> {
   const { backgroundUrl, layoutMap, headline, subline, isRTL, targetW, targetH } = opts;
+
+  // ── 1. Fetch FLUX background ────────────────────────────────────────────────
   let bgBlob: Blob | null = null;
-  try { const r = await fetch(backgroundUrl, { mode: "cors", credentials: "omit", cache: "no-store" }); if (r.ok) bgBlob = await r.blob(); } catch { /**/ }
+  try {
+    const r = await fetch(backgroundUrl, { mode: "cors", credentials: "omit", cache: "no-store" });
+    if (r.ok) bgBlob = await r.blob();
+  } catch { /**/ }
   if (!bgBlob) return null;
+
   const bgBmp = await createImageBitmap(bgBlob).catch(() => null);
   if (!bgBmp) return null;
+
+  // ── 2. Canvas at exact Android spec: 1080×1920, never modified ─────────────
   const canvas = document.createElement("canvas");
-  canvas.width = targetW; canvas.height = targetH;
+  canvas.width  = targetW; // 1080
+  canvas.height = targetH; // 1920
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
-  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(bgBmp, 0, 0, targetW, targetH); bgBmp.close();
-  // Accent strip — full-width bar at top or bottom depending on layoutMap
-  const stripH = Math.round(targetH * 0.06);
-  ctx.fillStyle = layoutMap.accentColor + "BF"; // 75% opacity
-  ctx.fillRect(0, layoutMap.textPosition === "top" ? 0 : targetH - stripH, targetW, stripH);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
-  // Phone frame — sized to occupy ~42% of canvas width so text gets enough room
-  // Canvas is portrait 9:16; frame aspect is 320:690 ≈ 0.464
-  const framePct = 0.42; // fraction of canvas width
-  const frameW = Math.round(targetW * framePct);
-  const frameH = Math.round(frameW / (320 / 690));
-  const PAD = Math.round(targetW * 0.04); // edge padding
-  // LTR: frame on right, text on left. RTL: frame on left, text on right.
+  // Scale FLUX source (1024×1792) up to fill 1080×1920 — no letterbox, no gaps
+  ctx.drawImage(bgBmp, 0, 0, targetW, targetH);
+  bgBmp.close();
+
+  // ── 3. Brand gradient overlay — STRICTLY clipped to (0,0,targetW,targetH) ──
+  // FIX: Both gradient fillRects use exact canvas bounds — no overflow possible.
+  const [r1, g1, b1] = hexToRgb(layoutMap.accentColor);
+  const [r2, g2, b2] = hexToRgb(
+    (layoutMap as LayoutMap & { accentColorSecondary?: string }).accentColorSecondary
+      ?? layoutMap.accentColor,
+  );
+  const isDark = layoutMap.backgroundLuminance !== "light";
+
+  // Lateral brand gradient: from text-side edge → transparent → frame side
+  // Gradient endpoints are clamped to [0, targetW] so paint never bleeds outside.
+  const gradX0 = isRTL ? 0          : targetW;
+  const gradX1 = isRTL ? targetW * 0.55 : targetW * 0.45;
+  const grad = ctx.createLinearGradient(gradX0, 0, gradX1, 0);
+  grad.addColorStop(0,   `rgba(${r1},${g1},${b1},${isDark ? 0.42 : 0.28})`);
+  grad.addColorStop(0.5, `rgba(${r2},${g2},${b2},${isDark ? 0.16 : 0.09})`);
+  grad.addColorStop(1,   `rgba(${r1},${g1},${b1},0)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, targetW, targetH); // exact canvas bounds
+
+  // Vertical bottom-fade: from transparent at 55% height → dark at exact bottom
+  const fadeGrad = ctx.createLinearGradient(0, targetH * 0.55, 0, targetH);
+  fadeGrad.addColorStop(0, "rgba(0,0,0,0)");
+  fadeGrad.addColorStop(1, isDark ? "rgba(0,0,0,0.52)" : "rgba(0,0,0,0.14)");
+  ctx.fillStyle = fadeGrad;
+  ctx.fillRect(0, 0, targetW, targetH); // exact canvas bounds — no edge bleed
+
+  // ── 4. Android Pixel 9 phone frame ─────────────────────────────────────────
+  const PAD    = Math.round(targetW * 0.035);
+  const frameW = Math.round(targetW * 0.40);         // 40% of 1080 = 432px
+  const frameH = Math.round(frameW / (320 / 690));   // preserve 320:690 ≈ 0.464 ratio
   const frameX = isRTL ? PAD : targetW - frameW - PAD;
   const frameY = Math.round((targetH - frameH) / 2);
-  const svgBlob = new Blob([PIXEL9_SVG], { type: "image/svg+xml" });
-  const svgUrl = URL.createObjectURL(svgBlob);
+
+  const svgBlobFrame = new Blob([PIXEL9_SVG], { type: "image/svg+xml" });
+  const svgUrl = URL.createObjectURL(svgBlobFrame);
   try {
     const svgImg = new Image();
-    await new Promise<void>((res, rej) => { svgImg.onload = () => res(); svgImg.onerror = rej; svgImg.src = svgUrl; });
+    await new Promise<void>((resolve, reject) => {
+      svgImg.onload = () => resolve();
+      svgImg.onerror = reject;
+      svgImg.src = svgUrl;
+    });
+    ctx.save();
+    ctx.shadowColor    = "rgba(0,0,0,0.52)";
+    ctx.shadowBlur     = Math.round(targetW * 0.038);
+    ctx.shadowOffsetX  = isRTL ? -Math.round(targetW * 0.008) : Math.round(targetW * 0.008);
+    ctx.shadowOffsetY  = Math.round(targetW * 0.018);
     ctx.drawImage(svgImg, frameX, frameY, frameW, frameH);
-  } catch { /**/ } finally { URL.revokeObjectURL(svgUrl); }
-
-  // Text area occupies the opposite half from the frame, with inner padding
-  const innerPad = Math.round(targetW * 0.05);
-  // LTR: text starts at left edge + padding, ends before frame
-  // RTL: text starts after frame, ends at right edge - padding
-  const textAreaX = isRTL ? frameX + frameW + innerPad : PAD + innerPad;
-  const textAreaW = isRTL
-    ? targetW - textAreaX - PAD               // right of frame → right edge
-    : frameX - PAD - innerPad * 2;            // left edge → left of frame
-
-  const textCenterY = layoutMap.textPosition === "top"
-    ? Math.round(targetH * 0.25)
-    : layoutMap.textPosition === "center"
-      ? Math.round(targetH * 0.5)
-      : Math.round(targetH * 0.72);
-
-  const ctx2 = ctx; // narrowed alias — ctx is non-null past the guard above
-  function wrapTxt(text: string, font: string): string[] {
-    ctx2.font = font;
-    const words = text.split(" "); const lines: string[] = []; let line = "";
-    for (const w of words) {
-      const test2 = line ? `${line} ${w}` : w;
-      if (ctx2.measureText(test2).width > textAreaW && line) { lines.push(line); line = w; }
-      else line = test2;
-    }
-    if (line) lines.push(line); return lines;
+    ctx.restore();
+  } catch { /**/ } finally {
+    URL.revokeObjectURL(svgUrl);
   }
 
-  const hFont = `bold ${Math.round(targetW * 0.056)}px system-ui,-apple-system,sans-serif`;
-  const hLines = wrapTxt(headline, hFont);
-  const lineH = Math.round(targetW * 0.07);
-  let ty = textCenterY - (hLines.length * lineH) / 2;
+  // ── 5. Text block ───────────────────────────────────────────────────────────
+  // Text occupies the opposite side from the phone frame.
+  const innerPad  = Math.round(targetW * 0.052);
+  const textAreaX = isRTL ? frameX + frameW + Math.round(targetW * 0.022) : innerPad;
+  const textAreaW = isRTL
+    ? targetW - textAreaX - innerPad    // RTL: after frame → right edge
+    : frameX  - innerPad * 1.4;        // LTR: left edge → before frame
 
-  // For RTL, anchor at the right edge of the text area; for LTR at the left edge
-  const textX = isRTL ? textAreaX + textAreaW : textAreaX;
+  const textCenterY =
+    layoutMap.textPosition === "top"    ? Math.round(targetH * 0.21) :
+    layoutMap.textPosition === "center" ? Math.round(targetH * 0.49) :
+                                          Math.round(targetH * 0.69);
 
-  ctx2.font = hFont;
-  ctx2.textAlign = isRTL ? "right" : "left";
-  ctx2.textBaseline = "middle";
-  ctx2.shadowColor = "rgba(0,0,0,0.72)";
-  ctx2.shadowBlur = Math.round(targetW * 0.02);
-  ctx2.shadowOffsetX = 0;
-  ctx2.shadowOffsetY = Math.round(targetW * 0.004);
-  ctx2.fillStyle = layoutMap.textColor;
-  for (const l of hLines) { ctx2.fillText(l, textX, ty, textAreaW); ty += lineH; }
+  const textColor   = layoutMap.textColor ?? "#ffffff";
+  const isLightText = textColor === "#ffffff";
+  const textX       = isRTL ? textAreaX + textAreaW : textAreaX;
 
-  const subFont = `500 ${Math.round(targetW * 0.033)}px system-ui,-apple-system,sans-serif`;
-  const subLines = wrapTxt(subline, subFont);
-  ty += Math.round(targetW * 0.028);
-  ctx2.font = subFont;
-  ctx2.shadowBlur = Math.round(targetW * 0.014);
-  ctx2.fillStyle = layoutMap.textColor === "#ffffff" ? "rgba(255,255,255,0.84)" : "rgba(0,0,0,0.74)";
-  for (const l of subLines) { ctx2.fillText(l, textX, ty, textAreaW); ty += Math.round(targetW * 0.045); }
+  const fontFamily = `-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif`;
+  // Non-null alias — TypeScript loses narrowing inside nested function closures.
+  // ctx is guaranteed non-null here (we returned null above if !ctx).
+  const c = ctx;
 
-  ctx2.shadowColor = "transparent"; ctx2.shadowBlur = 0;
-  return new Promise<Blob | null>((res) => canvas.toBlob(res, "image/png"));
+  // ── AUTO-SHRINK: start at max size, reduce 10% per step until text fits ────
+  // FIX: Prevents "overconsumptio" style clipping on long words/Arabic script.
+  // Applied to each text block independently — headline and subline shrink separately.
+  function fitFontSize(
+    text: string,
+    weight: string,
+    startPx: number,
+    maxW: number,
+    maxLines: number,
+  ): { size: number; lines: string[] } {
+    let size = startPx;
+    const MIN_SIZE = Math.round(startPx * 0.45); // floor at 45% of start size
+    while (size >= MIN_SIZE) {
+      c.font = `${weight} ${size}px ${fontFamily}`;
+      const words = text.split(/\s+/);
+      const lines: string[] = [];
+      let line = "";
+      let overflows = false;
+      for (const w of words) {
+        const candidate = line ? `${line} ${w}` : w;
+        // Single word wider than maxW — this word itself overflows at current size
+        if (!line && c.measureText(w).width > maxW) { overflows = true; break; }
+        if (c.measureText(candidate).width > maxW && line) {
+          lines.push(line);
+          line = w;
+        } else {
+          line = candidate;
+        }
+      }
+      if (line) lines.push(line);
+      if (!overflows && lines.length <= maxLines) return { size, lines };
+      size = Math.round(size * 0.90); // shrink 10%
+    }
+    // Hard floor — render at minimum size even if still long (pathological case)
+    c.font = `${weight} ${size}px ${fontFamily}`;
+    return { size, lines: [text] };
+  }
+
+  // Headline: start 62px@1080, max 3 lines
+  const hStart = Math.round(targetW * 0.0574); // 62px at 1080
+  const { size: hSize, lines: hLines } = fitFontSize(headline, "bold", hStart, textAreaW, 3);
+  const lineH   = Math.round(hSize * 1.24);
+  const hBlockH = hLines.length * lineH;
+
+  // Subline: start 36px@1080, max 2 lines
+  const subStart = Math.round(targetW * 0.0333); // 36px at 1080
+  const { size: subSize, lines: subLines } = fitFontSize(subline, "500", subStart, textAreaW, 2);
+  const subLineH  = Math.round(subSize * 1.42);
+  const subBlockH = subLines.length * subLineH;
+
+  const gapBetween  = Math.round(hSize * 0.38);
+  const totalTextH  = hBlockH + gapBetween + subBlockH;
+  let ty = textCenterY - totalTextH / 2;
+
+  // ── ARABIC BACKDROP: measure actual rendered width after font is set ────────
+  // FIX: For RTL/Arabic, measure the maximum real pixel width of rendered lines
+  // and size the backdrop pill from that, not from the textAreaW box.
+  // This prevents Arabic glyphs being cropped by an undersized pill.
+  function maxRenderedWidth(lines: string[], weight: string, size: number): number {
+    c.font = `${weight} ${size}px ${fontFamily}`;
+    return lines.reduce((mx, l) => Math.max(mx, c.measureText(l).width), 0);
+  }
+
+  const hMaxW   = maxRenderedWidth(hLines,   "bold", hSize);
+  const subMaxW = maxRenderedWidth(subLines, "500",  subSize);
+  // For Arabic: use the max measured width + comfortable padding.
+  // For LTR: use the full textAreaW (design looks intentional at full width).
+  const renderedContentW = isRTL
+    ? Math.min(Math.max(hMaxW, subMaxW) + Math.round(targetW * 0.02), textAreaW)
+    : textAreaW;
+
+  // ── 5a. Frosted brand-tinted backdrop pill ──────────────────────────────────
+  const bPad  = { x: Math.round(targetW * 0.038), y: Math.round(targetW * 0.028) };
+  // RTL: anchor pill to right edge of text area, sized by actual content width
+  // LTR: anchor to left edge of text area
+  const backdropW = renderedContentW + bPad.x * 2;
+  const backdropX = isRTL
+    ? (textAreaX + textAreaW) - backdropW   // right-anchor for Arabic
+    : textAreaX - bPad.x;
+  const backdropY = ty - bPad.y;
+  const backdropH = totalTextH + bPad.y * 2;
+  const backdropR = Math.round(targetW * 0.022);
+
+  const [ba_r, ba_g, ba_b] = hexToRgb(layoutMap.accentColor);
+  const backdropAlpha = isDark ? 0.26 : 0.16;
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(backdropX, backdropY, backdropW, backdropH, backdropR);
+  ctx.fillStyle   = `rgba(${ba_r},${ba_g},${ba_b},${backdropAlpha})`;
+  ctx.fill();
+  ctx.strokeStyle = isLightText ? "rgba(255,255,255,0.11)" : "rgba(0,0,0,0.07)";
+  ctx.lineWidth   = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  // ── 5b. Headline ────────────────────────────────────────────────────────────
+  ctx.font         = `bold ${hSize}px ${fontFamily}`;
+  ctx.textAlign    = isRTL ? "right" : "left";
+  ctx.textBaseline = "top";
+  ctx.shadowColor  = isLightText ? "rgba(0,0,0,0.48)" : "rgba(255,255,255,0.28)";
+  ctx.shadowBlur   = Math.round(targetW * 0.007);
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = Math.round(targetW * 0.0018);
+  ctx.fillStyle    = textColor;
+  for (const line of hLines) {
+    ctx.fillText(line, textX, ty, textAreaW);
+    ty += lineH;
+  }
+
+  // ── 5c. Subline ─────────────────────────────────────────────────────────────
+  ty += gapBetween;
+  ctx.font      = `500 ${subSize}px ${fontFamily}`;
+  ctx.shadowBlur = Math.round(targetW * 0.004);
+  ctx.fillStyle  = isLightText ? "rgba(255,255,255,0.86)" : "rgba(15,15,15,0.76)";
+  for (const line of subLines) {
+    ctx.fillText(line, textX, ty, textAreaW);
+    ty += subLineH;
+  }
+
+  // Reset shadow
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur  = 0;
+
+  // ── 6. Lossless PNG export — razor-sharp text, zero compression ─────────────
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
 }
 
 // ── Tone card (screenshot step 2) ─────────────────────────────────────────────
@@ -388,6 +620,8 @@ export function BrandAssetsClient(props: {
 
   const [ssStep, setSsStep] = useState<ScreenshotStep>(1);
   // ssStyle/ssColor intentionally reference bannerStyle/bannerColor — one palette per app.
+  // primaryColor is the secondary brand gradient stop — screenshot-specific.
+  const [primaryColor, setPrimaryColor] = useState("");
   // ssTheme/ssHeadline/ssSubline share bannerTheme/bannerHeadline/bannerSubline — same inputs.
 
   // Job pattern state
@@ -422,7 +656,7 @@ export function BrandAssetsClient(props: {
         const lm = (meta.layoutMap ?? {}) as Partial<LayoutMap>;
         return {
           backgroundUrl: a.signedUrl,
-          layoutMap: { backgroundPrompt: "", negativeAdditions: "", textPosition: (lm.textPosition as LayoutMap["textPosition"]) ?? "bottom", textColor: (lm.textColor as LayoutMap["textColor"]) ?? "#ffffff", accentColor: String(lm.accentColor ?? "#22C55E"), backgroundMood: String(lm.backgroundMood ?? ""), uiMockDescription: "" },
+          layoutMap: { backgroundPrompt: "", negativeAdditions: "", textPosition: (lm.textPosition as LayoutMap["textPosition"]) ?? "bottom", textColor: (lm.textColor as LayoutMap["textColor"]) ?? "#ffffff", accentColor: String(lm.accentColor ?? "#22C55E"), accentColorSecondary: String((lm as Record<string,unknown>).accentColorSecondary ?? "#16a34a"), backgroundMood: String(lm.backgroundMood ?? ""), uiMockDescription: String((lm as Record<string,unknown>).uiMockDescription ?? ""), backgroundLuminance: ((lm as Record<string,unknown>).backgroundLuminance as "dark"|"light") ?? "dark" },
           slide: { position: Number(a.variantIndex ?? 0) + 1, headline: String(meta.headline ?? ""), subline: String(meta.subline ?? ""), uiFocus: "" },
         };
       });
@@ -520,6 +754,7 @@ export function BrandAssetsClient(props: {
           shortDescription: shortDescription || undefined,
           style: bannerStyle,
           brandColor: /^#[0-9a-fA-F]{6}$/.test(bannerColor) ? bannerColor : undefined,
+          primaryColor: /^#[0-9a-fA-F]{6}$/.test(primaryColor) ? primaryColor : undefined,
           theme: bannerTheme.trim() || undefined,
           headlineOverride: bannerHeadline.trim() || undefined,
           sublineOverride: bannerSubline.trim() || undefined,
@@ -563,17 +798,26 @@ export function BrandAssetsClient(props: {
     setSsExporting(true);
     const slug = appName.replace(/\s+/g, "-").toLowerCase();
     try {
+      // Android-only: single export at 1080×1920. No iOS/App Store sizes.
       for (let i = 0; i < ssSlides.length; i++) {
         const { backgroundUrl, layoutMap, slide } = ssSlides[i];
-        for (const { w, h, label } of [{ w: 1080, h: 1920, label: "play" }, { w: 1242, h: 2208, label: "appstore" }]) {
-          const blob = await composeScreenshot({ backgroundUrl, layoutMap, headline: slide.headline, subline: slide.subline, isRTL, targetW: w, targetH: h });
-          if (!blob) { window.open(backgroundUrl, "_blank", "noopener,noreferrer"); continue; }
-          const u = URL.createObjectURL(blob);
-          const a = Object.assign(document.createElement("a"), { href: u, download: `${slug}-screenshot-${label}-${i + 1}.png`, rel: "noopener" });
-          document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u);
-        }
+        const blob = await composeScreenshot({
+          backgroundUrl, layoutMap,
+          headline: slide.headline, subline: slide.subline,
+          isRTL,
+          targetW: 1080, targetH: 1920,
+        });
+        if (!blob) { window.open(backgroundUrl, "_blank", "noopener,noreferrer"); continue; }
+        const u = URL.createObjectURL(blob);
+        const a = Object.assign(document.createElement("a"), {
+          href: u,
+          download: `${slug}-screenshot-${i + 1}.png`,
+          rel: "noopener",
+        });
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(u);
       }
-      toast.success("All screenshots exported!");
+      toast.success(t("screenshotJobCompleted", { total: ssSlides.length }));
     } catch { toast.error(t("networkError")); }
     finally { setSsExporting(false); }
   }
@@ -884,7 +1128,7 @@ export function BrandAssetsClient(props: {
                       </div>
                     </div>
 
-                    {/* Brand colour — identical swatches to banner tab */}
+                    {/* Primary brand colour */}
                     <div className="space-y-2.5">
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs font-medium text-white/60">{t("brandColorLabel")}</span>
@@ -898,6 +1142,23 @@ export function BrandAssetsClient(props: {
                         ))}
                         {bannerColor && <span className="ms-1 font-mono text-[11px] text-white/40">{bannerColor.toUpperCase()}</span>}
                       </div>
+                    </div>
+
+                    {/* Secondary brand colour — gradient stop 2 */}
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-white/60">{t("primaryColorLabel")}</span>
+                        {primaryColor && <button type="button" onClick={() => setPrimaryColor("")} className="ms-auto text-[10px] text-white/35 hover:text-white/60">{t("brandColorNone")}</button>}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {[{ hex: "#0EA5E9" }, { hex: "#10B981" }, { hex: "#F59E0B" }, { hex: "#8B5CF6" }, { hex: "#EC4899" }].map(({ hex }) => (
+                          <button key={hex} type="button" disabled={ssTabBusy} onClick={() => setPrimaryColor(primaryColor === hex ? "" : hex)}
+                            className={cn("size-7 rounded-full border-2 transition-[border-color,transform,box-shadow] disabled:opacity-40", primaryColor === hex ? "scale-110 border-white/80 shadow-[0_0_0_3px_rgba(255,255,255,0.18)]" : "border-white/20 hover:border-white/50 hover:scale-105")}
+                            style={{ backgroundColor: hex }} />
+                        ))}
+                        {primaryColor && <span className="ms-1 font-mono text-[11px] text-white/40">{primaryColor.toUpperCase()}</span>}
+                      </div>
+                      <p className="text-[11px] text-white/30">{t("primaryColorHint")}</p>
                     </div>
 
                     {/* Theme / mood — mirrors banner tab */}
@@ -943,6 +1204,24 @@ export function BrandAssetsClient(props: {
                     </div>
                   </div>
 
+                  {/* Quality + sync badges */}
+                  <div className="flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#22C55E]/25 bg-[#22C55E]/[0.07] px-3 py-1.5 text-[11px] font-medium text-[#86efac]">
+                      <Zap className="size-3 shrink-0" aria-hidden />{t("brandMirrorBadge")}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-[11px] text-white/45">
+                      <Smartphone className="size-3 shrink-0" aria-hidden />{t("androidOnlyBadge")}
+                    </span>
+                  </div>
+                  {/* Listing sync info — shown always so user knows sync will happen automatically */}
+                  <div className="flex items-start gap-2.5 rounded-xl border border-[#22C55E]/20 bg-[#22C55E]/[0.04] px-3.5 py-3">
+                    <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[#86efac]" aria-hidden />
+                    <div>
+                      <p className="text-[11px] font-semibold text-[#86efac]">{t("listingSyncBadge")}</p>
+                      <p className="mt-0.5 text-[11px] leading-snug text-white/45">{t("listingSyncHint")}</p>
+                    </div>
+                  </div>
+
                   <button type="button" disabled={ssTabBusy || !appId || appsLoading} onClick={() => { void runSsGenerate(); }}
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#22C55E] py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#16a34a] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22C55E]/55">
                     {ssGenerateBusy
@@ -961,7 +1240,7 @@ export function BrandAssetsClient(props: {
                     {/* Optimized for Conversion badge */}
                     {ssOptimized && ssSlides.length > 0 && (
                       <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#22C55E]/30 bg-[#22C55E]/[0.08] px-2.5 py-1 text-[11px] font-medium text-[#86efac]">
-                        <Zap className="size-3 shrink-0" aria-hidden />{t("screenshotOptimizedBadge")}
+                        <Sparkles className="size-3 shrink-0" aria-hidden />{t("listingSyncBadge")}
                       </span>
                     )}
                     {/* From vault badge */}
@@ -1022,7 +1301,13 @@ export function BrandAssetsClient(props: {
                       <div dir={isRTL ? "rtl" : "ltr"} className="grid grid-cols-3 gap-3">
                         {ssSlides.map(({ backgroundUrl, layoutMap }, i) => {
                           // 6-slide narrative arc labels
-                          const slideLabels = [t("slideHero"), t("slideFeature"), t("slideFeature"), t("slideFeature"), t("slideSocial"), "CTA"];
+                          // Slot labels follow the Show-and-Tell methodology:
+                          // 1-2 = strongest value props, 3-5 = core features, 6 = trust/CTA
+                          const slideLabels = [
+                            t("slotValueProp1"), t("slotValueProp2"),
+                            t("slotFeature1"), t("slotFeature2"), t("slotFeature3"),
+                            t("slotTrustCta"),
+                          ];
                           const slideLabel = slideLabels[i] ?? `Slide ${i + 1}`;
                           return (
                             <div key={`${i}-${backgroundUrl.slice(0,32)}`}
@@ -1068,7 +1353,7 @@ export function BrandAssetsClient(props: {
                             ? <><Loader2 className="size-4 animate-spin" aria-hidden />{t("screenshotExporting")}</>
                             : <><Smartphone className="size-4" aria-hidden />{t("screenshotExportAll")}</>}
                         </button>
-                        <p className="text-center text-[11px] text-white/30">{t("screenshotExportPlayStore")} + {t("screenshotExportAppStore")}</p>
+                        <p className="text-center text-[11px] text-white/30">{t("androidOnlyBadge")}</p>
                       </div>
                     )
                   )}

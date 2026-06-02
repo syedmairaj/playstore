@@ -414,8 +414,10 @@ export function ScreenshotStudioClient(props: {
             textPosition: (lm.textPosition as LayoutMap["textPosition"]) ?? "bottom",
             textColor: (lm.textColor as LayoutMap["textColor"]) ?? "#ffffff",
             accentColor: String(lm.accentColor ?? "#22C55E"),
+            accentColorSecondary: String((lm as Record<string,unknown>).accentColorSecondary ?? "#16a34a"),
             backgroundMood: String(lm.backgroundMood ?? ""),
             uiMockDescription: String(lm.uiMockDescription ?? ""),
+            backgroundLuminance: ((lm as Record<string,unknown>).backgroundLuminance as "dark"|"light") ?? "dark",
           },
           slide: {
             position: Number(a.variantIndex ?? 0) + 1,

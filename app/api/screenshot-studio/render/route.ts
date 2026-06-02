@@ -324,14 +324,15 @@ export async function POST(request: NextRequest) {
           locale,
           slideIndex: i,
         }).catch((): LayoutMap => ({
-          // Graceful fallback if Gemini layout fails for one slide
-          backgroundPrompt: `${style} abstract background for ${category} app, ${brandColor ? `${brandColor} accent color,` : ""} clean gradient, modern design, atmospheric`,
-          negativeAdditions: "",
+          backgroundPrompt: `${style} brand-identity background for ${category} app, ${brandColor ? `${brandColor} dominant color, ` : ""}premium gradient, generous whitespace`,
+          negativeAdditions: "phone, smartphone, iPhone, Android phone, device, mockup, screen, bezel, notch, generic, template, amateurish",
           textPosition: "bottom",
           textColor: "#ffffff",
           accentColor: brandColor ?? "#22C55E",
-          backgroundMood: "modern gradient",
-          uiMockDescription: `${appName} main screen`,
+          accentColorSecondary: "#16a34a",
+          backgroundMood: "modern brand gradient",
+          uiMockDescription: `${appName} main dashboard screen`,
+          backgroundLuminance: "dark",
         })),
       ),
     );
