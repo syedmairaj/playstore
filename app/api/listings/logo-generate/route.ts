@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     throw e;
   }
 
-  const { workspaceId, appId, appName, category, shortDescription, style, brandColor } = input;
+  const { workspaceId, appId, appName, category, shortDescription, style, brandColor, customPrompt } = input;
 
   const role = await getWorkspaceRole(supabase, workspaceId, user.id);
   if (!role) {
@@ -125,7 +125,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const creditCost = AI_CREDIT_COSTS.listing_logo_generation;
+  // Custom prompt runs cost 12 credits; basic generation costs 10.
+  const creditCost = customPrompt?.trim()
+    ? AI_CREDIT_COSTS.listing_logo_generation_custom
+    : AI_CREDIT_COSTS.listing_logo_generation;
 
   const balancePre = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
   if (!balancePre.ok) {
@@ -231,6 +234,7 @@ export async function POST(request: NextRequest) {
       shortDescription,
       style,
       brandColor,
+      customPrompt,
     });
     await logUsage(admin, {
       route: ROUTE,

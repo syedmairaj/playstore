@@ -1,13 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
-import { Loader2, Trash2, Download, Image as ImageIcon, Layers, RefreshCw } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Trash2, Download, Image as ImageIcon, Layers, RefreshCw, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { VaultAsset } from "@/app/api/brand-assets/vault/route";
 
-type Filter = "all" | "icon" | "banner";
+type Filter = "all" | "icon" | "banner" | "screenshot";
+
+/** Shared query-key factory — must match the key used in BrandAssetsClient */
+export function vaultQueryKey(workspaceId: string, appId?: string, filter?: Filter, offset?: number) {
+  return ["brand-assets-vault", workspaceId, appId ?? "", filter ?? "all", offset ?? 0] as const;
+}
 
 function formatDate(iso: string, locale: string): string {
   try {
@@ -85,12 +91,16 @@ function AssetCard({
           "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
           asset.assetType === "icon"
             ? "bg-[#22C55E]/20 text-[#86efac]"
-            : "bg-blue-500/20 text-blue-300",
+            : asset.assetType === "screenshot"
+              ? "bg-purple-500/20 text-purple-300"
+              : "bg-blue-500/20 text-blue-300",
         )}>
           {asset.assetType === "icon"
             ? <ImageIcon className="size-2.5" aria-hidden />
-            : <Layers className="size-2.5" aria-hidden />}
-          {t(asset.assetType === "icon" ? "typeIcon" : "typeBanner")}
+            : asset.assetType === "screenshot"
+              ? <Smartphone className="size-2.5" aria-hidden />
+              : <Layers className="size-2.5" aria-hidden />}
+          {asset.assetType === "icon" ? t("typeIcon") : asset.assetType === "screenshot" ? t("typeScreenshot") : t("typeBanner")}
         </span>
       </div>
 
@@ -102,50 +112,69 @@ function AssetCard({
   );
 }
 
+const PAGE_SIZE = 48;
+
 export function VaultGrid({
   workspaceId, appId,
 }: { workspaceId: string; appId?: string }) {
   const locale = useLocale();
   const t = useTranslations("brandAssets.vault");
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<Filter>("all");
-  const [assets, setAssets] = useState<VaultAsset[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
+  // Accumulate pages of assets across "load more" clicks
+  const [allAssets, setAllAssets] = useState<VaultAsset[]>([]);
 
-  const fetchAssets = useCallback(async (reset = false) => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ workspaceId, limit: "48" });
+  const queryKey = vaultQueryKey(workspaceId, appId, filter, offset);
+
+  const { data, isFetching, isLoading } = useQuery({
+    queryKey,
+    staleTime: 60_000, // 1 min — signed URLs are valid for 1 h
+    queryFn: async () => {
+      const params = new URLSearchParams({ workspaceId, limit: String(PAGE_SIZE) });
       if (appId) params.set("appId", appId);
       if (filter !== "all") params.set("assetType", filter);
-      if (!reset) params.set("offset", String(offset));
-      const res = await fetch(`/api/brand-assets/vault?${params}`);
+      if (offset > 0) params.set("offset", String(offset));
+      const res = await fetch(`/api/brand-assets/vault?${params}`, { credentials: "include" });
       const json = (await res.json()) as { ok: boolean; assets?: VaultAsset[]; hasMore?: boolean };
-      if (!json.ok || !json.assets) return;
-      setAssets(reset ? json.assets : (prev) => [...prev, ...json.assets!]);
-      setHasMore(json.hasMore ?? false);
-      if (!reset) setOffset((o) => o + json.assets!.length);
-    } catch { toast.error(t("loadError")); }
-    finally { setLoading(false); }
-  }, [workspaceId, appId, filter, offset, t]);
+      if (!json.ok || !json.assets) return { assets: [] as VaultAsset[], hasMore: false };
+      // Merge into accumulated list
+      setAllAssets((prev) => {
+        if (offset === 0) return json.assets!;
+        // Deduplicate by id in case of invalidation / refetch
+        const ids = new Set(json.assets!.map((a) => a.id));
+        return [...prev.filter((a) => !ids.has(a.id)), ...json.assets!];
+      });
+      return { assets: json.assets, hasMore: json.hasMore ?? false };
+    },
+  });
 
-  // Re-fetch when filter changes
-  useEffect(() => {
+  const hasMore = data?.hasMore ?? false;
+  const loading = isLoading || isFetching;
+
+  function resetFilter(newFilter: Filter) {
+    setFilter(newFilter);
     setOffset(0);
-    setAssets([]);
-    void fetchAssets(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, appId, filter]);
+    setAllAssets([]);
+    // Invalidate so the fresh query fires immediately
+    void queryClient.invalidateQueries({ queryKey: vaultQueryKey(workspaceId, appId, newFilter, 0) });
+  }
+
+  function refresh() {
+    setOffset(0);
+    setAllAssets([]);
+    void queryClient.invalidateQueries({ queryKey: vaultQueryKey(workspaceId, appId, filter, 0) });
+  }
 
   function handleDeleted(id: string) {
-    setAssets((prev) => prev.filter((a) => a.id !== id));
+    setAllAssets((prev) => prev.filter((a) => a.id !== id));
   }
 
   const FILTERS: { key: Filter; label: string; icon: React.ReactNode }[] = [
-    { key: "all",    label: t("filterAll"),    icon: null },
-    { key: "icon",   label: t("filterIcons"),  icon: <ImageIcon className="size-3.5" aria-hidden /> },
-    { key: "banner", label: t("filterBanners"), icon: <Layers className="size-3.5" aria-hidden /> },
+    { key: "all",        label: t("filterAll"),         icon: null },
+    { key: "icon",       label: t("filterIcons"),       icon: <ImageIcon className="size-3.5" aria-hidden /> },
+    { key: "banner",     label: t("filterBanners"),     icon: <Layers className="size-3.5" aria-hidden /> },
+    { key: "screenshot", label: t("filterScreenshots"), icon: <Smartphone className="size-3.5" aria-hidden /> },
   ];
 
   return (
@@ -154,7 +183,7 @@ export function VaultGrid({
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex gap-1.5">
           {FILTERS.map(({ key, label, icon }) => (
-            <button key={key} type="button" onClick={() => setFilter(key)}
+            <button key={key} type="button" onClick={() => resetFilter(key)}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                 filter === key
@@ -165,7 +194,7 @@ export function VaultGrid({
             </button>
           ))}
         </div>
-        <button type="button" onClick={() => { setOffset(0); setAssets([]); void fetchAssets(true); }}
+        <button type="button" onClick={refresh}
           disabled={loading}
           className="ms-auto flex items-center gap-1.5 text-xs text-white/35 transition hover:text-white/60 disabled:opacity-40">
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} aria-hidden />
@@ -174,11 +203,11 @@ export function VaultGrid({
       </div>
 
       {/* Grid */}
-      {loading && assets.length === 0 ? (
+      {loading && allAssets.length === 0 ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="size-6 animate-spin text-white/30" aria-hidden />
         </div>
-      ) : assets.length === 0 ? (
+      ) : allAssets.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
           <ImageIcon className="size-10 text-white/15" aria-hidden />
           <p className="text-sm font-medium text-white/40">{t("empty")}</p>
@@ -187,14 +216,14 @@ export function VaultGrid({
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {assets.map((asset) => (
+            {allAssets.map((asset) => (
               <AssetCard key={asset.id} asset={asset} onDelete={handleDeleted} locale={locale} workspaceId={workspaceId} />
             ))}
           </div>
           {hasMore && (
             <div className="flex justify-center pt-2">
               <button type="button" disabled={loading}
-                onClick={() => { void fetchAssets(false); }}
+                onClick={() => setOffset((o) => o + PAGE_SIZE)}
                 className="rounded-xl border border-white/[0.12] bg-white/[0.04] px-5 py-2.5 text-sm font-medium text-white/70 transition hover:border-[#22C55E]/40 hover:bg-[#22C55E]/10 hover:text-[#ecfdf5] disabled:opacity-40">
                 {loading ? <Loader2 className="size-4 animate-spin inline me-2" /> : null}
                 {t("loadMore")}

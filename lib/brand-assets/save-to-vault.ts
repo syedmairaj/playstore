@@ -9,6 +9,11 @@
  *
  * Runs fire-and-forget (non-blocking) — generation results are shown
  * immediately; vault save happens in the background.
+ *
+ * Each call to saveGeneratedAssetsToVault generates a single batchId
+ * that is written into the meta of every variant. This lets the vault
+ * query fetch exactly the 4 images from the same generation, not a
+ * mix of rows from different runs.
  */
 
 export type SaveAssetInput = {
@@ -17,6 +22,8 @@ export type SaveAssetInput = {
   assetType: "icon" | "banner";
   imageUrls: string[];           // HTTPS URLs from Runware
   meta?: Record<string, unknown>; // style, brandColor, etc.
+  /** Optional caller-supplied batch ID. Auto-generated if omitted. */
+  batchId?: string;
 };
 
 type UploadUrlResponse = {
@@ -35,8 +42,22 @@ async function fetchImageBlob(url: string): Promise<Blob | null> {
   } catch { return null; }
 }
 
+/** Tiny crypto-random UUID fallback for environments without crypto.randomUUID */
+function randomUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export async function saveGeneratedAssetsToVault(input: SaveAssetInput): Promise<void> {
   const { workspaceId, appId, assetType, imageUrls, meta } = input;
+  // All variants from this call share the same batchId so the vault query
+  // can reconstruct the exact set that was generated together.
+  const batchId = input.batchId ?? randomUUID();
 
   await Promise.allSettled(
     imageUrls.map(async (url, i) => {
@@ -62,7 +83,7 @@ export async function saveGeneratedAssetsToVault(input: SaveAssetInput): Promise
           mimeType,
           sizeBytes: blob.size,
           variantIndex: i,
-          meta: { ...meta, sourceUrl: url },
+          meta: { ...meta, sourceUrl: url, batchId },
         }),
       });
 

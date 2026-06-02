@@ -1,6 +1,12 @@
 /**
  * Workspace-wide AI credit costs (see docs/architecture.md — Advanced Tenancy & Wallet).
  * Listing optimizer is one generation unit; bundle SKUs (e.g. ASO Growth Pack = 5) can map here later.
+ *
+ * Brand Assets pricing (current):
+ *   App Icon batch (4 variants)       → 15 credits
+ *   Feature Graphic batch (4 variants) → 15 credits
+ *   Brand Kit (icon + banner together) → 30 credits (15 + 15)
+ *   Screenshot batch (6 slides)        → 20 credits render + 3 credits captions = 23 total
  */
 export const AI_CREDIT_COSTS = {
   /** AI suggestion for a single add-app form field (app name or short description) */
@@ -15,12 +21,12 @@ export const AI_CREDIT_COSTS = {
    */
   keyword_track_ai_per_keyword: 2,
   /** AI app icon batch (4 variants) via Runware FLUX.1 [dev] — basic generation */
-  listing_logo_generation: 10,
+  listing_logo_generation: 15,
   /** AI app icon batch with user-supplied custom prompt — paid plan only */
-  listing_logo_generation_custom: 12,
+  listing_logo_generation_custom: 17,
   /** Google Play feature graphic banner (1024×500, 4 variants) via Runware */
-  banner_generation: 20,
-  /** Brand Kit batch: logo batch + banner batch in one click (30 = 10 + 20) */
+  banner_generation: 15,
+  /** Brand Kit batch: icon batch + banner batch in one click (30 = 15 + 15) */
   brand_kit_batch: 30,
   /** Reserved for bundled ASO workflows */
   aso_growth_pack: 5,
@@ -46,6 +52,19 @@ export const AI_CREDIT_COSTS = {
    * Top Charts (the ranked list) is always free; the AI layer costs this many credits.
    */
   market_keyword_spotlight: 3,
+  /**
+   * Screenshot Studio — Gemini caption generation.
+   * Produces 3 caption variation sets (feature-led, benefit-led, emotional-led),
+   * each covering the first 3 hero slides. Billed once per generation run.
+   */
+  screenshot_captions: 3,
+  /**
+   * Screenshot Studio — Runware image render batch.
+   * Generates 3 portrait screenshot backgrounds (1080×1920) via Runware FLUX.1 [dev].
+   * Phone frame + text are composited client-side at export time.
+   * Total screenshot cost: screenshot_captions (3) + screenshot_render (20) = 23 credits.
+   */
+  screenshot_render: 20,
 } as const;
 
 /** First N tracked keywords from a given listing generation are free (AI credits). */

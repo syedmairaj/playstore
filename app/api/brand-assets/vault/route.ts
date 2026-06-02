@@ -18,7 +18,7 @@ export type VaultAsset = {
   id: string;
   createdAt: string;
   appId: string | null;
-  assetType: "icon" | "banner";
+  assetType: "icon" | "banner" | "screenshot";
   variantIndex: number | null;
   fileName: string;
   mimeType: string;
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
     .range(offset, offset + limit - 1);
 
   if (appId) query = query.eq("app_id", appId);
-  if (assetType === "icon" || assetType === "banner") query = query.eq("asset_type", assetType);
+  if (assetType === "icon" || assetType === "banner" || assetType === "screenshot") query = query.eq("asset_type", assetType);
 
   const { data: rows, error } = await query;
   if (error) {
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
         id: row.id as string,
         createdAt: row.created_at as string,
         appId: (row.app_id as string | null) ?? null,
-        assetType: row.asset_type as "icon" | "banner",
+        assetType: row.asset_type as "icon" | "banner" | "screenshot",
         variantIndex: (row.variant_index as number | null) ?? null,
         fileName: row.file_name as string,
         mimeType: row.mime_type as string,

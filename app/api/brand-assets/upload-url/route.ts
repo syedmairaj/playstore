@@ -22,10 +22,10 @@ const SIGNED_URL_EXPIRES_IN = 300; // 5 minutes to complete the upload
 const bodySchema = z.object({
   workspaceId: z.string().uuid(),
   appId: z.string().uuid(),
-  assetType: z.enum(["icon", "banner"]),
+  assetType: z.enum(["icon", "banner", "screenshot"]),
   fileName: z.string().trim().min(1).max(200),
   mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
-  sizeBytes: z.number().int().positive().max(5_242_880), // 5 MB
+  sizeBytes: z.number().int().positive().max(15_728_640), // 15 MB — screenshots (1080×1920) can exceed 5 MB
   variantIndex: z.number().int().min(0).max(3).optional(),
   meta: z.record(z.unknown()).optional(),
 }).strict();

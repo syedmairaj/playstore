@@ -59,16 +59,21 @@ export async function middleware(request: NextRequest) {
     const apiResponse = NextResponse.next({ request });
     const supabase = createSupabaseMiddlewareClient(request, apiResponse);
     if (supabase) {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        const status = await fetchProfileAccountStatus(supabase, user.id);
-        if (isProfileAccessBlocked(status)) {
-          return NextResponse.json(suspendedAccountJsonResponse(), {
-            status: 403,
-          });
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          const status = await fetchProfileAccountStatus(supabase, user.id);
+          if (isProfileAccessBlocked(status)) {
+            return NextResponse.json(suspendedAccountJsonResponse(), {
+              status: 403,
+            });
+          }
         }
+      } catch {
+        // Supabase auth fetch can fail on cold-start or network blip in the
+        // edge runtime. Fail open — let the API route's own auth check handle it.
       }
     }
     return apiResponse;
@@ -107,11 +112,17 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  // Refreshes the session cookie when needed (SSR pattern); admin flags are DB-backed, not JWT claims.
-  await supabase.auth.getSession();
+  // Supabase auth can throw "fetch failed" on cold-starts in the edge runtime.
+  // Wrap both calls so a transient network error doesn't break page navigation.
+  let user: Awaited<ReturnType<typeof supabase.auth.getUser>>["data"]["user"] = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+    // Refreshes the session cookie when needed (SSR pattern).
+    await supabase.auth.getSession();
+  } catch {
+    // Fail open — auth routes below will redirect to login if needed.
+  }
 
   const pathWithoutLocale = pathname.replace(/^\/(en|ar)(?=\/|$)/, "") || "/";
   const locale = pathname.match(/^\/(en|ar)/)?.[1] ?? routing.defaultLocale;

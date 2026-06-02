@@ -25,5 +25,11 @@ export const listingLogoGenerateBodySchema = z
       .trim()
       .regex(/^#[0-9a-fA-F]{6}$/)
       .optional(),
+    /**
+     * Optional custom icon concept from the user (paid plans only).
+     * Appended to the generation prompt to guide the motif/subject.
+     * Max 300 chars — enough for a clear concept, not a novel.
+     */
+    customPrompt: z.string().trim().max(300).optional(),
   })
   .strict();
