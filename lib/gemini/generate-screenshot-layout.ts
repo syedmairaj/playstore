@@ -12,6 +12,7 @@ import {
   getValidSchemaIds,
   formatSchemaForGemini,
   type MoodSchemaType,
+  type MoodSchema,
 } from "@/lib/gemini/mood-schema";
 
 // ─────────────────────────────────────────────────────────────────────────────

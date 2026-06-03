@@ -7,10 +7,7 @@ import {
 } from "@/lib/gemini/gemini-defaults";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
-  MOOD_SCHEMAS,
   selectMoodSchemaForCategory,
-  getValidSchemaIds,
-  formatSchemaForGemini,
   type MoodSchemaType,
 } from "@/lib/gemini/mood-schema";
 
@@ -649,7 +646,7 @@ export async function generateASOAsset(
         : {
             primaryColor: derivedPrimary,
             fontStyle: (selectedSchema.fontStyle as "bold" | "elegant" | "clean") || "clean",
-            shadowProfile: (selectedSchema.shadowProfile as any) || "subtle",
+            shadowProfile: (selectedSchema.shadowProfile as "sharp" | "soft-spread" | "subtle" | "hard-edge" | "deep") || "subtle",
           },
     isTextEnabled: input.generatorType !== "icon",
     targetDimensions,
@@ -659,7 +656,7 @@ export async function generateASOAsset(
   if (input.generatorType === "screenshot" && r.layout) {
     const layout = (r.layout as Record<string, unknown>) || {};
     baseAsset.layout = {
-      textPosition: (layout.textPosition as any) || "bottom",
+      textPosition: (layout.textPosition as "top" | "center" | "bottom") || "bottom",
       textColor: (layout.textColor === "#0f0f0f") ? "#0f0f0f" : "#ffffff",
       accentColor: typeof layout.accentColor === "string" && /^#[0-9a-fA-F]{6}$/.test(layout.accentColor) ? layout.accentColor : derivedPrimary,
       accentColorSecondary: typeof layout.accentColorSecondary === "string" && /^#[0-9a-fA-F]{6}$/.test(layout.accentColorSecondary) ? layout.accentColorSecondary : derivedSecondary,
@@ -682,7 +679,7 @@ export async function generateASOAsset(
     baseAsset.bannerMetadata = {
       aspectRatio: "2:1",
       compositionStyle: typeof bannerMeta.compositionStyle === "string" ? bannerMeta.compositionStyle : "cinematic minimalist",
-      textZonePosition: (bannerMeta.textZonePosition as any) || "right",
+      textZonePosition: (bannerMeta.textZonePosition as "left" | "right" | "center") || "right",
     };
   }
 

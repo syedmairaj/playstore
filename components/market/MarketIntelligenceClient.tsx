@@ -67,7 +67,7 @@ function SpotlightLockedCard({
         </div>
         <div>
           <h3 className="text-sm font-semibold text-white/95">AI Keyword Spotlight</h3>
-          <p className="text-[11px] text-zinc-500">What's dominating this category right now</p>
+          <p className="text-[11px] text-zinc-500">What&apos;s dominating this category right now</p>
         </div>
       </div>
 
@@ -83,10 +83,10 @@ function SpotlightLockedCard({
             ))}
           </div>
           <p className="text-sm leading-relaxed text-zinc-400">
-            Health & Fitness apps are converging on AI-powered personalisation — apps with "AI coach" or "smart plan" in their titles have displaced traditional trackers in 6 of the top 10 positions.
+            Health &amp; Fitness apps are converging on AI-powered personalisation &mdash; apps with &quot;AI coach&quot; or &quot;smart plan&quot; in their titles have displaced traditional trackers in 6 of the top 10 positions.
           </p>
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-3 text-xs text-amber-100/80">
-            Add "AI" or "smart" to your title or short description to align with the dominant keyword pattern driving installs in this category this week.
+            Add &quot;AI&quot; or &quot;smart&quot; to your title or short description to align with the dominant keyword pattern driving installs in this category this week.
           </div>
         </div>
 

@@ -405,7 +405,7 @@ export function ScreenshotStudioClient(props: {
 
       return batch.map((a) => {
         const meta = (a.meta ?? {}) as Record<string, unknown>;
-        const lm = (meta.layoutMap ?? {}) as Partial<LayoutMap>;
+        const lm = (meta.layoutMap ?? {}) as Record<string, unknown>;
         return {
           backgroundUrl: a.signedUrl,
           layoutMap: {
@@ -418,6 +418,8 @@ export function ScreenshotStudioClient(props: {
             backgroundMood: String(lm.backgroundMood ?? ""),
             uiMockDescription: String(lm.uiMockDescription ?? ""),
             backgroundLuminance: ((lm as Record<string,unknown>).backgroundLuminance as "dark"|"light") ?? "dark",
+            selectedSchema: ((lm as Record<string,unknown>).selectedSchema as LayoutMap["selectedSchema"]) ?? "minimalist-professional",
+            typographyConfig: ((lm as Record<string,unknown>).typographyConfig as LayoutMap["typographyConfig"]) ?? { primaryColor: "#6366F1", fontStyle: "clean", shadowProfile: "subtle" },
           },
           slide: {
             position: Number(a.variantIndex ?? 0) + 1,
