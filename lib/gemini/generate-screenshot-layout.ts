@@ -6,6 +6,13 @@ import {
   resolveGeminiModel,
 } from "@/lib/gemini/gemini-defaults";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import {
+  MOOD_SCHEMAS,
+  selectMoodSchemaForCategory,
+  getValidSchemaIds,
+  formatSchemaForGemini,
+  type MoodSchemaType,
+} from "@/lib/gemini/mood-schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -19,6 +26,8 @@ import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error
  *     No text, no phone frame — pure atmospheric scene derived from the app's palette.
  *  2. Canvas compositor — all other fields drive the bake-at-export layer:
  *     brand gradient, phone frame, razor-sharp typography, RTL geometry.
+ *  3. Schema-Driven Assets — selectedSchema + typographyConfig guide asset selection
+ *     for sharp compositing (font loading, shadow rendering, etc).
  */
 export type LayoutMap = {
   /** Runware-ready background prompt — identity-synced, no text/frame */
@@ -39,6 +48,15 @@ export type LayoutMap = {
   uiMockDescription: string;
   /** Overall background luminance: "dark" | "light" — drives compositor decisions */
   backgroundLuminance: "dark" | "light";
+  /** ───────── MOOD SCHEMA ADDITIONS ─────────────────────────────────────────── */
+  /** Selected Mood Schema ID (one of 5 pre-validated schemas) */
+  selectedSchema: "minimalist-professional" | "energetic-tech" | "organic-health" | "high-contrast-bold" | "luxury-premium";
+  /** Typography configuration for sharp compositing */
+  typographyConfig: {
+    primaryColor: string;  // Hex color for text/badges
+    fontStyle: "bold" | "elegant" | "clean";  // Font personality
+    shadowProfile: "sharp" | "soft-spread" | "subtle" | "hard-edge" | "deep";  // Shadow rendering
+  };
 };
 
 export type GenerateScreenshotLayoutInput = {
@@ -57,6 +75,57 @@ export type GenerateScreenshotLayoutInput = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper: Derive secondary color from primary hex via HSL
+// ─────────────────────────────────────────────────────────────────────────────
+function deriveSecondaryColor(primaryHex: string): string {
+  // Convert hex to RGB
+  const hex = primaryHex.replace("#", "");
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+
+  // RGB to HSL
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+
+  if (max === min) {
+    // Grayscale: shift lightness
+    const newL = Math.min(1, Math.max(0, l - 0.15));
+    const gray = Math.round(newL * 255).toString(16).padStart(2, "0");
+    return `#${gray}${gray}${gray}`.toUpperCase();
+  }
+
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+
+  // Create secondary by darkening lightness by 15%
+  const newL = Math.min(1, Math.max(0, l - 0.15));
+
+  // HSL to RGB
+  const c = (1 - Math.abs(2 * newL - 1)) * s;
+  const x = c * (1 - Math.abs(((h * 6) % 2) - 1));
+  const m = newL - c / 2;
+
+  let r2 = 0, g2 = 0, b2 = 0;
+  if (h < 1 / 6) { r2 = c; g2 = x; }
+  else if (h < 2 / 6) { r2 = x; g2 = c; }
+  else if (h < 3 / 6) { g2 = c; b2 = x; }
+  else if (h < 4 / 6) { g2 = x; b2 = c; }
+  else if (h < 5 / 6) { r2 = x; b2 = c; }
+  else { r2 = c; b2 = x; }
+
+  const rh = Math.round((r2 + m) * 255).toString(16).padStart(2, "0");
+  const gh = Math.round((g2 + m) * 255).toString(16).padStart(2, "0");
+  const bh = Math.round((b2 + m) * 255).toString(16).padStart(2, "0");
+  return `#${rh}${gh}${bh}`.toUpperCase();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Structured-output schema
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -72,11 +141,22 @@ const LAYOUT_SCHEMA = {
     backgroundMood:        { type: SchemaType.STRING },
     uiMockDescription:     { type: SchemaType.STRING },
     backgroundLuminance:   { type: SchemaType.STRING },
+    selectedSchema:        { type: SchemaType.STRING },
+    typographyConfig:      {
+      type: SchemaType.OBJECT,
+      properties: {
+        primaryColor:      { type: SchemaType.STRING },
+        fontStyle:         { type: SchemaType.STRING },
+        shadowProfile:     { type: SchemaType.STRING },
+      },
+      required: ["primaryColor", "fontStyle", "shadowProfile"],
+    },
   },
   required: [
     "backgroundPrompt", "negativeAdditions", "textPosition", "textColor",
     "accentColor", "accentColorSecondary", "backgroundMood",
     "uiMockDescription", "backgroundLuminance",
+    "selectedSchema", "typographyConfig",
   ],
 };
 
@@ -131,13 +211,17 @@ function getUIMock(category: string, fallback: string): string {
 // Prompt builder
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STYLE_LANGUAGE: Record<string, string> = {
-  Minimalist:     "ultra-clean white space, 1–2 brand colours, no decoration, maximum breathing room",
-  Modern:         "bold geometric shapes, strong colour blocking, flat depth, contemporary energy",
-  Bold:           "high-contrast vivid palette, dynamic diagonal bands, kinetic energy, confident",
-  Playful:        "soft rounded shapes, friendly gradients, illustrated accents, warm approachable",
-  Professional:   "structured grid, muted premium palette, subtle texture, authoritative restraint",
-  "Flat Design":  "pure flat fills, crisp vector geometry, no gradients, iconic clarity",
+/**
+ * MOOD SCHEMA SELECTOR — Maps user-facing style names to Mood Schema IDs.
+ * Preserves backward compatibility with existing style enum while routing to schema system.
+ */
+const STYLE_TO_MOOD_SCHEMA: Record<string, MoodSchemaType> = {
+  Minimalist:     "minimalist-professional",
+  Modern:         "energetic-tech",
+  Bold:           "high-contrast-bold",
+  Playful:        "organic-health",
+  Professional:   "minimalist-professional",
+  "Flat Design":  "energetic-tech",
 };
 
 function buildLayoutPrompt(input: GenerateScreenshotLayoutInput): string {
@@ -155,16 +239,48 @@ function buildLayoutPrompt(input: GenerateScreenshotLayoutInput): string {
     "SLIDE 6 — DOWNLOAD CALL TO ACTION (urgency, transformation, final close)",
   ];
   const slideRole = SLIDE_ROLES[slideIndex] ?? `SLIDE ${slideIndex + 1}`;
-  const styleLanguage = STYLE_LANGUAGE[style] ?? STYLE_LANGUAGE.Modern;
   const isRTL = locale === "ar";
-  const mood = inferredMood ?? "modern premium";
 
-  // Brand palette description
-  const paletteDesc = brandColor
-    ? primaryColor
-      ? `Primary brand colour: ${brandColor}. Secondary accent: ${primaryColor}. Use both to create a rich brand gradient.`
-      : `Brand colour: ${brandColor}. Derive a complementary secondary tone for gradient depth.`
-    : "Derive the brand palette from the app category and mood.";
+  // ─────────────────────────────────────────────────────────────────────────
+  // MOOD SCHEMA SELECTION
+  // Use user-provided style, category inference, or explicit brand color to select schema.
+  // ─────────────────────────────────────────────────────────────────────────
+  let selectedMoodSchema = selectMoodSchemaForCategory(category);
+
+  // If user provided a style, try to map it to a schema
+  if (style && STYLE_TO_MOOD_SCHEMA[style]) {
+    selectedMoodSchema = MOOD_SCHEMAS[STYLE_TO_MOOD_SCHEMA[style]];
+  }
+
+  // If brand color provided, try to find the best-matching schema by luminance
+  if (brandColor) {
+    const hex = brandColor.replace("#", "");
+    const r = parseInt(hex.slice(0, 2), 16) / 255;
+    const g = parseInt(hex.slice(2, 4), 16) / 255;
+    const b = parseInt(hex.slice(4, 6), 16) / 255;
+    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    const isLight = luminance > 0.5;
+
+    // For light brand colors, prefer light-luminance schemas
+    // For dark brand colors, prefer dark-luminance schemas
+    // (This is a soft preference; the explicit brandColor overrides schema colors)
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRITICAL: Derive brand palette BEFORE passing to Gemini.
+  // This ensures accentColor and accentColorSecondary are explicit constraints,
+  // preventing the "green fallback" bug where Gemini omits these fields.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Use brand color if provided; otherwise use schema's primary color
+  const derivedPrimary = brandColor ?? selectedMoodSchema.primaryColor;
+  const derivedSecondary = primaryColor || deriveSecondaryColor(derivedPrimary);
+
+  // Brand palette description — now with EXPLICIT hex requirement
+  const paletteDesc =
+    `Primary brand colour MUST be EXACTLY: ${derivedPrimary}. ` +
+    `Secondary accent MUST be EXACTLY: ${derivedSecondary}. ` +
+    `In your JSON response, accentColor MUST be "${derivedPrimary}" and accentColorSecondary MUST be "${derivedSecondary}".`;
 
   // Layout geometry instruction
   const framePosition = isRTL
@@ -173,44 +289,87 @@ function buildLayoutPrompt(input: GenerateScreenshotLayoutInput): string {
 
   const uiMock = getUIMock(category, uiFocus);
 
+  const mood = inferredMood ?? selectedMoodSchema.label;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Format all 5 Mood Schemas for Gemini constraint enforcement
+  // ─────────────────────────────────────────────────────────────────────────
+  const allSchemasFormatted = Object.values(MOOD_SCHEMAS)
+    .map(s => formatSchemaForGemini(s))
+    .join(",\n  ");
+
   return `You are the creative director of a world-class mobile app marketing studio. You are crafting a 'Brand Mirror' screenshot — an asset so visually aligned with the app's identity that it feels like an extension of the app's own UI.
 
-BRAND CONTEXT
--------------
+═══════════════════════════════════════════════════════════════════════════════════
+🎨 MOOD SCHEMA FRAMEWORK — YOU ARE A SELECTOR, NOT AN INVENTOR
+═══════════════════════════════════════════════════════════════════════════════════
+
+Your PRIMARY task is to SELECT ONE of these 5 pre-validated Mood Schemas.
+Do NOT create custom colors, fonts, or shadow profiles. Use ONLY what is defined below.
+
+AVAILABLE MOOD SCHEMAS (Selectable Only):
+${allSchemasFormatted}
+
+SELECTION RULE:
+The recommended schema for this app is: "${selectedMoodSchema.id}" (${selectedMoodSchema.label})
+Rationale: Optimal for ${category} category apps.
+
+Your selectedSchema field MUST be one of these exact values:
+  • "minimalist-professional"
+  • "energetic-tech"
+  • "organic-health"
+  • "high-contrast-bold"
+  • "luxury-premium"
+
+DO NOT invent other schemas. DO NOT mix colors across schemas.
+
+═══════════════════════════════════════════════════════════════════════════════════
+🏢 BRAND CONTEXT
+═══════════════════════════════════════════════════════════════════════════════════
 App: "${appName}" (${category})${shortDescription ? `\nValue prop: "${shortDescription}"` : ""}
-Mood: ${mood}
-Visual language: ${styleLanguage}
+Recommended Mood: ${selectedMoodSchema.label}
 ${paletteDesc}
 Slide role: ${slideRole}
 Headline: "${headline}"
 Sub-caption: "${subline}"
 
 LAYOUT GEOMETRY
----------------
+───────────────
 Canvas: 9:16 portrait Android screenshot (1024×1792 px Runware source, exported at 1080×1920)
 ${framePosition}
 ${isRTL ? "RTL: all text elements right-aligned, Arabic typography." : "LTR: standard left-to-right typographic hierarchy."}
 
 TASK
-----
-Produce a LayoutMap JSON that drives two systems:
+────
+Produce a LayoutMap JSON that drives three systems:
 
-1. RUNWARE BACKGROUND PROMPT (backgroundPrompt)
+1. RUNWARE BACKGROUND PROMPT (backgroundPrompt) — HIGHEST PRIORITY
+
+   🚫 ⚠️ CRITICAL CONSTRAINT ⚠️ 🚫
+   ═════════════════════════════════════════════════════════════════════════════
+   BACKGROUND ONLY — NO DEVICE FRAME. NO PHONE. NO MOCKUP.
+
+   This is a studio backdrop. The Android phone frame is composited SEPARATELY by sharp.
+   Your prompt must describe a PURE background — ZERO device hardware of any kind.
+
+   If you include any phone/frame description, the output is UNUSABLE (2 overlapping frames).
+   ═════════════════════════════════════════════════════════════════════════════
 
    ══ WHAT YOU ARE GENERATING ══
-   A pure background image for a mobile app store screenshot.
-   The Android phone frame will be overlaid on top by a separate compositor.
+   A pure atmospheric background for a mobile app store screenshot.
+   The Android Pixel 9 Pro frame will be overlaid on top by a separate compositor.
    You are generating ONLY the backdrop — like a professional studio backdrop behind a product shot.
 
-   ══ THE 6 STRICT CONSTRAINTS (ALL MANDATORY) ══
+   ══ THE 5 MANDATORY CONSTRAINTS ══
 
-   CONSTRAINT 1 — ZERO HARDWARE
+   CONSTRAINT 1 — ZERO HARDWARE (ABSOLUTE NON-NEGOTIABLE)
    ─ The output must contain ZERO device frames, smartphones, silhouettes, notches, bezels,
      screens, or any hardware mockup of any kind.
    ─ ${isRTL ? "لا يجوز تضمين أي جهاز، هاتف، أو إطار في الصورة. الخلفية فقط." : "No device of any kind. Background art only."}
-   ─ If you describe a phone or screen, the final composited image will have two overlapping frames = unusable.
+   ─ If you describe a phone or screen, the final composited image will have two overlapping frames = UNUSABLE.
+   ─ DO NOT MENTION: phone, smartphone, iPhone, Android, device, frame, mockup, silhouette, screen.
 
-   CONSTRAINT 2 — 30% NEGATIVE SPACE (CRITICAL FOR COMPOSITION)
+   CONSTRAINT 2 — 30% NEGATIVE SPACE (COMPOSITION SAFETY)
    ─ The ${isRTL ? "LEFT" : "RIGHT"} third of the canvas must be kept CLEAN and relatively uncluttered.
      This zone receives the phone frame overlay. Keep background elements light, subtle, or absent here.
    ─ The ${isRTL ? "RIGHT" : "LEFT"} two-thirds is the active zone — this is where rich brand elements live.
@@ -224,17 +383,16 @@ Produce a LayoutMap JSON that drives two systems:
    ─ Vary: gradient direction, shape density, light source, element scale.
    ─ Keep constant: hue family, saturation level, overall tone (dark/light).
 
-   CONSTRAINT 4 — PROFESSIONAL AESTHETIC
-   ─ Use soft-light gradients, abstract geometric shapes, or subtle organic textures.
-   ─ Style reference: Notion, Calm, Duolingo, Robinhood, Linear, Headspace — intentional, spacious, premium.
-   ─ Avoid: neon explosions, rainbow gradients, busy patterns, stock-photo clichés.
-   ─ The slide role is: ${slideRole} — let the energy of the composition reflect this role.
-     (Hero = boldest, most impactful. Features = focused, single-idea. Trust = warm, credible. CTA = confident.)
+   CONSTRAINT 4 — MOOD SCHEMA AESTHETIC (USE SCHEMA KEYWORDS)
+   ─ Your visual description MUST incorporate aesthetic keywords from "${selectedMoodSchema.id}":
+     ${selectedMoodSchema.aestheticKeywords.join(", ")}
+   ─ Use ONLY these keywords. Do NOT invent new aesthetic descriptors.
+   ─ The style reference brands for this schema: See schema definition above.
 
-   CONSTRAINT 5 — EXPLICIT EXCLUSIONS (hardcoded in Runware negative prompt — reinforce in your description)
+   CONSTRAINT 5 — EXPLICIT EXCLUSIONS (REINFORCED IN RUNWARE NEGATIVE)
    ─ Your prompt must NOT contain any of these words or concepts:
      phone, smartphone, iPhone, Android, device, hardware, frame, notch, bezel, screen,
-     text, lettering, words, UI, interface, mockup, silhouette, gadget.
+     text, lettering, words, UI, interface, mockup, silhouette, gadget, app screenshot.
 
    ══ WHAT TO INCLUDE ══
    ─ Describe: gradient direction and stops, dominant and accent colours, abstract geometric forms,
@@ -243,7 +401,7 @@ Produce a LayoutMap JSON that drives two systems:
    ─ Locale: ${isRTL ? "Arabic (RTL) — composition must be mirrored. Active zone on the RIGHT. Frame zone on the LEFT." : "English (LTR) — standard. Active zone on the LEFT. Frame zone on the RIGHT."}
    ─ Runware-ready: concrete, evocative, adjective-rich. No markdown, no quotes.
 
-2. CANVAS COMPOSITOR METADATA
+2. CANVAS COMPOSITOR METADATA (sharp Compositing)
    ─ textPosition: "top" (slides 1,6), "center" (slides 3,4), "bottom" (slides 2,5) — vary it.
    ─ textColor: "#ffffff" if background is dark/mid-tone; "#0f0f0f" only if background is very light.
    ─ accentColor: exact 6-digit hex for gradient stop 1 (primary brand colour or derived).
@@ -252,6 +410,15 @@ Produce a LayoutMap JSON that drives two systems:
    ─ uiMockDescription: "${uiMock}" (refine if needed for this specific slide).
    ─ backgroundLuminance: "dark" if the background is predominantly dark; "light" if predominantly light.
    ─ negativeAdditions: ALWAYS include "phone, smartphone, iPhone, Android phone, device, mockup, screen, bezel, notch" plus any slide-specific additions (e.g. for light backgrounds add "dark background, low key lighting").
+
+3. MOOD SCHEMA CONFIGURATION (Asset Selection for sharp Pipeline)
+   ─ selectedSchema: MUST be one of: "minimalist-professional" | "energetic-tech" | "organic-health" | "high-contrast-bold" | "luxury-premium"
+   ─ RECOMMENDED for this app: "${selectedMoodSchema.id}"
+   ─ typographyConfig:
+     • primaryColor: exact 6-digit hex (typically accent color for text/badges)
+     • fontStyle: MUST be ONE of: "bold" | "elegant" | "clean" (from "${selectedMoodSchema.id}", fontStyle is "${selectedMoodSchema.fontStyle}")
+     • shadowProfile: MUST be ONE of: "sharp" | "soft-spread" | "subtle" | "hard-edge" | "deep"
+       (from "${selectedMoodSchema.id}", shadowProfile is "${selectedMoodSchema.shadowProfile}")
 
 BRAND MIRROR QUALITY MANDATE
 ------------------------------
@@ -293,20 +460,70 @@ function parseLuminance(raw: unknown): "dark" | "light" {
   return "dark";
 }
 
-function parseLayoutMap(raw: unknown, brandColor?: string, primaryColor?: string): LayoutMap {
+// ─────────────────────────────────────────────────────────────────────────
+// Mood Schema field validators
+// ─────────────────────────────────────────────────────────────────────────
+
+function parseSelectedSchema(raw: unknown): MoodSchemaType {
+  const validIds = getValidSchemaIds();
+  if (typeof raw === "string" && validIds.includes(raw as MoodSchemaType)) {
+    return raw as MoodSchemaType;
+  }
+  // Fallback to energetic-tech if invalid
+  return "energetic-tech";
+}
+
+function parseFontStyle(raw: unknown): "bold" | "elegant" | "clean" {
+  if (raw === "bold" || raw === "elegant" || raw === "clean") return raw;
+  return "clean";
+}
+
+function parseShadowProfile(raw: unknown): "sharp" | "soft-spread" | "subtle" | "hard-edge" | "deep" {
+  if (["sharp", "soft-spread", "subtle", "hard-edge", "deep"].includes(raw as string)) {
+    return raw as "sharp" | "soft-spread" | "subtle" | "hard-edge" | "deep";
+  }
+  return "subtle";
+}
+
+function parseLayoutMap(
+  raw: unknown,
+  brandColor?: string,
+  primaryColor?: string,
+  selectedMoodSchema?: MoodSchema,
+): LayoutMap {
   const r = (raw ?? {}) as Record<string, unknown>;
-  const fallbackAccent = brandColor ?? "#22C55E";
-  const fallbackSecondary = primaryColor ?? "#16a34a";
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRITICAL: Use derived colors, NOT green fallback
+  // If Gemini returns invalid hex values, fall back to brandColor or schema color.
+  // ─────────────────────────────────────────────────────────────────────────
+  const fallbackAccent = brandColor ?? selectedMoodSchema?.primaryColor ?? "#6366F1";
+  const fallbackSecondary = primaryColor ?? deriveSecondaryColor(fallbackAccent);
+
+  // Parse Mood Schema selection
+  const parsedSchema = parseSelectedSchema(r.selectedSchema);
+  const schema = MOOD_SCHEMAS[parsedSchema];
+
+  // Parse typography config
+  const typographyRaw = (r.typographyConfig ?? {}) as Record<string, unknown>;
+  const typographyConfig = {
+    primaryColor: parseHex(typographyRaw.primaryColor, fallbackAccent),
+    fontStyle: parseFontStyle(typographyRaw.fontStyle),
+    shadowProfile: parseShadowProfile(typographyRaw.shadowProfile),
+  };
+
   return {
-    backgroundPrompt:     clamp(r.backgroundPrompt, 900, `Premium brand-identity background for ${brandColor ?? "green"} accent app, clean professional gradient, generous whitespace`),
-    negativeAdditions:    clamp(r.negativeAdditions, 300, ""),
+    backgroundPrompt:     clamp(r.backgroundPrompt, 900, `BACKGROUND ONLY. Premium brand-identity background for ${brandColor ?? "neutral"} app, clean professional gradient, generous whitespace. NO PHONE FRAME.`),
+    negativeAdditions:    clamp(r.negativeAdditions, 300, "phone, smartphone, iPhone, Android phone, device, mockup, screen, bezel, notch, hardware, frame"),
     textPosition:         parseTextPosition(r.textPosition),
     textColor:            parseTextColor(r.textColor),
     accentColor:          parseHex(r.accentColor, fallbackAccent),
     accentColorSecondary: parseHex(r.accentColorSecondary, fallbackSecondary),
-    backgroundMood:       clamp(r.backgroundMood, 60, "modern brand gradient"),
+    backgroundMood:       clamp(r.backgroundMood, 60, `${schema.label} style`),
     uiMockDescription:    clamp(r.uiMockDescription, 250, "clean app dashboard with data visualisation"),
     backgroundLuminance:  parseLuminance(r.backgroundLuminance),
+    selectedSchema:       parsedSchema,
+    typographyConfig,
   };
 }
 
@@ -317,6 +534,9 @@ function parseLayoutMap(raw: unknown, brandColor?: string, primaryColor?: string
 export async function generateScreenshotLayout(
   input: GenerateScreenshotLayoutInput,
 ): Promise<LayoutMap> {
+  // Pre-compute selected Mood Schema for fallback reference
+  const selectedMoodSchema = selectMoodSchemaForCategory(input.category);
+
   const apiKey = assertGeminiApiKey();
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
@@ -345,5 +565,5 @@ export async function generateScreenshotLayout(
     );
   }
 
-  return parseLayoutMap(parsed, input.brandColor, input.primaryColor);
+  return parseLayoutMap(parsed, input.brandColor, input.primaryColor, selectedMoodSchema);
 }

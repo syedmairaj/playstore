@@ -380,14 +380,16 @@ async function runBackground(opts: {
           inferredMood: pack.inferredMood,
         }).catch((): LayoutMap => ({
           backgroundPrompt:
-            `${style} brand-identity background for ${category} app, ` +
-            `${brandColor ? `dominant ${brandColor} brand color, ` : ""}` +
-            "identity-synced premium gradient, generous whitespace, top-10 app quality",
-          negativeAdditions: "phone, smartphone, iPhone, Android phone, device, mockup, screen, bezel, notch, generic, template, clip-art, amateurish",
+            `BACKGROUND ONLY — NO DEVICE FRAME. ${style} brand-identity background for ${category} app. ` +
+            `${brandColor ? `Dominant brand color: ${brandColor}. ` : "Neutral, warm palette. "}` +
+            "Pure atmospheric backdrop — the Android phone frame will be overlaid separately. " +
+            "Identity-synced premium gradient, generous whitespace, top-10 app quality. " +
+            "30% negative space on the right third reserved for device frame overlay.",
+          negativeAdditions: "phone, smartphone, mobile phone, iPhone, Android phone, device, mockup, screen, bezel, notch, hardware, frame, silhouette, generic, template, clip-art, amateurish, UI elements, interface, app screenshot",
           textPosition: "bottom",
           textColor: "#ffffff",
-          accentColor: brandColor ?? "#22C55E",
-          accentColorSecondary: primaryColor ?? "#16a34a",
+          accentColor: brandColor ?? "#6366F1",
+          accentColorSecondary: primaryColor ?? "#4F46E5",
           backgroundMood: "modern brand gradient",
           uiMockDescription: `${appName} main dashboard screen`,
           backgroundLuminance: "dark",
@@ -403,17 +405,17 @@ async function runBackground(opts: {
     const backgroundUrls = await callRunware(runwarePrompts);
     const batchId = randomUUID();
 
-    // ── Pre-fetch the Android frame buffer once for the entire batch ──────
-    // composeScreenshot will use this shared buffer for all 6 slides so we
-    // don't re-render the SVG → PNG 6 times in parallel.
-    const androidFrame = await getAndroidFrameAndCache();
-
-    // ── Compose + upload each slide in parallel ───────────────────────────
+    // ── Composition pipeline for all 6 slides ─────────────────────────────
+    // Schema-aware compositing with deterministic typography + shadows.
+    // Each slide uses its layoutMap for schema-specific styling.
+    //
     // Pipeline per slide:
     //   1. Fetch raw FLUX background blob from Runware CDN
     //   2. Compose: scale bg to 1080×1920, overlay Android frame (locale-aware)
-    //   3. Save composed PNG to Supabase Storage
-    //   4. Write progress to screenshot_jobs so client polls see incremental updates
+    //   3. Apply schema-specific shadow profile to frame
+    //   4. Use schema's fontStyle for typography (done at export, not here)
+    //   5. Save composed PNG to Supabase Storage
+    //   6. Write progress to screenshot_jobs so client polls see incremental updates
     const completedSlides: unknown[] = [];
 
     await Promise.all(
@@ -428,12 +430,13 @@ async function runBackground(opts: {
           // Convert Blob → Buffer for sharp
           const rawBuffer = Buffer.from(await rawBlob.arrayBuffer());
 
-          // Composition-First: compose background + Android frame server-side
+          // Composition-First: compose background + schema-driven frame + shadows
           // This is the only place device frames are applied — deterministic,
           // always Android, never AI-generated.
+          // Schema metadata (selectedSchema, typographyConfig) drives asset selection.
           let composedBuffer: Buffer;
           try {
-            composedBuffer = await composeScreenshot(rawBuffer, androidFrame, locale);
+            composedBuffer = await composeScreenshot(rawBuffer, layoutMap, locale);
           } catch (composeErr) {
             // Composition failure is non-fatal — fall back to raw background
             console.warn(`[screenshot/compose] slide ${i} compose failed:`, composeErr);
