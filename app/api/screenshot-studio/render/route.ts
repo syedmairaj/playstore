@@ -77,13 +77,23 @@ const bodySchema = z.object({
 
 // ─── BASE negative prompt (Consultant: no text, no phone frame from FLUX) ────
 
-const BASE_NEGATIVE_PROMPT = [
-  "text, letters, words, typography, captions, headlines, labels, watermark,",
-  "phone frame, device mockup, smartphone outline, screen bezel, UI chrome, app interface,",
-  "blurry, low quality, distorted, oversaturated, noisy, grainy,",
-  "portrait of person, face, human, photorealistic person,",
-  "cluttered, busy composition, centered focal point",
-].join(" ");
+// Kept in sync with BASE_NEGATIVE in the generate route — same 5-constraint exclusion list.
+const BASE_NEGATIVE_PROMPT =
+  "phone, smartphone, mobile phone, iPhone, Apple iPhone, iOS device, " +
+  "Android phone, Android device, device mockup, phone frame, phone outline, " +
+  "phone silhouette, phone shape, hardware, hardware frame, hardware mockup, " +
+  "screen bezel, notch, dynamic island, home button, phone screen, " +
+  "tablet, iPad, laptop, computer, monitor, device, gadget, electronics, " +
+  "text, lettering, letters, words, fonts, typography, headline, caption, " +
+  "watermark, label, logotype, word mark, numbers, digits, " +
+  "UI chrome, app interface, app screenshot, interface mockup, " +
+  "icons, app icons, navigation bar, status bar, buttons, " +
+  "centered busy composition, crowded layout, cluttered background, " +
+  "dense pattern covering full frame, objects in center of image, busy middle section, " +
+  "amateurish, clip art, stock photo look, AI-generated artefacts, " +
+  "cheap gradient, rainbow gradient, neon explosion, garish colors, " +
+  "blurry, noisy, grainy, oversaturated, distorted, low quality, " +
+  "portrait of person, realistic face, photorealistic human, hand, body part";
 
 // ─── Runware call ─────────────────────────────────────────────────────────────
 

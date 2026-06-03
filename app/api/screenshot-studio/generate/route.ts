@@ -54,6 +54,7 @@ import { loadLatestListingHydrationForApp } from "@/lib/listing/latest-listing-h
 import { generateScreenshotPack } from "@/lib/gemini/generate-screenshot-pack";
 import { generateScreenshotLayout, type LayoutMap } from "@/lib/gemini/generate-screenshot-layout";
 import { RunwareApiError, RunwareNotConfiguredError } from "@/lib/features/ai/runware";
+import { composeScreenshot, getAndroidFrameAndCache } from "@/lib/screenshot/compose-screenshot";
 
 const ROUTE = "POST /api/screenshot-studio/generate";
 const BUCKET = "brand-assets";
@@ -82,20 +83,43 @@ const bodySchema = z.object({
 
 // ─── Negative prompt ──────────────────────────────────────────────────────────
 
-// Every term that could cause FLUX to render a phone/device in the background.
-// The background must be PURE atmosphere — the Android frame is composited by
-// the canvas layer, never drawn by the AI model.
+// ── Runware negative prompt — applied to EVERY slide in EVERY generation ──────
+//
+// This is the hardcoded exclusion list that enforces the 5 constraints:
+//   1. Zero hardware (phone, frame, bezel, notch, screen…)
+//   2. No text or lettering
+//   3. No cluttered or busy composition (preserves 30% negative space)
+//   4. No amateurish or cheap aesthetics
+//   5. Arabic / locale-agnostic — same negative applies for both EN and AR
+//
+// Mirrors the explicit negative prompt from the product spec:
+// "phone, smartphone, iphone, android, device, hardware, frame, notch,
+//  bezel, screen, text, lettering, words"
 const BASE_NEGATIVE =
+  // ── Hardware (constraint 1) ─────────────────────────────────────────────
   "phone, smartphone, mobile phone, iPhone, Apple iPhone, iOS device, " +
-  "Android phone, device mockup, phone frame, phone outline, phone silhouette, " +
+  "Android phone, Android device, device mockup, phone frame, phone outline, " +
+  "phone silhouette, phone shape, hardware, hardware frame, hardware mockup, " +
   "screen bezel, notch, dynamic island, home button, phone screen, " +
-  "tablet, iPad, laptop, computer, monitor, device, gadget, " +
-  "text, letters, words, fonts, typography, headlines, captions, watermark, " +
+  "tablet, iPad, laptop, computer, monitor, device, gadget, electronics, " +
+  "product shot with device, tech device, mobile device, hand holding phone, " +
+  // ── Text / lettering (constraint 5) ────────────────────────────────────
+  "text, lettering, letters, words, fonts, typography, headline, caption, " +
+  "watermark, label, logotype, word mark, numbers, digits, " +
+  // ── UI / interface elements ─────────────────────────────────────────────
   "UI chrome, app interface, app screenshot, interface mockup, " +
+  "icons, app icons, navigation bar, status bar, buttons, " +
+  // ── Composition violations (constraint 2 — must leave negative space) ──
+  "centered busy composition, symmetrical busy center, " +
+  "crowded layout, cluttered background, dense pattern covering full frame, " +
+  "objects in center of image, busy middle section, " +
+  // ── Aesthetic quality (constraint 4) ───────────────────────────────────
   "amateurish, clip art, stock photo look, AI-generated artefacts, " +
-  "blurry, noisy, grainy, oversaturated, distorted, cheap, cluttered, " +
-  "portrait of person, realistic face, photorealistic human, " +
-  "centered busy composition, gradients that clash";
+  "cheap gradient, rainbow gradient, neon explosion, garish colors, " +
+  "blurry, noisy, grainy, oversaturated, distorted, low quality, " +
+  "watercolor wash, painterly, illustration, cartoon, " +
+  // ── People ─────────────────────────────────────────────────────────────
+  "portrait of person, realistic face, photorealistic human, hand, body part";
 
 // ─── Runware: single batch call for all 6 images ──────────────────────────────
 
@@ -379,9 +403,17 @@ async function runBackground(opts: {
     const backgroundUrls = await callRunware(runwarePrompts);
     const batchId = randomUUID();
 
-    // ── Storage: fetch blobs + upload in parallel ─────────────────────────
-    // Each slide updates the job row as it completes so the client sees
-    // incremental progress rather than waiting for all 6.
+    // ── Pre-fetch the Android frame buffer once for the entire batch ──────
+    // composeScreenshot will use this shared buffer for all 6 slides so we
+    // don't re-render the SVG → PNG 6 times in parallel.
+    const androidFrame = await getAndroidFrameAndCache();
+
+    // ── Compose + upload each slide in parallel ───────────────────────────
+    // Pipeline per slide:
+    //   1. Fetch raw FLUX background blob from Runware CDN
+    //   2. Compose: scale bg to 1080×1920, overlay Android frame (locale-aware)
+    //   3. Save composed PNG to Supabase Storage
+    //   4. Write progress to screenshot_jobs so client polls see incremental updates
     const completedSlides: unknown[] = [];
 
     await Promise.all(
@@ -389,13 +421,31 @@ async function runBackground(opts: {
         const slide = pack.slides[i];
         const layoutMap = layoutMaps[i];
 
-        const blob = await fetchBlob(url);
+        const rawBlob = await fetchBlob(url);
         let finalUrl = url;
 
-        if (blob) {
+        if (rawBlob) {
+          // Convert Blob → Buffer for sharp
+          const rawBuffer = Buffer.from(await rawBlob.arrayBuffer());
+
+          // Composition-First: compose background + Android frame server-side
+          // This is the only place device frames are applied — deterministic,
+          // always Android, never AI-generated.
+          let composedBuffer: Buffer;
+          try {
+            composedBuffer = await composeScreenshot(rawBuffer, androidFrame, locale);
+          } catch (composeErr) {
+            // Composition failure is non-fatal — fall back to raw background
+            console.warn(`[screenshot/compose] slide ${i} compose failed:`, composeErr);
+            composedBuffer = rawBuffer;
+          }
+
+          // Convert Node Buffer → Uint8Array so Blob constructor accepts it in all TS targets
+          const composedBlob = new Blob([new Uint8Array(composedBuffer)], { type: "image/png" });
           const stored = await saveSlideToVault(admin, {
             workspaceId, appId,
-            variantIndex: i, batchId, blob,
+            variantIndex: i, batchId,
+            blob: composedBlob,
             locale, style, layoutMap,
             headline: slide.headline,
             subline: slide.subline,

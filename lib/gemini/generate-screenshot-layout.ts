@@ -196,22 +196,51 @@ TASK
 Produce a LayoutMap JSON that drives two systems:
 
 1. RUNWARE BACKGROUND PROMPT (backgroundPrompt)
-   ─ Generate an IDENTITY-SYNCED background. The background IS the brand.
-   ─ It must look like it was designed by the app's own design team, not by a template engine.
-   ─ Dominant colors MUST derive from the brand palette above.
-   ─ Composition: Rich but controlled. Bold colour expression in the ${isRTL ? "right" : "left"} two-thirds (text zone).
-     Slightly lighter/darker zone in the ${isRTL ? "left" : "right"} third to subtly frame the phone.
-   ─ Style reference: Think Duolingo, Notion, Calm, Robinhood, Headspace — premium, intentional, breathing.
 
-   ██ CRITICAL — READ CAREFULLY ██
-   ─ The backgroundPrompt MUST describe ONLY: colours, gradients, abstract shapes, lighting, textures, atmosphere.
-   ─ ABSOLUTELY NO phones, smartphones, devices, iPhone, Android, screens, mockups, frames, or gadgets of any kind.
-   ─ ABSOLUTELY NO text, letters, UI elements, icons, or interface components.
-   ─ The canvas compositor will overlay the Android phone frame on top. Your background must be DEVICE-FREE.
-   ─ If you include any device in the prompt, the final image will show two overlapping frames and be unusable.
-   ─ Think: what would the WALLPAPER behind the phone look like? That is all you are generating.
+   ══ WHAT YOU ARE GENERATING ══
+   A pure background image for a mobile app store screenshot.
+   The Android phone frame will be overlaid on top by a separate compositor.
+   You are generating ONLY the backdrop — like a professional studio backdrop behind a product shot.
 
-   ─ Include: lighting direction, gradient direction, geometric elements, texture if appropriate.
+   ══ THE 6 STRICT CONSTRAINTS (ALL MANDATORY) ══
+
+   CONSTRAINT 1 — ZERO HARDWARE
+   ─ The output must contain ZERO device frames, smartphones, silhouettes, notches, bezels,
+     screens, or any hardware mockup of any kind.
+   ─ ${isRTL ? "لا يجوز تضمين أي جهاز، هاتف، أو إطار في الصورة. الخلفية فقط." : "No device of any kind. Background art only."}
+   ─ If you describe a phone or screen, the final composited image will have two overlapping frames = unusable.
+
+   CONSTRAINT 2 — 30% NEGATIVE SPACE (CRITICAL FOR COMPOSITION)
+   ─ The ${isRTL ? "LEFT" : "RIGHT"} third of the canvas must be kept CLEAN and relatively uncluttered.
+     This zone receives the phone frame overlay. Keep background elements light, subtle, or absent here.
+   ─ The ${isRTL ? "RIGHT" : "LEFT"} two-thirds is the active zone — this is where rich brand elements live.
+   ─ Think of it as: active zone (text + brand) | breathing zone (frame overlay).
+   ─ Do NOT place high-contrast shapes, gradients, or busy patterns in the frame zone.
+
+   CONSTRAINT 3 — COHESIVE PALETTE ACROSS ALL 6 SLIDES
+   ─ All 6 backgrounds share the same brand palette: ${paletteDesc}
+   ─ Each slide may vary in composition, energy, and element placement — but the colour language
+     must be immediately recognisable as part of the same visual family.
+   ─ Vary: gradient direction, shape density, light source, element scale.
+   ─ Keep constant: hue family, saturation level, overall tone (dark/light).
+
+   CONSTRAINT 4 — PROFESSIONAL AESTHETIC
+   ─ Use soft-light gradients, abstract geometric shapes, or subtle organic textures.
+   ─ Style reference: Notion, Calm, Duolingo, Robinhood, Linear, Headspace — intentional, spacious, premium.
+   ─ Avoid: neon explosions, rainbow gradients, busy patterns, stock-photo clichés.
+   ─ The slide role is: ${slideRole} — let the energy of the composition reflect this role.
+     (Hero = boldest, most impactful. Features = focused, single-idea. Trust = warm, credible. CTA = confident.)
+
+   CONSTRAINT 5 — EXPLICIT EXCLUSIONS (hardcoded in Runware negative prompt — reinforce in your description)
+   ─ Your prompt must NOT contain any of these words or concepts:
+     phone, smartphone, iPhone, Android, device, hardware, frame, notch, bezel, screen,
+     text, lettering, words, UI, interface, mockup, silhouette, gadget.
+
+   ══ WHAT TO INCLUDE ══
+   ─ Describe: gradient direction and stops, dominant and accent colours, abstract geometric forms,
+     lighting direction (soft directional light, ambient glow), texture grain if appropriate,
+     compositional energy (calm/dynamic/bold), depth layers (foreground accent / midground / background).
+   ─ Locale: ${isRTL ? "Arabic (RTL) — composition must be mirrored. Active zone on the RIGHT. Frame zone on the LEFT." : "English (LTR) — standard. Active zone on the LEFT. Frame zone on the RIGHT."}
    ─ Runware-ready: concrete, evocative, adjective-rich. No markdown, no quotes.
 
 2. CANVAS COMPOSITOR METADATA
