@@ -1,21 +1,19 @@
 "use client";
 
-import { useRouter } from "@/i18n/navigation";
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useTranslations } from "next-intl";
+import { useAuthModal } from "@/components/auth/auth-modal-context";
 import { cn } from "@/lib/utils";
 
 export function SignOutButton({ className }: { className?: string }) {
-  const router = useRouter();
+  const t = useTranslations("dashboard");
+  const { closeAuth } = useAuthModal();
   const [loading, setLoading] = useState(false);
 
-  async function signOut() {
+  function signOut() {
     setLoading(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.replace("/login");
-    router.refresh();
-    setLoading(false);
+    closeAuth();
+    window.location.assign(new URL("/auth/signout", window.location.origin).toString());
   }
 
   return (
@@ -29,7 +27,7 @@ export function SignOutButton({ className }: { className?: string }) {
         className,
       )}
     >
-      {loading ? "Signing out…" : "Sign out"}
+      {loading ? t("signingOut") : t("signOut")}
     </button>
   );
 }

@@ -25,11 +25,13 @@ This document is the **implementation source of truth** for Phase 2 alongside `d
 
 ## Keyword flow
 
-1. **Create keyword** — `POST /api/workspaces/:workspaceId/keywords` with `{ "term": "…", "market"?: "us", "locale"?: "en-US", "appId"?: uuid }`. If `appId` is omitted, the **first** app in the workspace is used.
-2. **List + history** — `GET` the same path returns keywords plus up to **40** recent rank points per term (chronological `ranks` + `latest`). Server pages reuse `loadWorkspaceKeywords` (`lib/keywords/load-workspace-keywords.ts`).
-3. **Record rank snapshot** — `POST /api/workspaces/:workspaceId/keywords/:keywordId/ranks` with `{ "rank": number, "source"?: "manual" }`. Lower rank is better on Google Play.
-4. **Trends in UI** — `components/keywords/KeywordsPanel.tsx` renders a compact bar sparkline from stored ranks (no third-party chart library).
-5. **Play Store data** — There is **no** live Play Store scrape yet; ranks are **manual snapshots** (foundation for a future worker/crawler).
+1. **Create keyword** — `POST /api/workspaces/:workspaceId/keywords` with `{ "term": "…", "market"?: "us", "locale"?: "en-US", "appId"?: uuid, "initialRanks"?: { "country": "us"|…, "rank": number }[] }`. If `appId` is omitted, the **first** app in the workspace is used. Duplicate normalized term per app + market returns **409**. Optional **`initialRanks`** (same per-country shape as **`serper-save`** `snapshotRanks`) inserts **`keyword_rank_snapshots`** (`source = serper`) immediately after the keyword row when the app has a **`package_name`**; otherwise **400** `no_package_name` and the keyword insert is rolled back. With no **`initialRanks`**, new rows still have no snapshots until Serper **save** or **refresh** (or manual `POST …/ranks`).
+2. **Bulk add from AI listing** — `POST /api/workspaces/:workspaceId/keywords/bulk` with `{ "terms": string[], "appId": uuid, "listingGenerationId": uuid }` adds multiple suggested keywords from a saved **`listing_generations`** row; **no AI credits** (lightweight inserts). Rows store **`source = ai_listing`** and **`listing_generation_id`**.
+3. **List + history** — `GET` supports optional `?appId=` filter. Response keywords include up to **40** recent rank points per term (chronological `ranks` + `latest`) from **`keyword_rank_snapshots`**. Optional **`ensureDemoSnapshots: true`** on `loadWorkspaceKeywords` (tests only) inserts demo rows when a keyword has no snapshots; production pages leave this off.
+4. **Delete keyword** — `DELETE /api/workspaces/:workspaceId/keywords/:keywordId` removes the keyword (ranks cascade).
+5. **Record rank snapshot** — `POST /api/workspaces/:workspaceId/keywords/:keywordId/ranks` with `{ "rank": number, "source"?: "manual" }`. Lower rank is better on Google Play.
+6. **Trends in UI** — Workspace **Keyword tracker** (`/keywords`) uses `components/keyword-tracker/KeywordTrackerClient.tsx`: Supabase-backed table, app scope selector, Sonner toasts, rank history dialog, 7‑day sparkline + delta from stored snapshots.
+7. **Play Store data** — Live Google results via Serper: **`POST /api/serper/play-store-search`** (preview; **`num: 20`**; **AI credits per selected country**, wallet debit **before** Serper + refund on failure), **`POST …/keywords/serper-save`** (persists **`source = serper`** snapshots from the client’s preview payload; **no extra AI credits**), **`POST …/keywords/:keywordId/serper-refresh`** (live re-fetch, **`num: 100`** per country for deeper organic matching; **same AI credits per country** as preview). Rank **101** means the app was not in the returned organic slice for that request; the UI may label that as “20+” (preview depth) or equivalent for older copy. Optional demo snapshots remain for local/testing via `loadWorkspaceKeywords({ ensureDemoSnapshots: true })`.
 
 ## Alerts flow
 
@@ -37,6 +39,7 @@ This document is the **implementation source of truth** for Phase 2 alongside `d
    - **`rank_drop`** — New rank is worse than previous by more than **3** positions.
    - **`rank_threshold`** — Previously in the **top 10**, now **outside** the top 10.
 2. Rows land in `workspace_alerts`. Members list them under **Alerts**; `PATCH /api/workspaces/:workspaceId/alerts` with `{ "alertIds": ["…"] }` sets `read_at`.
+3. After **Serper refresh** (and manual rank save), `maybeCreateAsoRankImprovementAlert` (`lib/keywords/evaluate-aso-improvement-alert.ts`) may insert **`aso_rank_improvement`** when the keyword has a linked listing generation and the headline rank improves by **≥5** vs `rank_at_last_listing_optimization` (or vs `aso_baseline_rank` if the anchor rank was unknown at link time). At most **one** such alert per keyword per linked `listing_generation_id`. UI copy is translated from alert `meta` (`keywordTerm`, `fromRank`, `toRank`).
 
 ## RLS summary
 

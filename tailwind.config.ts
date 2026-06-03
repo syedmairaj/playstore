@@ -60,9 +60,14 @@ const config: Config = {
           "0%": { opacity: "0", transform: "translateY(12px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        "logo-skeleton-shimmer": {
+          "0%": { backgroundPosition: "200% 0" },
+          "100%": { backgroundPosition: "-200% 0" },
+        },
       },
       animation: {
         "fade-up": "fade-up 0.5s ease-out forwards",
+        "logo-skeleton-shimmer": "logo-skeleton-shimmer 2.4s ease-in-out infinite",
       },
     },
   },

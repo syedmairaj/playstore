@@ -20,7 +20,7 @@
 
 - **Auth:** Supabase email/password, cookie sessions via `@supabase/ssr`, `middleware.ts` refresh, `/auth/callback` exchange route, `/login` and `/signup`.
 - **Onboarding:** `/onboarding` creates the first **workspace** + default **app** via `POST /api/workspaces`; `/app` hub redirects into `/app/[workspaceId]`.
-- **Tenancy:** `workspaces`, `workspace_members` (roles `owner` | `admin` | `member`), `apps`, `keywords`, `keyword_ranks`, `workspace_alerts`; all tenant data scoped by `workspace_id` with **RLS** (`is_workspace_member`, see migration).
+- **Tenancy:** `workspaces`, `workspace_members` (roles `owner` | `admin` | `member`), `apps`, `keywords`, `keyword_rank_snapshots`, `workspace_alerts`; all tenant data scoped by `workspace_id` with **RLS** (`is_workspace_member`, see migration).
 - **Product UI:** Overview, Keywords (history + sparkline + manual rank snapshots), Alerts (read/mark read), Listing AI (workspace-scoped), Team roster (`/settings`).
 - **Listing generations:** Rows require `workspace_id` + `user_id`; API requires a signed-in user (see `docs/phase2-auth-workspaces-keywords.md`).
 - **Public anon key:** `NEXT_PUBLIC_SUPABASE_ANON_KEY` for browser and server user-scoped clients; service role remains for rate limit + `usage_logs` only.
@@ -162,6 +162,14 @@ components/features/visualizer/ — The CSS-based Phone Frame and Mockup compone
 
 - **Table:** `credits_ledger` (append-only; negative `amount` = spend, positive = refund/top-up).
 - **RPCs:** `consume_workspace_ai_credits` (member + balance check, row lock, debit + ledger row) and `refund_workspace_ai_credits` (reverses a spend; idempotent via `already_refunded`).
-- **API:** `POST /api/listings/generate` calls `consumeWorkspaceAiCredits` **after** rate-limit and membership checks and **before** Gemini; on generation failure it calls `refundWorkspaceAiCredits`. Successful runs persist `listing_generations.credits_ledger_id` and `tool_type = aso_listing`.
-- **Costs:** `lib/features/billing/credit-costs.ts` — today `listing_generation` = **1** credit per run (bundle costs like ASO Growth Pack = 5 are reserved for future tools).
+- **API:** `POST /api/listings/generate`, `POST /api/listings/optimizer-autofill`, and `POST /api/apps/suggest` read `ai_credits_remaining` (non-mutating) when credits are required, then call `consumeWorkspaceAiCredits` **before** the external provider (`SELECT … FOR UPDATE` in the RPC); on hard failure they call `refundWorkspaceAiCredits`, so **net balance matches a successful outcome**. Keyword Tracker **live preview** (`POST /api/serper/play-store-search`) and **refresh** (`POST …/keywords/:keywordId/serper-refresh`) use the same wallet pattern for Serper (**debit before Serper**, **refund on throw**). Successful full listing runs persist `listing_generations.credits_ledger_id` and `tool_type = aso_listing`. Autofill does not create a `listing_generations` row.
+- **Costs:** `lib/features/billing/credit-costs.ts` — `listing_generation` = **5** credits per full listing run (including regenerate with `userInstruction`); `listing_optimizer_autofill` = **3** credits per single-field autofill click (keywords or features); **`serper_preview_per_country`** = **1** credit per market for **live preview** (`POST /api/serper/play-store-search`, per selected country) and **per-keyword refresh** (`serper-refresh`). **`reviews_ai_reply`** = **1** credit per AI reply draft on the Reviews dashboard (`POST …/reviews/:reviewId/draft-reply`). **`POST …/keywords/serper-save`** does not debit (persists an already-paid preview).
 
+### AI Image Engine (Runware Integration)
+- **Endpoint:** `https://api.runware.ai/v1`
+- **Model:** Flux.1 (Dev or Schnell) or Stable Diffusion XL.
+- **Workflow:** 
+  1. Frontend sends a "Logo Prompt" to a Next.js Server Action.
+  2. Server Action calls Runware via WebSocket or REST.
+  3. Runware returns a CDN URL for the generated icon.
+  4. The URL is passed to the `LivePreview` component.

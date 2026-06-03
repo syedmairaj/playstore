@@ -4,10 +4,29 @@ import { GrowthHubClient } from "@/components/dashboard/GrowthHubClient";
 import { createClient } from "@/lib/supabase/server";
 import { getFeatureFlags, isModuleEnabled } from "@/lib/features";
 import {
-  listingGenerationOutputSchema,
+  parsePersistedListingOutput,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
 import { cn } from "@/lib/utils";
+
+function metaString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Prefer `apps.icon_url`, then metadata (matches client listing preview). */
+function workspaceHomePreviewIconUrl(row: {
+  icon_url?: string | null;
+  metadata?: Record<string, unknown> | null;
+} | null): string {
+  if (!row) return "";
+  const col = metaString(row.icon_url);
+  const m = row.metadata;
+  if (!m || typeof m !== "object") return col;
+  const metaIcon =
+    metaString(m.icon_url) ||
+    metaString((m as { iconUrl?: unknown }).iconUrl);
+  return col || metaIcon;
+}
 
 export default async function WorkspaceHomePage({
   params,
@@ -22,7 +41,7 @@ export default async function WorkspaceHomePage({
 
   const { data: appRow } = await supabase
     .from("apps")
-    .select("name")
+    .select("name, icon_url, metadata")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true })
     .limit(1)
@@ -38,10 +57,7 @@ export default async function WorkspaceHomePage({
 
   let previewResult: ListingGenerationOutput | null = null;
   if (genRow?.output_json) {
-    const parsed = listingGenerationOutputSchema.safeParse(genRow.output_json);
-    if (parsed.success) {
-      previewResult = parsed.data;
-    }
+    previewResult = parsePersistedListingOutput(genRow.output_json);
   }
 
   const appName =
@@ -66,6 +82,8 @@ export default async function WorkspaceHomePage({
         category={category}
         keywords={keywords}
         previewResult={previewResult}
+        listingOptimizerEnabled={isModuleEnabled(flags, "listing_optimizer")}
+        previewIconUrl={workspaceHomePreviewIconUrl(appRow)}
       />
 
       <section className="border-t border-white/[0.08] pt-10">
@@ -73,7 +91,7 @@ export default async function WorkspaceHomePage({
         <ul className="mt-4 flex flex-wrap gap-3">
           {isModuleEnabled(flags, "listing_optimizer") ? (
             <li>
-              <Link href={`${appBase}/optimizer`} className={cn(linkClass)}>
+              <Link href={`${appBase}/listing-optimizer`} className={cn(linkClass)}>
                 {t("linkOptimizer")}
               </Link>
             </li>

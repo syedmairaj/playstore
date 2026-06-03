@@ -1,6 +1,7 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { PricingPlans } from "@/components/marketing/PricingPlans";
 import { PricingBottomSection } from "@/components/marketing/PricingBottomSection";
+import { PricingFaq } from "@/components/marketing/PricingFaq";
 
 type Props = { params: Promise<{ locale: string }> };
 
@@ -10,14 +11,19 @@ export default async function PricingPage({ params }: Props) {
   const t = await getTranslations("pricing");
 
   const compareRows = [
-    { label: t("compareRows.apps"), free: "1", pro: "5", growth: "∞" },
+    { label: t("compareRows.apps"), free: "1", pro: "5", growth: t("compareRows.appsGrowth") },
     {
       label: t("compareRows.keywords"),
       free: t("features.kwLimited"),
       pro: t("features.kwFull"),
       growth: t("features.kwFull"),
     },
-    { label: t("compareRows.credits"), free: "20", pro: "200", growth: "800" },
+    {
+      label: t("compareRows.credits"),
+      free: t("compareRows.creditsFree"),
+      pro: t("compareRows.creditsPro"),
+      growth: t("compareRows.creditsGrowth"),
+    },
     { label: t("compareRows.team"), free: "—", pro: "—", growth: "✓" },
     { label: t("compareRows.support"), free: "—", pro: "—", growth: "✓" },
   ];
@@ -59,26 +65,7 @@ export default async function PricingPage({ params }: Props) {
         </table>
       </section>
 
-      <section className="mt-24">
-        <h2 className="text-center text-xl font-bold text-white">{t("faq")}</h2>
-        <ul className="mx-auto mt-10 max-w-3xl space-y-4">
-          {[
-            { q: t("faq1q"), a: t("faq1a") },
-            { q: t("faq2q"), a: t("faq2a") },
-            { q: t("faq3q"), a: t("faq3a") },
-            { q: t("faq4q"), a: t("faq4a") },
-            { q: t("faq5q"), a: t("faq5a") },
-          ].map((item) => (
-            <li
-              key={item.q}
-              className="rounded-3xl border border-white/[0.08] bg-white/[0.05] p-6 shadow-md backdrop-blur-sm"
-            >
-              <p className="text-sm font-semibold text-white">{item.q}</p>
-              <p className="mt-2 text-sm leading-relaxed text-white/60">{item.a}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <PricingFaq locale={locale} />
 
       <PricingBottomSection />
     </div>

@@ -62,11 +62,11 @@ export function HeroInteractivePhone() {
       className="flex w-full max-w-[min(100%,320px)] flex-col gap-3"
       dir={isRtl ? "rtl" : "ltr"}
     >
-      <div className="flex items-center justify-between gap-2 px-1">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/45">
+      <div className="flex flex-col gap-1 px-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <p className="min-w-0 text-start text-[10px] font-semibold uppercase tracking-[0.2em] text-white/45 sm:flex-1 sm:pe-2">
           {t("phone.liveLabel")}
         </p>
-        <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
+        <span className="inline-flex w-fit shrink-0 self-end rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60 sm:self-start">
           {t("phone.interactiveBadge")}
         </span>
       </div>

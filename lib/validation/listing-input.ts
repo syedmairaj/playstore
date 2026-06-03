@@ -24,6 +24,13 @@ export const listingOptimizerRequestSchema = z.object({
   appFeatures: z.string().trim().min(1).max(8000),
   toneStyle: toneStyleSchema,
   targetArabic: z.boolean().optional(),
+  userInstruction: z.string().trim().max(2000).optional(),
+  /**
+   * Competitor pain-point targets staged from the Active Optimization Queue.
+   * Each entry is a short label (e.g. "Bug / Crash", "Ads too intrusive") that
+   * the prompt builder uses to craft strategic displacement copy.
+   */
+  exploitTargets: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
 });
 
 export type ListingOptimizerRequest = z.infer<

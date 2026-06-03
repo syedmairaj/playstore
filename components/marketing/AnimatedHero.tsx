@@ -39,7 +39,7 @@ export function AnimatedHero() {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.04 }}
-            className="mt-7 text-4xl font-bold tracking-tight text-white sm:text-5xl lg:text-[3.1rem] lg:leading-[1.1]"
+            className="mt-7 text-[2.125rem] font-bold tracking-tight text-white sm:text-[2.5rem] lg:text-[2.875rem] lg:leading-[1.12]"
           >
             {t("headline")}
           </motion.h1>
@@ -47,21 +47,29 @@ export function AnimatedHero() {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.1 }}
-            className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-white/60 sm:text-xl lg:mx-0"
+            className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-[1.55] text-white/62 sm:text-[1.0625rem] sm:leading-[1.58] lg:mx-0"
           >
             {t("sub")}
+          </motion.p>
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.14 }}
+            className="mx-auto mt-5 max-w-2xl text-center text-[0.8125rem] font-medium leading-snug text-white/70 sm:text-sm lg:mx-0 lg:text-start"
+          >
+            {t("trustStrong")}
           </motion.p>
           <motion.div
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.16 }}
-            className="mt-11 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4 lg:justify-start"
+            transition={{ duration: 0.55, delay: 0.2 }}
+            className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4 lg:justify-start"
           >
             <AuthModalTrigger
               intent="signup"
               label={t("ctaPrimary")}
               className={cn(
-                "hero-cta-breathe relative h-12 w-full min-w-[220px] overflow-hidden rounded-xl border-0 bg-[#22C55E] text-base font-bold text-white sm:w-auto",
+                "hero-cta-breathe relative h-12 w-full min-w-[220px] overflow-hidden rounded-xl border-0 bg-[#22C55E] text-base font-bold text-[#0B0E14] shadow-md shadow-[#22C55E]/15 sm:w-auto",
                 "transition-colors duration-200 hover:bg-[#4ade80]",
               )}
             />
@@ -77,21 +85,21 @@ export function AnimatedHero() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.26 }}
-            className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-white/50 lg:justify-start"
+            transition={{ duration: 0.5, delay: 0.28 }}
+            className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-white/50 lg:justify-start"
           >
             <span className="inline-flex items-center gap-2">
               <span className="h-1 w-1 shrink-0 rounded-full bg-[#22C55E]/90" aria-hidden />
               {t("trustBar.noCard")}
             </span>
-            <span className="hidden text-white/25 sm:inline" aria-hidden>
+            <span className="text-white/30" aria-hidden>
               ·
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="h-1 w-1 shrink-0 rounded-full bg-[#22C55E]/90" aria-hidden />
               {t("trustBar.cancel")}
             </span>
-            <span className="hidden text-white/25 sm:inline" aria-hidden>
+            <span className="text-white/30" aria-hidden>
               ·
             </span>
             <span className="inline-flex items-center gap-2">
@@ -99,22 +107,6 @@ export function AnimatedHero() {
               {t("trustBar.secure")}
             </span>
           </motion.div>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.45, delay: 0.3 }}
-            className="mx-auto mt-4 max-w-xl text-center text-sm font-medium leading-relaxed text-white/70 lg:mx-0 lg:text-start"
-          >
-            {t("trustStrong")}
-          </motion.p>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.45, delay: 0.36 }}
-            className="mt-2 text-xs text-white/45"
-          >
-            {t("trust")}
-          </motion.p>
         </div>
 
         <motion.div

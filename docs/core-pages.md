@@ -23,7 +23,7 @@ Public marketing uses route group **`(site)`** for shared header/footer without 
 3. **Invites** — `workspace_invitations` stores pending email invites (RLS: owners/admins insert). No email worker in-repo; teammates accept by signing up with the same email (manual join can be automated later).
 4. **Apps** — Optional `play_store_url`, `target_countries` on `apps` for onboarding step 3.
 5. **Profile prefs** — `profiles.notification_preferences` jsonb for the Notifications tab (email alerts, weekly summary, alert threshold UI).
-6. **Settings** — Single-page tabs (client) with server-fetched workspace, apps, members, invitations, profile, keyword count.
+6. **Settings** — Three-tab enterprise layout (client): **Workspace & Apps**, **Billing & Credit Usage**, **Integrations & Alerts**. Server-fetches workspace wallet fields, `credits_ledger` (last 50 rows), apps, members, invitations, profile, keyword count. Ledger API: `GET /api/workspaces/:id/credits-ledger`.
 7. **Dashboard** — Combines real counts (keywords, alerts, listing generations) with placeholder metrics where product features are not shipped yet (review sentiment, localization), labeled in UI.
 
 ## Migrations
@@ -41,5 +41,5 @@ No new variables beyond existing Supabase + Gemini. Optional: set `NEXT_PUBLIC_S
 1. Visit `/` — hero, features, social proof, CTA, footer; `/pricing` from nav.
 2. `/signup` → `/onboarding` — full wizard: welcome → workspace → app → keywords → insight → complete → `/app/:id` home.
 3. Dashboard: metrics, activity, quick actions, workspace list; switch workspace from sidebar control if multiple.
-4. `/app/:id/settings` — each tab loads; invite email; owner changes plan; save notifications & profile.
+4. `/app/:id/settings` — three tabs load; invite email; billing ledger + usage cards; save notifications & profile; owner changes plan.
 5. Delete workspace (owner) returns to `/app` (redirect to onboarding if no workspaces left).

@@ -30,7 +30,7 @@ export function buildAsoChecklist(
     { label: labels.checkApps, done: input.appsCount > 0, href: `${base}/settings` },
     { label: labels.checkKeywords, done: input.keywordCount > 0, href: `${base}/keywords` },
     { label: labels.checkSnapshots, done: input.hasSnapshots, href: `${base}/keywords` },
-    { label: labels.checkListing, done: input.listingDraftCount > 0, href: `${base}/optimizer` },
+    { label: labels.checkListing, done: input.listingDraftCount > 0, href: `${base}/listing-optimizer` },
     { label: labels.checkAlerts, done: input.alertRuleCount > 0, href: `${base}/alerts` },
   ];
   const score = checks.filter((c) => c.done).length * 20;
