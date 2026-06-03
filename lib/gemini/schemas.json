@@ -1,0 +1,171 @@
+{
+  "schemas": [
+    {
+      "id": "minimalist-professional",
+      "label": "Minimalist Professional",
+      "description": "Clean, distraction-free design for productivity and finance apps",
+      "categoryAffinities": ["productivity", "finance", "business", "tools"],
+      "primaryColor": "#6366F1",
+      "secondaryColor": "#E0E7FF",
+      "accentColor": "#818CF8",
+      "backgroundColor": "#F9FAFB",
+      "textColor": "#1F2937",
+      "fontStyle": "clean",
+      "shadowProfile": "subtle",
+      "luminance": "high",
+      "energyLevel": "calm",
+      "gestureProfile": "static",
+      "shapeLanguage": "geometric",
+      "patternDensity": "sparse",
+      "contrastRatio": 1.2,
+      "rtlOverrides": {
+        "enabled": true,
+        "mirrorAssets": true,
+        "textAlignment": "right",
+        "gestureProfile": "static",
+        "notes": "Geometric patterns remain symmetric when flipped. Text alignment handled by compositing engine."
+      }
+    },
+    {
+      "id": "energetic-tech",
+      "label": "Energetic Tech",
+      "description": "Bold, dynamic design with vibrant gradients for tech and gaming",
+      "categoryAffinities": ["games", "tech", "utilities", "social"],
+      "primaryColor": "#EC4899",
+      "secondaryColor": "#FE74E6",
+      "accentColor": "#F472B6",
+      "backgroundColor": "#0F172A",
+      "textColor": "#F1F5F9",
+      "fontStyle": "bold",
+      "shadowProfile": "dynamic",
+      "luminance": "dark",
+      "energyLevel": "high",
+      "gestureProfile": "animated",
+      "shapeLanguage": "organic",
+      "patternDensity": "moderate",
+      "contrastRatio": 1.8,
+      "rtlOverrides": {
+        "enabled": true,
+        "mirrorAssets": true,
+        "textAlignment": "right",
+        "gestureProfile": "animated",
+        "notes": "Organic shapes maintain visual balance when flipped horizontally. Animated gradients flow naturally for RTL."
+      }
+    },
+    {
+      "id": "organic-health",
+      "label": "Organic Health",
+      "description": "Natural, wellness-focused design for health, fitness, and lifestyle apps",
+      "categoryAffinities": ["health", "fitness", "wellness", "lifestyle"],
+      "primaryColor": "#059669",
+      "secondaryColor": "#D1FAE5",
+      "accentColor": "#10B981",
+      "backgroundColor": "#F0FDF4",
+      "textColor": "#065F46",
+      "fontStyle": "clean",
+      "shadowProfile": "soft",
+      "luminance": "very-high",
+      "energyLevel": "balanced",
+      "gestureProfile": "flowing",
+      "shapeLanguage": "organic",
+      "patternDensity": "low",
+      "contrastRatio": 1.5,
+      "rtlOverrides": {
+        "enabled": true,
+        "mirrorAssets": true,
+        "textAlignment": "right",
+        "gestureProfile": "flowing",
+        "notes": "Nature-inspired curves mirror gracefully. Soft shadows remain subtle in RTL composition."
+      }
+    },
+    {
+      "id": "high-contrast-bold",
+      "label": "High Contrast Bold",
+      "description": "Accessible, eye-catching design with maximum contrast for sports and action",
+      "categoryAffinities": ["sports", "action", "entertainment", "news"],
+      "primaryColor": "#000000",
+      "secondaryColor": "#FFFFFF",
+      "accentColor": "#FBBF24",
+      "backgroundColor": "#000000",
+      "textColor": "#FFFFFF",
+      "fontStyle": "bold",
+      "shadowProfile": "strong",
+      "luminance": "mixed",
+      "energyLevel": "extreme",
+      "gestureProfile": "impactful",
+      "shapeLanguage": "angular",
+      "patternDensity": "dense",
+      "contrastRatio": 2.0,
+      "rtlOverrides": {
+        "enabled": true,
+        "mirrorAssets": true,
+        "textAlignment": "right",
+        "gestureProfile": "impactful",
+        "notes": "Angular geometry remains powerful when mirrored. High contrast ensures readability in both directions."
+      }
+    },
+    {
+      "id": "luxury-premium",
+      "label": "Luxury Premium",
+      "description": "Elegant, sophisticated design for premium and luxury-tier apps",
+      "categoryAffinities": ["shopping", "finance", "lifestyle", "luxury"],
+      "primaryColor": "#7C3AED",
+      "secondaryColor": "#E9D5FF",
+      "accentColor": "#A78BFA",
+      "backgroundColor": "#FAFAF9",
+      "textColor": "#292524",
+      "fontStyle": "elegant",
+      "shadowProfile": "refined",
+      "luminance": "high",
+      "energyLevel": "serene",
+      "gestureProfile": "graceful",
+      "shapeLanguage": "geometric",
+      "patternDensity": "sparse",
+      "contrastRatio": 1.3,
+      "rtlOverrides": {
+        "enabled": true,
+        "mirrorAssets": true,
+        "textAlignment": "right",
+        "gestureProfile": "graceful",
+        "notes": "Elegant proportions maintain luxury feel when flipped. Refined shadows adapt to RTL geometry."
+      }
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "lastUpdated": "2026-06-03T00:00:00Z",
+    "description": "Static theme store for playstore.xyz ASO platform. All schemas support full LTR/RTL parity via flop-composite-flop pipeline. RTL overrides specify behavior for Arabic and Hebrew locales.",
+    "designPhilosophy": {
+      "rtlSupport": "All color palettes and shape languages are designed to mirror gracefully. The compositing engine (Sharp) handles geometric transformation; schema defines the creative intent.",
+      "colorParity": "Primary/secondary/accent colors chosen for equal luminance and contrast in both directions.",
+      "symmetry": "Organic and geometric shapes tested to maintain visual balance when horizontally flipped."
+    },
+    "fontStyles": {
+      "clean": "Sans-serif, geometric proportions. System: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto",
+      "bold": "Bold sans-serif with high weight (700+). High visual impact.",
+      "elegant": "Serif or high-precision sans-serif. Refined proportions.",
+      "none": "Display only (fallback)"
+    },
+    "shadowProfiles": {
+      "subtle": "Soft shadows at 0.1-0.3 opacity, 2-4px blur",
+      "soft": "Gentle shadows at 0.15-0.35 opacity, 4-8px blur",
+      "dynamic": "Variable shadows, 0.2-0.5 opacity, 6-12px blur",
+      "strong": "High-contrast shadows, 0.3-0.6 opacity, 8-16px blur",
+      "refined": "Elegant shadows, 0.1-0.25 opacity, 3-6px blur"
+    },
+    "luminanceGuidelines": {
+      "very-high": "Light backgrounds (90%+ lightness). Text: dark. High readability.",
+      "high": "Light-medium backgrounds (70-90% lightness). Flexible text color.",
+      "medium": "Mid-tone backgrounds (50-70% lightness). High contrast required.",
+      "dark": "Dark backgrounds (30-50% lightness). Light text only.",
+      "mixed": "Extreme contrast (black + white). Maximum impact."
+    },
+    "gestureProfiles": {
+      "static": "No animation. Clean, professional feel.",
+      "flowing": "Smooth transitions and gentle curves. Natural feel.",
+      "animated": "Dynamic movement and transitions. Energetic.",
+      "impactful": "Bold, fast transitions. Attention-grabbing.",
+      "graceful": "Elegant, smooth animations. Premium feel."
+    }
+  }
+}

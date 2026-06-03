@@ -10,6 +10,7 @@ import {
 } from "@/lib/features/billing/wallet";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
+import { recoverSentimentJson } from "@/lib/gemini/json-recovery";
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/competitors/sentiment";
 const CREDIT_COST = 3;
@@ -173,7 +174,7 @@ Exact JSON shape:
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.5,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 2048,
             responseMimeType: "application/json",
             responseSchema: {
               type: "OBJECT",
@@ -222,33 +223,51 @@ Exact JSON shape:
       .replace(/\s*```$/i, "")
       .trim();
 
-    // Resilient parse: fall back to empty arrays rather than crashing the route
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let parsed: any = {};
-    try {
-      if (!jsonText) {
-        throw new Error("Raw response stream arrived empty.");
-      }
-      parsed = JSON.parse(jsonText);
-    } catch (parseError) {
-      console.error(
-        `[${ROUTE}] Primary JSON parse failed, deploying empty array fallbacks:`,
-        parseError,
-      );
-      parsed = { topPraiseKeywords: [], reportedBugsKeywords: [], featureRequestsKeywords: [] };
-    }
+    // Resilient parse with recovery strategy
+    let result: SentimentAnalysisResult;
 
-    result = {
-      topPraiseKeywords: Array.isArray(parsed.topPraiseKeywords)
-        ? parsed.topPraiseKeywords.slice(0, 6).map(String)
-        : [],
-      reportedBugsKeywords: Array.isArray(parsed.reportedBugsKeywords)
-        ? parsed.reportedBugsKeywords.slice(0, 6).map(String)
-        : [],
-      featureRequestsKeywords: Array.isArray(parsed.featureRequestsKeywords)
-        ? parsed.featureRequestsKeywords.slice(0, 6).map(String)
-        : [],
-    };
+    if (!jsonText) {
+      console.warn(`[${ROUTE}] Raw response stream arrived empty, using fallback.`);
+      result = { topPraiseKeywords: [], reportedBugsKeywords: [], featureRequestsKeywords: [] };
+    } else {
+      // Try standard parse first
+      try {
+        const parsed = JSON.parse(jsonText);
+        result = {
+          topPraiseKeywords: Array.isArray(parsed.topPraiseKeywords)
+            ? parsed.topPraiseKeywords.slice(0, 6).map(String)
+            : [],
+          reportedBugsKeywords: Array.isArray(parsed.reportedBugsKeywords)
+            ? parsed.reportedBugsKeywords.slice(0, 6).map(String)
+            : [],
+          featureRequestsKeywords: Array.isArray(parsed.featureRequestsKeywords)
+            ? parsed.featureRequestsKeywords.slice(0, 6).map(String)
+            : [],
+        };
+      } catch (parseError) {
+        // Standard parse failed — attempt recovery
+        console.warn(
+          `[CompetitorSentiment] JSON parse failed (text length: ${jsonText.length}), running recovery...`
+        );
+
+        const recovered = recoverSentimentJson(jsonText);
+
+        if (recovered) {
+          // Recovery succeeded
+          console.info(
+            `[CompetitorSentiment] JSON Truncation detected — recovery successful. Recovered ${recovered.topPraiseKeywords.length + recovered.reportedBugsKeywords.length + recovered.featureRequestsKeywords.length} total items.`
+          );
+          result = recovered;
+        } else {
+          // Recovery also failed — fall back to empty arrays
+          console.error(
+            `[CompetitorSentiment] JSON parse and recovery both failed (text length: ${jsonText.length}, preview: ${jsonText.slice(0, 100)})`,
+            parseError
+          );
+          result = { topPraiseKeywords: [], reportedBugsKeywords: [], featureRequestsKeywords: [] };
+        }
+      }
+    }
   } catch (err) {
     console.error(`[${ROUTE}] Gemini sentiment failed:`, err);
     await refundWorkspaceAiCredits(supabase, {
