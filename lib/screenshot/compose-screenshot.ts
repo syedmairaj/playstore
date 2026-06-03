@@ -729,11 +729,18 @@ export async function validateCompositionAssets(): Promise<AssetValidationReport
   const schemaResults: Record<
     MoodSchemaType,
     { frame: boolean; badge: boolean; path: string }
-  > = {} as any;
+  > = {} as Record<
+    MoodSchemaType,
+    { frame: boolean; badge: boolean; path: string }
+  >;
   const fontResults: Record<
     "bold" | "elegant" | "clean",
     { exists: boolean; path: string }
-  > = {};
+  > = {
+    bold: { exists: false, path: "" },
+    elegant: { exists: false, path: "" },
+    clean: { exists: false, path: "" },
+  };
 
   // ── 1. Validate all schema assets ──────────────────────────────────────────
   console.log("[asset-validation] Starting composition asset validation...");

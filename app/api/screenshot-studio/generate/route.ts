@@ -386,6 +386,12 @@ async function runBackground(opts: {
             "Identity-synced premium gradient, generous whitespace, top-10 app quality. " +
             "30% negative space on the right third reserved for device frame overlay.",
           negativeAdditions: "phone, smartphone, mobile phone, iPhone, Android phone, device, mockup, screen, bezel, notch, hardware, frame, silhouette, generic, template, clip-art, amateurish, UI elements, interface, app screenshot",
+          selectedSchema: "minimalist-professional",
+          typographyConfig: {
+            primaryColor: brandColor ?? "#6366F1",
+            fontStyle: "clean",
+            shadowProfile: "subtle",
+          },
           textPosition: "bottom",
           textColor: "#ffffff",
           accentColor: brandColor ?? "#6366F1",

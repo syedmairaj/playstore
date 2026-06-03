@@ -75,7 +75,7 @@ function SpotlightPillTooltip({ item }: { item: ListingImprovementItem }) {
         <span className="text-emerald-300">{keyword}</span>
       </p>
       <p className="text-[11px] leading-relaxed text-zinc-400">
-        This keyword was identified as trending in your app's category by real-time analysis of
+        This keyword was identified as trending in your app&apos;s category by real-time analysis of
         the top 10 chart apps on Google Play. The AI will weave it semantically into your title,
         short description, and long description to improve discoverability.
       </p>

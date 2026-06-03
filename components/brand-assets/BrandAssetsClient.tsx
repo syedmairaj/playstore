@@ -653,10 +653,10 @@ export function BrandAssetsClient(props: {
       const batch = latestBatchId ? json.assets.filter((a) => (a.meta as Record<string, unknown> | null)?.batchId === latestBatchId) : json.assets.slice(0, 3);
       return batch.map((a) => {
         const meta = (a.meta ?? {}) as Record<string, unknown>;
-        const lm = (meta.layoutMap ?? {}) as Partial<LayoutMap>;
+        const lm = (meta.layoutMap ?? {}) as Record<string, unknown>;
         return {
           backgroundUrl: a.signedUrl,
-          layoutMap: { backgroundPrompt: "", negativeAdditions: "", textPosition: (lm.textPosition as LayoutMap["textPosition"]) ?? "bottom", textColor: (lm.textColor as LayoutMap["textColor"]) ?? "#ffffff", accentColor: String(lm.accentColor ?? "#22C55E"), accentColorSecondary: String((lm as Record<string,unknown>).accentColorSecondary ?? "#16a34a"), backgroundMood: String(lm.backgroundMood ?? ""), uiMockDescription: String((lm as Record<string,unknown>).uiMockDescription ?? ""), backgroundLuminance: ((lm as Record<string,unknown>).backgroundLuminance as "dark"|"light") ?? "dark" },
+          layoutMap: { backgroundPrompt: "", negativeAdditions: "", textPosition: (lm.textPosition as LayoutMap["textPosition"]) ?? "bottom", textColor: (lm.textColor as LayoutMap["textColor"]) ?? "#ffffff", accentColor: String(lm.accentColor ?? "#22C55E"), accentColorSecondary: String((lm as Record<string,unknown>).accentColorSecondary ?? "#16a34a"), backgroundMood: String(lm.backgroundMood ?? ""), uiMockDescription: String((lm as Record<string,unknown>).uiMockDescription ?? ""), backgroundLuminance: ((lm as Record<string,unknown>).backgroundLuminance as "dark"|"light") ?? "dark", selectedSchema: ((lm as Record<string,unknown>).selectedSchema as LayoutMap["selectedSchema"]) ?? "minimalist-professional", typographyConfig: ((lm as Record<string,unknown>).typographyConfig as LayoutMap["typographyConfig"]) ?? { primaryColor: "#6366F1", fontStyle: "clean", shadowProfile: "subtle" } },
           slide: { position: Number(a.variantIndex ?? 0) + 1, headline: String(meta.headline ?? ""), subline: String(meta.subline ?? ""), uiFocus: "" },
         };
       });

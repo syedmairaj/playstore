@@ -343,6 +343,12 @@ export async function POST(request: NextRequest) {
           backgroundMood: "modern brand gradient",
           uiMockDescription: `${appName} main dashboard screen`,
           backgroundLuminance: "dark",
+          selectedSchema: "minimalist-professional",
+          typographyConfig: {
+            primaryColor: brandColor ?? "#6366F1",
+            fontStyle: "clean",
+            shadowProfile: "subtle",
+          },
         })),
       ),
     );
