@@ -2,52 +2,10 @@
 
 > **Canonical spec:** [`app-pages/settings.md`](../app-pages/settings.md)
 
-## Tabs Structure
-- Workspace.
-- Team.
-- Billing.
-- Integrations.
-- Notifications.
-- Account.
+Three-tab enterprise layout at `/app/[workspaceId]/settings`:
 
-## Workspace Tab
-- Workspace name.
-- Apps list.
-- Usage overview.
-- Plan limits.
-- Delete workspace.
+1. **Workspace & Apps** — name, apps, team, invites, delete workspace.
+2. **Billing & Credit Usage** — wallet usage cards + `credits_ledger` table.
+3. **Integrations & Alerts** — notification switches, profile, sign out.
 
-## Team Tab
-- Team members list.
-- Invite new member.
-- Role assignment (admin, member).
-- Remove member.
-
-## Billing Tab
-- Current plan.
-- Upgrade/downgrade.
-- Payment method.
-- Invoice history.
-- Usage breakdown.
-
-## Integrations Tab
-- Google Play Connect (future).
-- Slack notifications (future).
-- Zapier (future).
-
-## Notifications Tab
-- Email preferences.
-- Alert thresholds.
-- Weekly summary toggle.
-
-## Account Tab
-- Profile info.
-- Password change.
-- Delete account.
-- Logout.
-
-## UX Rules
-- Make destructive actions clear.
-- Use confirmation modals.
-- Keep forms simple.
-- Show current state clearly.
+Data: server page loads workspace wallet fields and last 50 ledger rows; optional `GET /api/workspaces/:workspaceId/credits-ledger`.

@@ -1,10 +1,11 @@
-import { ListingOptimizer } from "@/components/ListingOptimizer";
+import { redirect } from "next/navigation";
 
-export default async function WorkspaceOptimizerPage({
+/** Legacy path — canonical route is `/listing-optimizer`. */
+export default async function WorkspaceOptimizerRedirectPage({
   params,
 }: {
-  params: Promise<{ workspaceId: string }>;
+  params: Promise<{ locale: string; workspaceId: string }>;
 }) {
-  const { workspaceId } = await params;
-  return <ListingOptimizer workspaceId={workspaceId} embedded />;
+  const { locale, workspaceId } = await params;
+  redirect(`/${locale}/app/${workspaceId}/listing-optimizer`);
 }

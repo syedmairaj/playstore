@@ -1,6 +1,7 @@
 import { AuthModalHost } from "@/components/auth/auth-modal-host";
 import { AuthModalProvider } from "@/components/auth/auth-modal-context";
 import { LocaleAttributes } from "@/components/layout/LocaleAttributes";
+import { LocaleHtmlBootstrap } from "@/components/layout/locale-html-bootstrap";
 import { routing } from "@/i18n/routing";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, setRequestLocale } from "next-intl/server";
@@ -27,6 +28,7 @@ export default async function LocaleLayout({ children, params }: Props) {
   return (
     <NextIntlClientProvider locale={locale} messages={messages}>
       <AuthModalProvider>
+        <LocaleHtmlBootstrap locale={locale} />
         <LocaleAttributes />
         {children}
         <AuthModalHost />

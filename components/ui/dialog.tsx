@@ -30,8 +30,10 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
     overlayClassName?: string;
     closeButtonClassName?: string;
+    /** Accessible name for the dismiss control (defaults to "Close"). */
+    closeButtonSrText?: string;
   }
->(({ className, children, overlayClassName, closeButtonClassName, ...props }, ref) => (
+>(({ className, children, overlayClassName, closeButtonClassName, closeButtonSrText, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay className={overlayClassName} />
     <DialogPrimitive.Content
@@ -50,7 +52,7 @@ const DialogContent = React.forwardRef<
         )}
       >
         <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
+        <span className="sr-only">{closeButtonSrText ?? "Close"}</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>

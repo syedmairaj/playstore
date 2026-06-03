@@ -1,5 +1,6 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { AnimatedHero } from "@/components/marketing/AnimatedHero";
+import { AsoScoreSection } from "@/components/marketing/AsoScoreSection";
 import { CtaBand } from "@/components/marketing/CtaBand";
 import { FeatureShowcase } from "@/components/marketing/FeatureShowcase";
 import { TestimonialSection } from "@/components/marketing/TestimonialSection";
@@ -14,6 +15,8 @@ export default async function HomePage({ params }: Props) {
   return (
     <>
       <AnimatedHero />
+
+      <AsoScoreSection />
 
       <section id="features" className="mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32">
         <div className="mx-auto max-w-3xl text-center">

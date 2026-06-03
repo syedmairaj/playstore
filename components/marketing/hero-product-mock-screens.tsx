@@ -59,12 +59,16 @@ export function HeroMockScreenAso() {
   );
 }
 
-/** Before / after listing optimization — mirrors the optimizer’s value in one glance. */
+/** Before / after listing optimization — highlights +18% clearer value prop. */
 export function HeroMockScreenAi() {
   const t = useTranslations("hero");
 
   return (
     <div className="space-y-3 pt-1">
+      <p className="text-center text-[9px] font-semibold uppercase tracking-[0.18em] text-[#22C55E]/90">
+        {t("screen.ai.comparisonTitle")}
+      </p>
+
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] font-semibold text-white">{t("screen.ai.title")}</p>
         <span className="rounded-md border border-[#22C55E]/30 bg-[#22C55E]/10 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-[#22C55E]">
@@ -103,9 +107,18 @@ export function HeroMockScreenAi() {
         </div>
       </div>
 
-      <div className="flex items-center justify-center gap-1.5 rounded-lg border border-[#22C55E]/20 bg-[#22C55E]/10 px-2 py-1.5 text-[9px] font-semibold text-[#22C55E]">
-        <TrendingUp className="h-3 w-3 shrink-0" aria-hidden />
-        <span>{t("screen.ai.uplift")}</span>
+      <div className="rounded-xl border border-[#22C55E]/30 bg-gradient-to-br from-[#22C55E]/16 via-[#22C55E]/08 to-transparent px-3 py-3 text-center shadow-[0_0_28px_-10px_rgba(34,197,94,0.45)]">
+        <p className="flex items-center justify-center gap-1 text-[8px] font-semibold uppercase tracking-wider text-[#22C55E]/95">
+          <TrendingUp className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
+          {t("screen.ai.improvementLabel")}
+        </p>
+        <p
+          className="mt-1.5 text-[1.65rem] font-bold leading-none tabular-nums tracking-tight text-[#22C55E] sm:text-[1.85rem]"
+          dir="ltr"
+        >
+          {t("screen.ai.upliftPercent")}
+        </p>
+        <p className="mt-2 text-[9px] leading-snug text-white/60">{t("screen.ai.upliftDetail")}</p>
       </div>
     </div>
   );

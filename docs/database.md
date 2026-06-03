@@ -5,7 +5,7 @@
 - workspaces
 - apps
 - keywords
-- keyword_ranks
+- keyword_rank_snapshots
 - competitors
 - reviews
 - listings
@@ -18,23 +18,69 @@
 
 These support the AI App Listing Optimizer and operational controls:
 
-- **listing_generations** — Inputs (app name, category, keywords array, features, tone) plus `output_json`, `model`, `prompt_version`, `client_ip`, timestamps.
+- **listing_generations** — Inputs (app name, category, keywords array `target_keywords`, features `app_features`, tone) plus optional **`output_json`** (full Gemini listing JSON: title, shortDescription, fullDescription, keywordSuggestions, ctaSuggestions, and optional **Certified ASO Score** fields `asoScore`, `scoreBreakdown`, `improvementTips`, or `asoScoreDegraded` when scoring failed validation; **nullable** for AI-autofill-only input snapshots before a full listing run), `model`, `prompt_version`, `client_ip`, timestamps.
 - **usage_logs** — Per-request logging: `route`, `client_ip`, `success`, `duration_ms`, optional `error_message`, optional `meta` JSON.
 - **rate_limit_buckets** — Composite key `(key, window_start)` with `count` for fixed-window rate limiting.
 - **public.consume_rate_limit(p_key text, p_max int)** — `SECURITY DEFINER` RPC; returns JSON `{ allowed, count }`. Executable by `service_role` only (see migration).
 
+### Workspace AI credits (wallet + ledger)
+
+- **`credits_ledger`** — Append-only movements; negative `amount` = spend, positive = refund or top-up.
+- **`consume_workspace_ai_credits(p_workspace_id, p_user_id, p_amount, p_description, p_source_type, p_meta)`** — `SECURITY DEFINER`; verifies member + caller, locks the workspace row (`FOR UPDATE`), returns `insufficient_credits` if `ai_credits_remaining < p_amount`, otherwise debits and inserts a spend row. Granted to `authenticated` and `service_role`.
+- **`refund_workspace_ai_credits(p_ledger_id, p_user_id, p_reason)`** — Reverses a prior spend (idempotent when already refunded). Granted to `authenticated` and `service_role`.
+
+**Admin (site operators)** — **`admin_financial_snapshot(p_series_from date, p_series_to date)`** — `SECURITY DEFINER`; callable when **`profiles.is_admin`** is true **or** **`profiles.role = 'admin'`** for **`auth.uid()`** (no matching row → not admin). Returns JSON `{ ok, code }` on failure (e.g. `forbidden`) or aggregates on success. Migrations: `supabase/migrations/20260513120000_profiles_is_admin_admin_financial_rpc.sql`, then `supabase/migrations/20260513130000_profiles_role_site_admin.sql`. Setup and troubleshooting: [`docs/admin-financial-setup.md`](./admin-financial-setup.md).
+
+**Admin AI COGS (token-level):** **`admin_ai_transaction_logs`** — one row per Gemini-backed AI call for admin margin analytics.
+
+| Column | Type | Notes |
+|--------|------|--------|
+| `id` | uuid PK | `gen_random_uuid()` |
+| `user_id` | uuid FK → `auth.users` | Caller |
+| `workspace_id` | uuid FK → `workspaces`, nullable | Set when the feature is workspace-scoped |
+| `feature_slug` | text | e.g. `localization`, `reviews_ai_reply`, `serper_competitor_spy` |
+| `provider_service` | text | `gemini` \| `serper` |
+| `prompt_tokens` | integer ≥ 0 | Legacy Gemini input (mirrors `input_tokens` on insert) |
+| `completion_tokens` | integer ≥ 0 | Legacy Gemini output (mirrors `output_tokens`) |
+| `input_tokens` | integer ≥ 0 | Prompt tokens (Gemini) or Serper query count |
+| `output_tokens` | integer ≥ 0 | Completion tokens (Gemini); `0` for Serper |
+| `total_tokens` | integer, nullable | Optional total from provider metadata |
+| `input_cost_usd` | numeric(12,6) | Input / Serper query USD fraction |
+| `output_cost_usd` | numeric(12,6) | Output USD fraction (Gemini only) |
+| `raw_cogs_usd` | numeric(12,6) | Total provider COGS (`input_cost_usd + output_cost_usd`) |
+| `raw_usd_cost` | numeric(12,6) | Kept in sync with `raw_cogs_usd` for older readers |
+| `credits_charged` | integer ≥ 0 | Workspace credits debited for the call |
+| `created_at` | timestamptz | Insert time |
+
+**Pricing (computed in `lib/admin/log-ai-transaction.ts` before insert):** Gemini **2.5 Flash** — input `$0.075`/1M tokens, output `$0.30`/1M (`lib/gemini/pricing.ts`). Serper — `$0.001` per query (country search). Inserts from localize, review reply/draft, Serper preview, keyword refresh, Competitor Spy.
+
+RLS: **admin read only** (`profiles.is_admin` or `profiles.role = 'admin'`); inserts via **service role** from API routes (`lib/admin/log-ai-transaction.ts`). Aggregates: `lib/admin/ai-analytics.ts` (feature leaderboard, plan margin checker).
+
+Migrations: `20260519140000_admin_ai_transaction_logs.sql` (initial DDL); `20260519160000_admin_ai_transaction_logs_align_columns.sql` (backfill legacy columns); `20260519170000_admin_ai_transaction_logs_cogs_breakdown.sql` (provider + cost fractions).
+
+Profile moderation: **`profiles.account_status`** (`active` \| `flagged` \| `suspended`); migration `20260519150000_profiles_account_status.sql`.
+
+Migration: `supabase/migrations/20250516000000_credits_ledger_wallet.sql`. See also `docs/architecture.md` and `docs/api.md`.
+
 ## Phase 2 additions (auth, workspaces, keywords)
 
-- **profiles** — `id` → `auth.users`, `display_name`, `onboarding_completed_at`. RLS: self read/update; **peer read** for users who share a workspace (roster).
-- **workspaces** — `name`, `created_by`, timestamps. RLS: members read; authenticated users insert own `created_by`; owners/admins update name.
-- **workspace_members** — Composite PK `(workspace_id, user_id)`, `role` in (`owner`,`admin`,`member`). Owner row created by trigger on workspace insert. RLS: roster visible to members.
-- **apps** — `workspace_id`, `name`, optional `package_name`. Default app created with first workspace. RLS: member CRUD (delete limited to owner/admin per policy).
-- **keywords** — `workspace_id`, `app_id`, `term`, `market`, `locale`, optional `notes`. Unique `(workspace_id, app_id, lower(trim(term)), market)`.
-- **keyword_ranks** — `keyword_id`, `rank` (nullable), `captured_at`, `source` (e.g. `manual`). Indexed for time-series reads.
-- **workspace_alerts** — `workspace_id`, optional `keyword_id`, `type` (`rank_drop` | `rank_threshold`), copy fields, `read_at`, `meta` JSON.
-- **listing_generations (Phase 2 columns)** — `workspace_id` FK, `user_id` FK; RLS policies for `authenticated` require membership + `user_id = auth.uid()` on insert.
+- **profiles** — `id` → `auth.users`, `display_name`, `onboarding_completed_at`, optional **`is_admin`** (boolean, default false), optional **`role`** (e.g. `'admin'` for site operators; same effect as `is_admin` for `/admin/*` and `admin_financial_snapshot`). Optional **`account_status`** (`active` \| `flagged` \| `suspended`, default `active`) — suspended blocks API (`403`) and `/app` routes. RLS: self read/update; **peer read** for users who share a workspace (roster).
+- **workspaces** — `name`, **`owner_id`** (uuid, not null, FK → `auth.users`, canonical owner), **`created_by`** (uuid, not null, FK → `auth.users`; must equal `owner_id`). A **before insert/update** trigger (`workspaces_owner_columns_sync`) mirrors the two when only one is supplied and rejects conflicting values. Timestamps. RLS: members read; authenticated inserts require **`created_by = auth.uid()` and `owner_id = auth.uid()`**; owners/admins update name.
+- **workspace_members** — Composite PK `(workspace_id, user_id)`, `role` in (`owner`,`admin`,`member`). Owner row is created by the `on_workspace_created` trigger (`handle_new_workspace`, uses `coalesce(owner_id, created_by)`) and is also inserted defensively by **`public.create_new_workspace(text)`** with `ON CONFLICT DO NOTHING`. RLS: roster visible to members.
+- **apps** — `workspace_id`, `name`, optional `package_name`, optional **`icon_url`** (text, HTTPS app listing icon; preferred over duplicate in metadata when present), optional `metadata` (jsonb, default `{}`) for ASO extras (`category`, `short_description`, `icon_url` mirror for older clients). **Listing Optimizer logo generator (MVP):** optional nested **`metadata.logoGenerator`** — `{ generatedUrls: string[] (≤4, HTTPS), selectedUrl: string | null, updatedAt: string (ISO) }` for reopening the dialog and phone preview before/without applying `icon_url`. Default app created with first workspace. RLS: member CRUD (delete limited to owner/admin per policy).
+- **keywords** — `workspace_id`, optional **`app_id`** (nullable for workspace-wide tracking), `term`, optional generated **`keyword`** (trimmed term), `market`, `locale`, optional `notes`, optional **`source`** (e.g. `ai_listing`), optional **`listing_generation_id`** (FK → `listing_generations`, nullable), **`best_rank`** (rolling best / lowest rank), **`updated_at`**. **ASO ROI (MVP):** optional **`aso_baseline_rank`**, **`aso_baseline_captured_at`**, **`aso_baseline_source`** (`initial_save` \| `manual`), **`last_listing_optimization_at`**, **`last_listing_optimization_generation_id`** (FK → `listing_generations`), **`rank_at_last_listing_optimization`**, **`recent_rank_gain`**, **`recent_rank_gain_at`** (7‑day badge window). Unique tracked term per workspace/app/market via partial unique indexes (`keywords_unique_term_with_app`, `keywords_unique_term_workspace_only`).
+- **keyword_rank_snapshots** — `keyword_id`, **`rank`**, **`best_rank`** (running minimum per snapshot row), optional **`search_volume`**, optional **`country_code`** (lowercase alpha-2 Play market for Serper-tagged rows; null on legacy/manual), **`snapshot_at`**, **`source`** (`manual`, `demo`, `serper`, etc.). Replaces legacy `keyword_ranks`; indexed by `(keyword_id, snapshot_at)`. RLS mirrors keyword membership (insert `with check` on `keyword_id` only; **`country_code`** is not part of policy predicates). Workspace list **`latest`** rank prefers the row for **`keywords.market`** when several countries share the same **`snapshot_at`**.
+- **keyword_rank_history** (view) — Flattened snapshots joined to `keywords` (`workspace_id`, `keyword`, ranks, `snapshot_date`) for analytics and exports.
+
+Migration: `supabase/migrations/20260514120000_keyword_rank_snapshots.sql` (supersedes `keyword_ranks` from Phase 2 DDL after migrate). Optional column **`country_code`**: `supabase/migrations/20260514140000_keyword_rank_snapshots_country_code.sql`. ASO baseline + listing↔keyword links + `aso_rank_improvement` alerts: `supabase/migrations/20260515160000_keyword_aso_baseline_listing_links_alerts.sql`. **Keyword Tracker Serper preview draft (per user):** table **`workspace_keyword_serper_preview_drafts`** (`workspace_id`, `user_id`, `payload` jsonb, `updated_at`) — RLS: members read/write **own** `(workspace_id, user_id)` row only; API `GET`/`PUT`/`DELETE` `/api/workspaces/:id/keywords/serper-preview-draft`. Migration: `supabase/migrations/20260515170000_workspace_keyword_serper_preview_draft.sql`. **Competitor Spy analyses (per workspace):** table **`workspace_competitor_analyses`** — `workspace_id`, `competitor_package_id` (unique per workspace), `competitor_name`, optional `category`, optional `icon_url`, **`analysis_json`** (gaps, shared keywords, quick wins, optional Serper `previewResults`), `countries` (text[]), `analyzed_at`, `created_by`; RLS: **workspace members** CRUD; API `GET`/`POST` `/api/workspaces/:id/competitors`. Migration: `supabase/migrations/20260516100000_workspace_competitor_analyses.sql`. **Listing Optimizer review queue (per workspace):** table **`workspace_listing_improvements`** — `workspace_id`, `user_id`, optional `app_id` FK → `apps`, optional `package_name`, `review_id` (unique with `workspace_id`), `review_text`, `user_name`, `score` (1–5), `sentiment_tag` (default `Competitor Weakness`), `is_utilized` (default false), `created_at`; RLS: **workspace members** CRUD; API `GET`/`POST` `/api/workspaces/:id/listing-improvements`. Migration: `supabase/migrations/20260519120000_workspace_listing_improvements.sql`. **Listing localization (per workspace app + market):** table **`workspace_localized_listings`** — `workspace_id`, `app_id` FK → `apps`, `market` (`ae` \| `in` \| `mx`), `title`, `short_description`, `long_description`, `keywords` (jsonb array), `updated_at`; unique `(workspace_id, app_id, market)`; RLS: **workspace members** CRUD; API `GET`/`POST` `/api/workspaces/:id/listings/localize`. Migration: `supabase/migrations/20260519130000_workspace_localized_listings.sql`.
+- **workspace_localized_listings** — `workspace_id`, `app_id`, `market` (`ae` \| `in` \| `mx`), `title`, `short_description`, `long_description`, `keywords` (jsonb), `updated_at`; unique per `(workspace_id, app_id, market)`; RLS: workspace members CRUD; API `GET`/`POST` `/api/workspaces/:id/listings/localize`. Migration: `supabase/migrations/20260519130000_workspace_localized_listings.sql`.
+- **workspace_alerts** — `workspace_id`, optional `keyword_id`, `type` (`rank_drop` | `rank_threshold` | **`aso_rank_improvement`**), copy fields, `read_at`, `meta` JSON.
+- **listing_generations (Phase 2 columns)** — `workspace_id` FK, `user_id` FK, optional **`app_id`** FK → `apps` (scopes a run to a workspace app for Keyword Tracker); RLS policies for `authenticated` require membership + `user_id = auth.uid()` on insert.
+- **`listing_generation_keywords`** — Links a **`listing_generations`** row to tracked **`keywords`** for the same workspace at generation time (many-to-many); used with keyword refresh to attribute **≥5 position** organic gains to the latest linked optimization and to insert **`aso_rank_improvement`** alerts.
 
 Helpers: **`public.is_workspace_member(uuid)`**, **`public.workspace_role(uuid)`** (both `SECURITY DEFINER`, granted to `authenticated`).
+
+**`public.create_new_workspace(p_name text) → uuid`** — `SECURITY DEFINER`, `search_path = pg_catalog, public`. Callable by `authenticated` and `service_role`. Reads the caller with `(select auth.uid())`; if null, raises a clear exception. Trims `p_name` and requires length ≥ 2. Inserts `workspaces` with **`created_by` and `owner_id` both set to `auth.uid()`**, then inserts **`workspace_members`** with **`role = 'owner'`** and `ON CONFLICT (workspace_id, user_id) DO NOTHING`, then seeds the default app and a sample `listing_generations` row. Returns the new workspace `id`. App entrypoint: `POST` `/api/workspaces` via `supabase.rpc('create_new_workspace', { p_name })`. Migration: `supabase/migrations/20250521000000_workspaces_owner_id_and_create_new_workspace.sql` (adds `owner_id`, sync trigger, RLS tweak, and replaces the function; supersedes `20250520000000_*` and earlier RPC migrations).
 
 Full DDL + policies: `supabase/migrations/20250512000000_phase2_auth_workspaces_keywords.sql`. Narrative: `docs/phase2-auth-workspaces-keywords.md`.
 
@@ -42,12 +88,12 @@ Full DDL + policies: `supabase/migrations/20250512000000_phase2_auth_workspaces_
 
 - **`workspaces.plan`** — `starter` \| `pro` \| `agency` (text, default starter).
 - **`workspaces.onboarding_state`** — jsonb for guided onboarding progress (`completed`, `step`, etc.).
-- **`apps.play_store_url`**, **`apps.target_countries`** — optional Play listing context.
+- **`apps.play_store_url`**, **`apps.target_countries`**, **`apps.icon_url`**, **`apps.metadata`** — optional Play listing context; `metadata` holds ASO fields not modeled as top-level columns (e.g. category, short description, icon URL mirror).
 - **`workspace_invitations`** — pending invites (`email`, `role` admin|member, `invited_by`); unique per workspace + lower(email). RLS: members read; owner/admin insert/delete.
 - **`profiles.notification_preferences`** — jsonb for email / summary / threshold UI.
 - **`workspaces` DELETE** — owner-only policy for workspace removal.
 
-Migration: `supabase/migrations/20250513000000_core_pages_workspace_extensions.sql`. Overview: `docs/core-pages.md`.
+Migration: `supabase/migrations/20250513000000_core_pages_workspace_extensions.sql` and `supabase/migrations/20250519000000_apps_metadata.sql`; optional **`apps.icon_url`** column: `supabase/migrations/20260513000000_apps_icon_url.sql`. Overview: `docs/core-pages.md`.
 
 ## Notes
 - Keep relations simple.

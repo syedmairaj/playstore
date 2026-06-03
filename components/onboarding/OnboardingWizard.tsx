@@ -412,7 +412,7 @@ export function OnboardingWizard({
           </p>
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
             <Link
-              href={workspaceId ? `/app/${workspaceId}/optimizer` : "#"}
+              href={workspaceId ? `/app/${workspaceId}/listing-optimizer` : "#"}
               className="rounded-xl border border-white/15 bg-white/[0.04] py-2.5 text-sm font-medium text-white hover:bg-white/[0.08]"
             >
               Optimize listing

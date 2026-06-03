@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { captureKeywordAsoBaselineIfUnset } from "@/lib/keywords/capture-aso-baseline";
+import { maybeCreateAsoRankImprovementAlert } from "@/lib/keywords/evaluate-aso-improvement-alert";
 import { maybeCreateRankAlerts } from "@/lib/keywords/evaluate-alerts";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { createRankSchema } from "@/lib/validation/api";
@@ -42,7 +44,7 @@ export async function POST(request: Request, context: Ctx) {
     const parsed = createRankSchema.parse(body);
     const { data: keyword, error: kwErr } = await supabase
       .from("keywords")
-      .select("id,term,workspace_id")
+      .select("id,term,workspace_id,market")
       .eq("id", keywordId)
       .eq("workspace_id", workspaceId)
       .maybeSingle();
@@ -54,24 +56,27 @@ export async function POST(request: Request, context: Ctx) {
       );
     }
 
+    const mkt = String(keyword.market ?? "us").trim().toLowerCase() || "us";
     const { data: prevRows } = await supabase
-      .from("keyword_ranks")
-      .select("rank,captured_at")
+      .from("keyword_rank_snapshots")
+      .select("rank,snapshot_at,country_code")
       .eq("keyword_id", keywordId)
-      .order("captured_at", { ascending: false })
+      .or(`country_code.is.null,country_code.eq.${mkt}`)
+      .order("snapshot_at", { ascending: false })
       .limit(1);
 
     const prevRank =
       prevRows && prevRows.length > 0 ? (prevRows[0].rank as number | null) : null;
 
     const { data: rankRow, error } = await supabase
-      .from("keyword_ranks")
+      .from("keyword_rank_snapshots")
       .insert({
         keyword_id: keywordId,
         rank: parsed.rank,
         source: parsed.source ?? "manual",
+        country_code: null,
       })
-      .select("id,rank,captured_at,source")
+      .select("id,rank,snapshot_at,best_rank,source")
       .single();
 
     if (error || !rankRow) {
@@ -90,7 +95,25 @@ export async function POST(request: Request, context: Ctx) {
       newRank: parsed.rank,
     });
 
-    return NextResponse.json({ ok: true, rank: rankRow });
+    await captureKeywordAsoBaselineIfUnset(supabase, {
+      keywordId,
+      candidateRank: parsed.rank,
+      source: "initial_save",
+    });
+
+    await maybeCreateAsoRankImprovementAlert({
+      supabase,
+      workspaceId,
+      keywordId,
+      keywordTerm: keyword.term as string,
+      newPrimaryRank: parsed.rank,
+    });
+
+    const payload = {
+      ...rankRow,
+      captured_at: rankRow.snapshot_at,
+    };
+    return NextResponse.json({ ok: true, rank: payload });
   } catch (e) {
     if (e instanceof ZodError) {
       return NextResponse.json(

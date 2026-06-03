@@ -7,6 +7,8 @@ export const FEATURE_FLAG_KEYS = [
   "ranking_tracker_advanced",
   "alerts_advanced",
   "localization_playbook",
+  "market_intelligence",
+  "screenshot_studio",
 ] as const;
 
 export type FeatureFlagKey = (typeof FEATURE_FLAG_KEYS)[number];
