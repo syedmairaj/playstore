@@ -1,22 +1,11 @@
 "use client";
 
 import React from "react";
-import { useRouter } from "@/i18n/navigation";
-import { ArrowRight, CheckCircle2, PlusCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { StageButton } from "@/components/staging/StageButton";
 import type { IssueSeverity, IssueItem } from "@/lib/gemini/generate-review-analysis";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pipeline status — drives the CTA state machine
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * AVAILABLE → user hasn't acted yet
- * STAGED    → successfully POSTed to backlog; nudge them to act on it
- */
-export type PipelineStatus = "AVAILABLE" | "STAGED";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Severity styling map
@@ -50,60 +39,6 @@ const SEVERITY_CONFIG: Record<IssueSeverity, SeverityConfig> = {
   },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pipeline CTA config — one source of truth for every state's copy + style
-// ─────────────────────────────────────────────────────────────────────────────
-
-type CtaConfig = {
-  label:       string;
-  icon:        React.ReactNode;
-  className:   string;
-  tooltip:     React.ReactNode;
-};
-
-const CTA_CONFIG: Record<PipelineStatus, CtaConfig> = {
-  AVAILABLE: {
-    label: "Add to Optimization Backlog",
-    icon:  <PlusCircle className="size-3.5 shrink-0" aria-hidden />,
-    className: [
-      "bg-emerald-600 text-white",
-      "hover:bg-emerald-500 active:bg-emerald-700",
-      "border-transparent",
-    ].join(" "),
-    tooltip: (
-      <>
-        Save this insight to your workspace backlog.{" "}
-        <span className="text-zinc-400">
-          Implemented changes are kept for{" "}
-          <strong className="text-zinc-200">30 days</strong>; un-implemented
-          ideas are stored as active drafts for{" "}
-          <strong className="text-zinc-200">90 days</strong>.
-        </span>
-      </>
-    ),
-  },
-  STAGED: {
-    label: "Open in Listing Optimizer →",
-    icon:  <ArrowRight className="size-3.5 shrink-0" aria-hidden />,
-    className: [
-      "bg-zinc-800/80 text-blue-400",
-      "hover:bg-zinc-700/80 hover:text-blue-300 active:bg-zinc-900",
-      "border border-zinc-700",
-    ].join(" "),
-    tooltip: (
-      <>
-        <span className="flex items-center gap-1.5 font-medium text-emerald-400 mb-1">
-          <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
-          Insight saved to your backlog.
-        </span>
-        <span className="text-zinc-400">
-          Open the Listing Optimizer to rewrite your store metadata and exploit
-          this vulnerability — the fastest path to improving conversion rank.
-        </span>
-      </>
-    ),
-  },
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props
@@ -111,56 +46,17 @@ const CTA_CONFIG: Record<PipelineStatus, CtaConfig> = {
 
 export type IssueCardProps = {
   issue:       IssueItem;
-  /** workspaceId — used to build the listing-optimizer deep-link in STAGED state. */
   workspaceId: string;
-  /**
-   * appId — when provided, appended as ?appId= to the listing-optimizer deep-link
-   * so the optimizer pre-selects the correct app and loads its queue immediately.
-   */
   appId?:      string;
-  /** Whether this issue has already been added (initialises state to STAGED). */
-  added:       boolean;
-  /** Async handler that POSTs to /api/workspaces/[id]/backlog.  Returns true on success. */
-  onAdd:       () => Promise<boolean>;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function IssueCard({ issue, workspaceId, appId, added, onAdd }: IssueCardProps) {
-  const router = useRouter();
+export function IssueCard({ issue, workspaceId, appId }: IssueCardProps) {
   const config = SEVERITY_CONFIG[issue.severity] ?? SEVERITY_CONFIG.MEDIUM;
   const impactPct = Math.round(issue.impact * 100);
-
-  // Pipeline state — initialised from prop so hydration matches server render.
-  const [status, setStatus] = React.useState<PipelineStatus>(
-    added ? "STAGED" : "AVAILABLE",
-  );
-  const [busy, setBusy] = React.useState(false);
-
-  const cta = CTA_CONFIG[status];
-
-  async function handleClick() {
-    if (busy) return;
-
-    if (status === "STAGED") {
-      // STAGED → navigate to listing optimizer, pre-selecting the app so the
-      // queue is immediately visible without the user having to pick an app.
-      const qs = appId ? `?appId=${encodeURIComponent(appId)}` : "";
-      router.push(`/app/${workspaceId}/listing-optimizer${qs}`);
-      return;
-    }
-
-    // AVAILABLE → fire the backlog POST
-    setBusy(true);
-    try {
-      const ok = await onAdd();
-      if (ok) setStatus("STAGED");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <Card
@@ -213,55 +109,24 @@ export function IssueCard({ issue, workspaceId, appId, added, onAdd }: IssueCard
           </blockquote>
         )}
 
-        {/* ── Pipeline CTA ── */}
-        <TooltipProvider delayDuration={400}>
-          <TooltipRoot>
-            <TooltipTrigger asChild>
-              {/*
-               * <span> is the tooltip anchor + click target.
-               * The inner visual button has pointer-events-none so Radix Slot
-               * doesn't compete with it for event ownership, and disabled buttons
-               * don't swallow hover events that would silence the tooltip.
-               */}
-              <span
-                role="button"
-                tabIndex={0}
-                aria-busy={busy}
-                onClick={handleClick}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") handleClick();
-                }}
-                className={cn(
-                  "mt-1 inline-flex w-full cursor-pointer items-center justify-center gap-1.5",
-                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900",
-                  "sm:w-auto",
-                  busy && "opacity-60 cursor-wait",
-                  cta.className,
-                )}
-              >
-                {busy ? (
-                  <svg
-                    className="size-3.5 animate-spin shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden
-                  >
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
-                  </svg>
-                ) : (
-                  cta.icon
-                )}
-                {busy ? "Saving…" : cta.label}
-              </span>
-            </TooltipTrigger>
-
-            <TooltipContent side="top" className="max-w-[260px]">
-              {cta.tooltip}
-            </TooltipContent>
-          </TooltipRoot>
-        </TooltipProvider>
+        {/* ── Staging Vault CTA ── */}
+        <StageButton
+          signalType="review_issue"
+          content={issue.title}
+          source="review_analysis"
+          workspaceId={workspaceId}
+          sourceAppId={appId || ""}
+          language="en"
+          metadata={{
+            description: issue.description,
+            severity: issue.severity,
+            impactPercent: impactPct,
+            quote: issue.quote,
+          }}
+          variant="primary"
+          size="md"
+          className="mt-1 w-full sm:w-auto"
+        />
       </CardContent>
     </Card>
   );

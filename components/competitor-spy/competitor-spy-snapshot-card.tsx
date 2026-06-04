@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { RankDisplay } from "@/components/keywords/rank-display";
 import { CompetitorSpyOpenPlayButton } from "@/components/competitor-spy/competitor-spy-open-play-button";
+import { StageButton } from "@/components/staging/StageButton";
 import type { RankDisplayLabels } from "@/lib/keywords/format-rank-display";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +50,8 @@ export type CompetitorSpySnapshotCardProps = {
   metricsKeywordCount: number;
   liveTitle?: string | null;
   rankLabels: RankDisplayLabels;
-  onSendToOptimizer: () => void;
+  workspaceId: string;
+  appId?: string;
   onManageCompetitors: () => void;
   manageCompetitorsLabel: string;
 };
@@ -67,7 +67,8 @@ export function CompetitorSpySnapshotCard({
   metricsKeywordCount,
   liveTitle,
   rankLabels,
-  onSendToOptimizer,
+  workspaceId,
+  appId,
   onManageCompetitors,
   manageCompetitorsLabel,
 }: CompetitorSpySnapshotCardProps) {
@@ -196,25 +197,25 @@ export function CompetitorSpySnapshotCard({
                   variant="outline"
                   className="w-full border-emerald-500/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15 sm:flex-1"
                 />
-                <TooltipProvider>
-                  <Tooltip
-                    content={t("sendOptimizerTooltip")}
-                    side="top"
-                    className="max-w-[280px]"
-                    asChild
-                  >
-                    <Button
-                      type="button"
-                      className="w-full bg-emerald-600 text-white hover:bg-emerald-500 sm:flex-1"
-                      onClick={onSendToOptimizer}
-                    >
-                      <span className="inline-flex items-center justify-center gap-2">
-                        <Sparkles className="size-4 shrink-0 opacity-90" aria-hidden />
-                        {t("sendOptimizer")}
-                      </span>
-                    </Button>
-                  </Tooltip>
-                </TooltipProvider>
+                <StageButton
+                  signalType="competitor_weakness"
+                  content={`${competitorDisplayName}: ${liveTitle || displayName}`}
+                  source="competitor_spy"
+                  workspaceId={workspaceId}
+                  sourceAppId={appId || ""}
+                  language={isRtl ? "ar" : "en"}
+                  metadata={{
+                    competitorName: competitorDisplayName,
+                    competitorPackageId: packageId,
+                    categoryLabel,
+                    bestRank,
+                    metricsKeywordCount,
+                  }}
+                  variant="primary"
+                  size="md"
+                  className="w-full sm:flex-1"
+                  label={t("sendOptimizer")}
+                />
               </div>
             </div>
           </div>

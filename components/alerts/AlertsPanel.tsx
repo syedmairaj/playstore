@@ -2,10 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { AlertTriangle, KeyRound, Loader2, ScanLine, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { AlertsStagingButton } from "@/components/alerts/AlertsStagingButton";
 
 type AlertRow = {
   id: string;
@@ -62,9 +63,15 @@ const SEVERITY_STYLES = {
 function LiveAlertCard({
   alert,
   t,
+  workspaceId,
+  appId,
+  language,
 }: {
   alert: AlertRow;
   t: ReturnType<typeof useTranslations<"workspaceAlerts">>;
+  workspaceId: string;
+  appId?: string;
+  language?: string;
 }) {
   const asoMeta = alert.type === "aso_rank_improvement" ? parseAsoMeta(alert.meta) : null;
   const title =
@@ -117,6 +124,18 @@ function LiveAlertCard({
         </div>
       </div>
       <p className="mt-2 text-[13px] leading-relaxed text-zinc-400">{body}</p>
+      <div className="mt-4 flex gap-2">
+        <AlertsStagingButton
+          workspaceId={workspaceId}
+          appId={appId || ""}
+          alertId={alert.id}
+          alertType={alert.type}
+          alertTitle={title}
+          alertBody={body}
+          severity={alert.severity}
+          language={language || "en"}
+        />
+      </div>
     </li>
   );
 }
@@ -145,6 +164,7 @@ export function AlertsPanel({
 }) {
   const router = useRouter();
   const t = useTranslations("workspaceAlerts");
+  const locale = useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
@@ -368,7 +388,7 @@ export function AlertsPanel({
       {hasLiveAlerts && (
         <ul className="space-y-3">
           {initialAlerts.map((a) => (
-            <LiveAlertCard key={a.id} alert={a} t={t} />
+            <LiveAlertCard key={a.id} alert={a} t={t} workspaceId={workspaceId} appId={undefined} language={locale} />
           ))}
         </ul>
       )}
