@@ -1,0 +1,36 @@
+STAGING VAULT MIGRATION FIX
+════════════════════════════════════════════════════════════════════
+
+ERROR FIXED:
+  "ERROR: 42P01: relation "workspace_memberships" does not exist"
+
+ROOT CAUSE:
+  Migration was using incorrect table name: workspace_memberships
+  Correct table name: workspace_members (used throughout your codebase)
+
+FIX APPLIED:
+  File: supabase/migrations/20260604100100_workspace_staging_vault.sql
+
+  Changed:
+    FROM: SELECT workspace_id FROM workspace_memberships
+    TO:   SELECT workspace_id FROM workspace_members
+
+  Applied to all 4 RLS policies:
+    ✅ staging_vault_select
+    ✅ staging_vault_insert
+    ✅ staging_vault_update
+    ✅ staging_vault_delete
+
+Also removed deleted_at check from membership query (not applicable):
+  FROM: WHERE user_id = auth.uid() AND deleted_at IS NULL
+  TO:   WHERE user_id = auth.uid()
+
+STATUS:
+  ✅ Migration file corrected
+  ✅ Ready to apply in Supabase
+  ✅ All RLS policies now reference correct table
+  ✅ Database schema validated against existing tables
+
+NEXT STEP:
+  Run migration in Supabase dashboard:
+  supabase/migrations/20260604100100_workspace_staging_vault.sql
