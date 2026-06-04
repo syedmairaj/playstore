@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { KeywordHistoryDialog } from "@/components/keyword-tracker/keyword-history-dialog";
 import { SaveKeywordModal } from "@/components/keyword-tracker/save-keyword-modal";
+import { KeywordTrackerStagingButton } from "@/components/keyword-tracker/KeywordTrackerStagingButton";
 import {
   buildKeywordWatchlistCsv,
   downloadCsvFile,
@@ -1312,17 +1313,28 @@ export function KeywordTrackerClient({
                   className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:flex-nowrap sm:gap-4 sm:px-5"
                 >
                   <span className="min-w-0 flex-1 text-[15px] font-medium text-zinc-50">{kw}</span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={mutationPending || Boolean(trackingAiTerm) || blockingError}
-                    className="h-10 shrink-0 rounded-xl border border-emerald-300/35 bg-emerald-500 px-5 text-sm font-semibold text-white shadow-[0_0_0_1px_rgba(16,185,129,0.45),0_8px_24px_-6px_rgba(16,185,129,0.65)] transition hover:border-emerald-200/50 hover:bg-emerald-400 hover:text-emerald-950 hover:shadow-[0_0_0_1px_rgba(167,243,208,0.5),0_12px_32px_-8px_rgba(16,185,129,0.75)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/90 focus-visible:ring-offset-2 focus-visible:ring-offset-[#04070a] disabled:pointer-events-none disabled:opacity-40"
-                    onClick={() => void onTrackAiSuggested(kw)}
-                  >
-                    {trackingAiTerm === kw.trim()
-                      ? t("aiSuggestedKeywords.tracking")
-                      : t("aiSuggestedKeywords.track")}
-                  </Button>
+                  <div className={cn("flex gap-2", isRtl && "flex-row-reverse")}>
+                    <KeywordTrackerStagingButton
+                      workspaceId={workspaceId}
+                      appId={scopeAppId}
+                      keyword={kw}
+                      market={selectedCountries[0] || "us"}
+                      language={locale}
+                      size="sm"
+                      variant="secondary"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={mutationPending || Boolean(trackingAiTerm) || blockingError}
+                      className="h-10 shrink-0 rounded-xl border border-emerald-300/35 bg-emerald-500 px-5 text-sm font-semibold text-white shadow-[0_0_0_1px_rgba(16,185,129,0.45),0_8px_24px_-6px_rgba(16,185,129,0.65)] transition hover:border-emerald-200/50 hover:bg-emerald-400 hover:text-emerald-950 hover:shadow-[0_0_0_1px_rgba(167,243,208,0.5),0_12px_32px_-8px_rgba(16,185,129,0.75)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/90 focus-visible:ring-offset-2 focus-visible:ring-offset-[#04070a] disabled:pointer-events-none disabled:opacity-40"
+                      onClick={() => void onTrackAiSuggested(kw)}
+                    >
+                      {trackingAiTerm === kw.trim()
+                        ? t("aiSuggestedKeywords.tracking")
+                        : t("aiSuggestedKeywords.track")}
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>

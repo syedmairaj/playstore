@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, Coins, Lock, RefreshCw, Sparkles, TrendingUp, Wand2 } from "lucide-react";
+import { Coins, Lock, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
-import { useRouter } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
+import { StageButton } from "@/components/staging/StageButton";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
 import type { KeywordSpotlightResult } from "@/app/api/market/keyword-spotlight/route";
 import { SELECTABLE_CATEGORIES, getCategoryLabel } from "@/lib/market/category-labels";
@@ -41,11 +41,8 @@ const COUNTRY_OPTIONS: { code: string; label: string; flag: string }[] = [
 
 export type MarketIntelligenceClientProps = {
   workspaceId: string;
-  /** The user's app package name (to highlight own app in chart) */
   ownAppId?: string | null;
-  /** Auto-detected category from user's app/listing — used as default */
   defaultCategory?: string;
-  /** True when the UI locale is Arabic — enables RTL layout + defaults country to SA */
   isRtl?: boolean;
 };
 
@@ -137,72 +134,40 @@ function SpotlightLockedCard({
   );
 }
 
-// ── Optimize with Market Spotlight button ─────────────────────────────────────
+// ── Stage Keywords to Vault button ────────────────────────────────────────────
 
 function OptimizeWithSpotlightButton({
   spotlight,
   workspaceId,
+  ownAppId,
   isRtl,
 }: {
   spotlight: KeywordSpotlightResult;
   workspaceId: string;
+  ownAppId?: string | null;
   isRtl: boolean;
 }) {
-  const router = useRouter();
-
-  function handleClick() {
-    // Encode the top trending keywords as exploit_targets — the optimizer
-    // will inject them as market spotlight signals into the generation prompt.
-    // Prefix each with "market_spotlight:" so the prompt builder can
-    // distinguish them from review-based pain-point targets.
-    const targets = spotlight.trendingKeywords
-      .slice(0, 8)
-      .map((kw) => `market_spotlight:${kw}`)
-      .join(",");
-
-    const params = new URLSearchParams();
-    params.set("exploit_targets", targets);
-    // Also pass the spotlight narrative as a hint
-    if (spotlight.asoTip) {
-      params.set("market_tip", encodeURIComponent(spotlight.asoTip));
-    }
-
-    router.push(`/app/${workspaceId}/listing-optimizer?${params.toString()}`);
-  }
-
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className={cn(
-        "group flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-sm font-semibold transition-all duration-150",
-        "border-emerald-500/40 bg-emerald-500/[0.08] text-emerald-200",
-        "hover:border-emerald-500/60 hover:bg-emerald-500/[0.14] hover:text-emerald-100",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50",
-        isRtl && "flex-row-reverse font-arabic",
-      )}
-    >
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/15">
-        <Wand2 className="size-4 text-emerald-400" aria-hidden />
-      </div>
-      <div className={cn("min-w-0 flex-1 text-start", isRtl && "text-end")}>
-        <p className="text-sm font-semibold text-emerald-100">
-          {isRtl ? "تحسين القائمة بـ Spotlight" : "Optimize Listing with Market Spotlight"}
-        </p>
-        <p className="mt-0.5 text-[11px] font-normal text-emerald-300/70">
-          {isRtl
-            ? `يُحمّل ${spotlight.trendingKeywords.length} كلمة رائجة مباشرةً في المُحسِّن`
-            : `Loads ${spotlight.trendingKeywords.length} trending keywords directly into the Optimizer`}
-        </p>
-      </div>
-      <ArrowRight
-        className={cn(
-          "size-4 shrink-0 text-emerald-400/70 transition-transform duration-150 group-hover:translate-x-0.5",
-          isRtl && "rotate-180 group-hover:-translate-x-0.5 group-hover:translate-x-0",
-        )}
-        aria-hidden
-      />
-    </button>
+    <StageButton
+      signalType="keyword"
+      content={spotlight.trendingKeywords.slice(0, 5).join(", ")}
+      source="keyword_spotlight"
+      workspaceId={workspaceId}
+      sourceAppId={ownAppId || ""}
+      language={isRtl ? "ar" : "en"}
+      metadata={{
+        allTrendingKeywords: spotlight.trendingKeywords,
+        asoTip: spotlight.asoTip,
+        keywordCount: spotlight.trendingKeywords.length,
+      }}
+      variant="primary"
+      size="lg"
+      label={
+        isRtl
+          ? "إضافة إلى الخزنة"
+          : "Stage Keywords to Vault"
+      }
+    />
   );
 }
 
@@ -554,10 +519,11 @@ export function MarketIntelligenceClient({
           {/* What to do next — shown after unlock */}
           {!spotlightLocked && spotlight && !loadingSpot && (
             <div className="space-y-3 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-              {/* Primary CTA — one-click synthesis into Listing Optimizer */}
+              {/* Primary CTA — stage keywords to vault */}
               <OptimizeWithSpotlightButton
                 spotlight={spotlight}
                 workspaceId={workspaceId}
+                ownAppId={ownAppId}
                 isRtl={isRtl}
               />
 
