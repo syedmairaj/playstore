@@ -36,6 +36,8 @@ interface StageButtonProps {
   signalType: SignalType;
   content: string;
   source: SignalSource;
+  sourceContext?: string;
+  sourceContextId?: string;
   workspaceId: string;
   sourceAppId: string;
   metadata?: Record<string, any>;
@@ -51,6 +53,8 @@ export function StageButton({
   signalType,
   content,
   source,
+  sourceContext,
+  sourceContextId,
   workspaceId,
   sourceAppId,
   metadata = {},
@@ -123,38 +127,133 @@ export function StageButton({
   const handleStage = async () => {
     if (loading) return;
 
+    // ── Validation before API call ──────────────────────────────────────────
+    if (!workspaceId) {
+      console.error("[StageButton] Missing workspaceId - cannot stage signal");
+      showToast({
+        type: "error",
+        title: effectiveLanguage.startsWith("ar") ? "خطأ في الإضافة" : "Failed to Stage",
+        message: effectiveLanguage.startsWith("ar")
+          ? "معرّف مساحة العمل مفقود. تأكد من تسجيل الدخول"
+          : "Missing workspace ID. Please ensure you are logged in.",
+        duration: 4000,
+      });
+      return;
+    }
+
+    if (!content || content.trim().length === 0) {
+      console.error("[StageButton] Empty content - cannot stage signal");
+      showToast({
+        type: "error",
+        title: effectiveLanguage.startsWith("ar") ? "خطأ في الإضافة" : "Failed to Stage",
+        message: effectiveLanguage.startsWith("ar")
+          ? "المحتوى مفقود أو فارغ"
+          : "Content is required and cannot be empty.",
+        duration: 4000,
+      });
+      return;
+    }
+
     setLoading(true);
     try {
-      const response = await fetch(
-        `/api/workspaces/${workspaceId}/staging/add`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            signalType,
-            content,
-            source,
-            sourceAppId,
-            language: effectiveLanguage,
-            metadata: {
-              ...metadata,
-              isRtl,
-              directionality: isRtl ? "rtl" : "ltr",
-            },
-          }),
-        }
-      );
+      const url = `/api/workspaces/${workspaceId}/staging/add`;
+
+      // Build payload - only include sourceAppId if it's a valid UUID
+      const payload: any = {
+        signalType,
+        content,
+        source,
+        sourceContext: sourceContext || "manual",
+        sourceContextId: sourceContextId || content.slice(0, 50),
+        language: effectiveLanguage,
+        metadata: {
+          ...metadata,
+          isRtl,
+          directionality: isRtl ? "rtl" : "ltr",
+        },
+      };
+
+      // Only include sourceAppId if it's a non-empty string that looks like a UUID
+      // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+      if (sourceAppId && sourceAppId.trim().length > 0 && sourceAppId.includes("-")) {
+        payload.sourceAppId = sourceAppId;
+      }
+
+      console.log("[StageButton] === REQUEST ===");
+      console.log("[StageButton] URL:", url);
+      console.log("[StageButton] WorkspaceId:", workspaceId);
+      console.log("[StageButton] SourceAppId received:", sourceAppId);
+      console.log("[StageButton] SourceAppId in payload:", payload.sourceAppId || "(not included)");
+      console.log("[StageButton] Full Payload:", JSON.stringify(payload, null, 2));
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      console.log("[StageButton] Response Status:", response.status, response.statusText);
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(
-          error.message || `Failed to stage: ${response.status}`
-        );
+        // Get response text first
+        const responseText = await response.text();
+        console.log("[StageButton] Raw Response Body:", responseText);
+
+        let errorData: any = null;
+
+        // Try to parse as JSON
+        try {
+          if (responseText) {
+            errorData = JSON.parse(responseText);
+          }
+        } catch (parseErr) {
+          console.warn("[StageButton] JSON Parse Failed:", parseErr);
+        }
+
+        const errorCode = errorData?.error?.code || "unknown";
+        const errorMessage =
+          errorData?.error?.message ||
+          responseText ||
+          response.statusText ||
+          `HTTP ${response.status}`;
+
+        console.error("[StageButton] Error Code:", errorCode);
+        console.error("[StageButton] Error Message:", errorMessage);
+        console.error("[StageButton] Status:", response.status);
+
+        // Handle specific errors
+        if (response.status === 401) {
+          throw new Error(
+            effectiveLanguage.startsWith("ar")
+              ? "يجب تسجيل الدخول"
+              : "You must be signed in to stage signals"
+          );
+        } else if (response.status === 403) {
+          throw new Error(
+            effectiveLanguage.startsWith("ar")
+              ? "أنت لست عضوا في هذه مساحة العمل"
+              : "You are not a member of this workspace"
+          );
+        } else if (response.status === 422) {
+          throw new Error(
+            effectiveLanguage.startsWith("ar")
+              ? `خطأ في البيانات: ${errorMessage}`
+              : `Invalid data: ${errorMessage}`
+          );
+        } else {
+          throw new Error(
+            effectiveLanguage.startsWith("ar")
+              ? `فشل في الإضافة: ${errorMessage}`
+              : `Failed to stage: ${errorMessage}`
+          );
+        }
       }
 
       const successTitle =
         effectiveLanguage.startsWith("ar") ? "تم الإضافة بنجاح" : "Successfully Staged";
       const successMessage = getStagingMessage();
+
+      console.log("[StageButton] SUCCESS");
 
       showToast({
         type: "success",
@@ -165,21 +264,16 @@ export function StageButton({
 
       onStaged?.();
     } catch (error) {
-      console.error("[StageButton] Error:", error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("[StageButton] CATCH ERROR:", msg);
 
       const errorTitle =
         effectiveLanguage.startsWith("ar") ? "خطأ في الإضافة" : "Failed to Stage";
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : effectiveLanguage.startsWith("ar")
-            ? "حدث خطأ. حاول مجددا."
-            : "An error occurred. Try again.";
 
       showToast({
         type: "error",
         title: errorTitle,
-        message: errorMessage,
+        message: msg,
         duration: 4000,
       });
     } finally {

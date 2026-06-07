@@ -1,0 +1,440 @@
+╔════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║         UNIFIED LANGUAGE-AWARE STAGING ARCHITECTURE - COMPLETE SYSTEM DIAGRAM                    ║
+║                            ASO Workbench - Professional Grade                                     ║
+╚════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+
+1. FEATURE MODULES (Using the System)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+        ┌──────────────────────────┐
+        │  Competitor Spy Module   │
+        │  ─────────────────────  │
+        │ • Show competitor info   │
+        │ • Display keywords (12)  │
+        │ • "Add to Queue" button  │
+        └────────────┬─────────────┘
+                     │ Uses
+                     ↓
+        ┌──────────────────────────────────────────────┐
+        │    buildCompetitorSpyPayload()               │
+        │    ─────────────────────────────────         │
+        │    Input: name, keywords, metadata, lang     │
+        │    Output: UnifiedStagingPayload             │
+        └────────────┬─────────────────────────────────┘
+                     │ Creates
+                     ↓
+        ┌────────────────────────────────────────────────────────┐
+        │  UnifiedStagingPayload                                 │
+        │  ──────────────────────                                │
+        │  {                                                      │
+        │    source: 'competitor_spy',                           │
+        │    category: 'competitor_weakness',                    │
+        │    intent: 'competitor_weakness',                      │
+        │    content_array: [...keywords...],                    │
+        │    lang: 'ar' or 'en',  ← CRITICAL FIELD!            │
+        │    is_rtl: true/false,  ← Auto-computed               │
+        │    metadata: { ... }                                   │
+        │  }                                                      │
+        └────────────┬─────────────────────────────────────────┘
+                     │ Passed to
+                     ↓
+        ┌────────────────────────────────────────────────────────┐
+        │ <StagingButton payload={payload} />                    │
+        │ ────────────────────────────────────                   │
+        │ • Renders button with correct language                 │
+        │ • Handles click → calls useStaging()                   │
+        │ • Shows loading → staged → success state               │
+        │ • RTL layout if lang === 'ar'                          │
+        │ • Bilingual toasts (EN/AR)                             │
+        └────────────┬─────────────────────────────────────────┘
+                     │ Uses
+                     ↓
+
+
+2. CORE STAGING LOGIC (useStaging Hook)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+        ┌─────────────────────────────────────────────────────┐
+        │           useStaging() React Hook                    │
+        │           ──────────────────────────                 │
+        │                                                      │
+        │  const { stage, loading, staged, error,             │
+        │          reset, language, isRtl } = useStaging();   │
+        │                                                      │
+        │  ┌────────────────────────────────────────────────┐ │
+        │  │ 1. Detect Language                             │ │
+        │  │    language = useLocale() → 'en' or 'ar'      │ │
+        │  │    isRtl = isRtlLanguage(language)            │ │
+        │  └────────────────────────────────────────────────┘ │
+        │                    ↓                                │
+        │  ┌────────────────────────────────────────────────┐ │
+        │  │ 2. User Clicks Button                          │ │
+        │  │    Payload: UnifiedStagingPayload passed       │ │
+        │  │    Status: loading = true                      │ │
+        │  └────────────────────────────────────────────────┘ │
+        │                    ↓                                │
+        │  ┌────────────────────────────────────────────────┐ │
+        │  │ 3. Validate Payload                            │ │
+        │  │    validateStagingPayload(payload)             │ │
+        │  │    Check: source, category, intent, lang       │ │
+        │  │    Check: content_array not empty              │ │
+        │  │    Return: { valid, errors }                   │ │
+        │  └────────────────────────────────────────────────┘ │
+        │                    ↓                                │
+        │  ┌────────────────────────────────────────────────┐ │
+        │  │ 4. Transform to Database Format                │ │
+        │  │    transformToVaultRecord(payload, workspaceId)│ │
+        │  │    Output: {                                   │ │
+        │  │      workspace_id, signal_type, source,        │ │
+        │  │      source_context, content (JSON string),    │ │
+        │  │      metadata (JSONB), language                │ │
+        │  │    }                                            │ │
+        │  └────────────────────────────────────────────────┘ │
+        │                    ↓                                │
+        │  ┌────────────────────────────────────────────────┐ │
+        │  │ 5. API Call to Staging Vault                   │ │
+        │  │    POST /api/workspaces/staging/add            │ │
+        │  │    Body: Transformed payload                   │ │
+        │  │    Wait for response...                         │ │
+        │  └────────────────────────────────────────────────┘ │
+        │                    ↓                                │
+        │  ┌────────────────────────────────────────────────┐ │
+        │  │ 6. Handle Response                             │ │
+        │  │    Success: staged = true                      │ │
+        │  │    Error: error = errorMessage                 │ │
+        │  │    Status: loading = false                     │ │
+        │  └────────────────────────────────────────────────┘ │
+        │                    ↓                                │
+        │  ┌────────────────────────────────────────────────┐ │
+        │  │ 7. Toast Notification                          │ │
+        │  │    Success: "تمت الإضافة" (AR) or              │ │
+        │  │             "Added to queue" (EN)              │ │
+        │  │    Error: "فشل" (AR) or "Failed" (EN)         │ │
+        │  │    Auto-dismiss after 3-4 seconds              │ │
+        │  └────────────────────────────────────────────────┘ │
+        │                                                      │
+        └──────────────────┬─────────────────────────────────┘
+                           │ Returns
+                           ↓
+
+
+3. UTILITIES LAYER (Pure Functions)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    ┌────────────────────────────────────────────────────────────────────┐
+    │                    staging-utilities.ts                             │
+    │                    ────────────────────                             │
+    │                                                                    │
+    │  ┌─ BUILDERS ──────────────────────────────────────────────────┐ │
+    │  │ • buildCompetitorSpyPayload()                              │ │
+    │  │ • buildReviewAnalysisPayload()                             │ │
+    │  │ • buildKeywordTrackerPayload()                             │ │
+    │  │ • buildMarketTrendsPayload() [future]                      │ │
+    │  └──────────────────────────────────────────────────────────┘ │
+    │                                                                    │
+    │  ┌─ VALIDATORS ────────────────────────────────────────────────┐ │
+    │  │ • validateStagingPayload(payload)                          │ │
+    │  │ • validateContentArray(array)                              │ │
+    │  │ • validateLanguage(lang)                                   │ │
+    │  └──────────────────────────────────────────────────────────┘ │
+    │                                                                    │
+    │  ┌─ TRANSFORMERS ──────────────────────────────────────────────┐ │
+    │  │ • sanitizeContent(array)                                   │ │
+    │  │ • deduplicateContent(array)                                │ │
+    │  │ • extractKeywords(array)                                   │ │
+    │  │ • groupKeywordsByCategory()                                │ │
+    │  └──────────────────────────────────────────────────────────┘ │
+    │                                                                    │
+    │  ┌─ FILTERS (For Retrieval) ───────────────────────────────────┐ │
+    │  │ • filterByLanguage(records, lang) ← CRITICAL!              │ │
+    │  │ • filterBySignalType(records, type)                        │ │
+    │  │ • filterBySource(records, source)                          │ │
+    │  │ • filterByMultiple(records, filters)                       │ │
+    │  └──────────────────────────────────────────────────────────┘ │
+    │                                                                    │
+    │  ┌─ METADATA HELPERS ──────────────────────────────────────────┐ │
+    │  │ • enrichMetadata(base, source, lang)                       │ │
+    │  │ • getMetadataField(metadata, path, default)                │ │
+    │  └──────────────────────────────────────────────────────────┘ │
+    │                                                                    │
+    │  ┌─ LOGGING (Debugging) ───────────────────────────────────────┐ │
+    │  │ • logPayloadVerification(source, payload)                  │ │
+    │  │ • logStagingResult(source, result)                         │ │
+    │  └──────────────────────────────────────────────────────────┘ │
+    │                                                                    │
+    └────────────────────────────────────────────────────────────────────┘
+             ↓                    ↓                     ↓
+        Used in           Used in Components      Used in AI
+        useStaging        for payload building    Optimizer
+
+
+4. TYPE CONTRACT (Single Source of Truth)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │              types/staging-contract.ts                               │
+    │              ──────────────────────────                              │
+    │                                                                      │
+    │  export interface UnifiedStagingPayload {                           │
+    │    source: string;              // 'competitor_spy', etc.           │
+    │    category: string;            // 'competitor_weakness', etc.     │
+    │    intent: string;              // Signal type                      │
+    │    content_array: (string|object)[]; // Main data                   │
+    │    lang: 'en' | 'ar';          // ← REQUIRED!                       │
+    │    is_rtl: boolean;            // ← COMPUTED!                       │
+    │    metadata?: Record<string, any>;                                  │
+    │    workspaceId?: string;                                            │
+    │    sourceContextId?: string;                                        │
+    │    title?: string;                                                  │
+    │    description?: string;                                            │
+    │  }                                                                   │
+    │                                                                      │
+    │  Helper Functions:                                                  │
+    │  • isRtlLanguage(lang) → boolean                                    │
+    │  • validateStagingPayload(payload) → { valid, errors }             │
+    │  • buildStagingPayload(...) → UnifiedStagingPayload                │
+    │  • transformToVaultRecord(payload) → DB schema                     │
+    │                                                                      │
+    └─────────────────────────────────────────────────────────────────────┘
+              ↓
+        All modules must conform to this interface!
+        Everything else is built on top of this contract.
+
+
+5. DATABASE (workspace_staging_vault)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │           workspace_staging_vault Table                              │
+    │           ──────────────────────────────                             │
+    │                                                                      │
+    │  id                  UUID (primary key)                             │
+    │  workspace_id        UUID (foreign key)                             │
+    │  signal_type        VARCHAR (competitor_weakness, etc.)            │
+    │  source             VARCHAR (competitor_spy, review_analysis, etc.)│
+    │  source_context     VARCHAR (same as category)                     │
+    │  source_context_id  VARCHAR (optional: package ID, etc.)           │
+    │  source_app_id      UUID (optional: app being analyzed)            │
+    │  content            TEXT (JSON string of content_array)            │
+    │  metadata           JSONB (enriched metadata)                      │
+    │  language           VARCHAR ('en' or 'ar') ← KEY FIELD!           │
+    │  created_at         TIMESTAMP                                      │
+    │  updated_at         TIMESTAMP                                      │
+    │                                                                      │
+    │  KEY: language field enables filtering by user's language!         │
+    │                                                                      │
+    └─────────────────────────────────────────────────────────────────────┘
+
+
+6. RETRIEVAL: AI Listing Optimizer (Language-Aware)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+        ┌──────────────────────────────────────┐
+        │   User Opens AI Listing Optimizer    │
+        │   (in English or Arabic)             │
+        └────────────────┬─────────────────────┘
+                         │
+                         ↓
+        ┌──────────────────────────────────────┐
+        │  Detect User's Language              │
+        │  language = useLocale() → 'en'|'ar'  │
+        └────────────────┬─────────────────────┘
+                         │
+                         ↓
+        ┌──────────────────────────────────────────────────────┐
+        │  Fetch All Signals from Staging Vault               │
+        │  SELECT * FROM workspace_staging_vault              │
+        │  WHERE workspace_id = ?                             │
+        │  ORDER BY created_at DESC                           │
+        └────────────────┬─────────────────────────────────────┘
+                         │
+                         ↓
+        ┌──────────────────────────────────────────────────────┐
+        │  FILTER BY LANGUAGE (Critical!)                      │
+        │  const relevantSignals =                            │
+        │    filterByLanguage(allSignals, language);          │
+        │                                                      │
+        │  If language === 'en':                              │
+        │    Keep signals where language = 'en'               │
+        │    Drop signals where language = 'ar'               │
+        │                                                      │
+        │  If language === 'ar':                              │
+        │    Keep signals where language = 'ar'               │
+        │    Drop signals where language = 'en'               │
+        │                                                      │
+        │  Result: ZERO cross-language contamination!         │
+        └────────────────┬─────────────────────────────────────┘
+                         │
+                         ↓
+        ┌──────────────────────────────────────────────────────┐
+        │  Process Signals (Now Language-Pure)                 │
+        │  • Extract keywords                                  │
+        │  • Group by strategy                                 │
+        │  • Generate recommendations                          │
+        │  • Render UI                                         │
+        │                                                      │
+        │  AI recommendations are now 100% language-correct!   │
+        └──────────────────────────────────────────────────────┘
+
+
+7. COMPLETE WORKFLOW: End-to-End
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+SCENARIO: Arabic user in Competitor Spy module stages competitor keywords
+
+    1. USER INTERACTION
+       ───────────────────
+       Arabic user sees CompetitorSpySnapshotCard
+       Clicks "إضافة إلى الخزنة" (Add to Queue button)
+
+    2. COMPONENT LOGIC
+       ───────────────────
+       useLocale() → 'ar'
+       buildCompetitorSpyPayload(name, keywords, {}, 'ar')
+         → {
+             source: 'competitor_spy',
+             category: 'competitor_weakness',
+             intent: 'competitor_weakness',
+             content_array: [...keywords...],
+             lang: 'ar',
+             is_rtl: true,
+             metadata: { ... }
+           }
+
+    3. STAGING BUTTON
+       ───────────────────
+       <StagingButton payload={payload} />
+       Renders:
+         • dir="rtl"
+         • flex-row-reverse
+         • Arabic button label
+
+    4. USER CLICKS
+       ───────────────────
+       Button onClick → stage(payload)
+       UI: loading = true (spinner)
+
+    5. HOOK PROCESSES
+       ───────────────────
+       useStaging()
+       • Validate payload ✓
+       • Log PAYLOAD VERIFICATION to console
+       • Transform to vault record
+       • POST /api/workspaces/staging/add
+       • Wait for response...
+
+    6. DATABASE
+       ───────────────────
+       INSERT into workspace_staging_vault:
+         workspace_id: (user's workspace)
+         signal_type: 'competitor_weakness'
+         source: 'competitor_spy'
+         content: '[...keywords...]'
+         metadata: { ... }
+         language: 'ar' ← STORED!
+
+    7. SUCCESS
+       ───────────────────
+       API returns signal_id
+       useStaging():
+         • staged = true
+         • Show success toast: "تمت الإضافة" (Arabic)
+         • Button shows checkmark
+
+    8. LATER: User Opens AI Optimizer
+       ───────────────────────────────────
+       Still in Arabic (language = 'ar')
+       Fetch signals:
+         SELECT * FROM workspace_staging_vault...
+       Filter by language:
+         relevantSignals = filterByLanguage(all, 'ar')
+       Result: Only Arabic signals appear
+       AI analyzes Arabic-language strategy
+
+    9. USER SWITCHES TO ENGLISH
+       ────────────────────────────
+       Language changes to 'en'
+       AI Optimizer refetches:
+         relevantSignals = filterByLanguage(all, 'en')
+       Result: Only English signals appear
+       Different strategy recommendations!
+       NO MIXING!
+
+
+8. KEY PRINCIPLES VISUALIZED
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+┌─ PRINCIPLE 1: Single Responsibility ─┐
+│                                       │
+│  types/      → Define the contract   │
+│  hooks/      → Orchestrate logic     │
+│  lib/        → Provide utilities     │
+│  components/ → Render UI             │
+│                                       │
+│  Each layer focuses on ONE thing     │
+└───────────────────────────────────────┘
+
+┌─ PRINCIPLE 2: Language as First-Class ─┐
+│                                         │
+│  Every signal MUST have: lang field    │
+│  Always filter by: language when       │
+│  retrieving signals for display        │
+│  Never mix languages in output         │
+│                                         │
+│  Result: Data purity, better AI        │
+└─────────────────────────────────────────┘
+
+┌─ PRINCIPLE 3: Automatic RTL ─────────────┐
+│                                           │
+│  Compute RTL from language:               │
+│  isRtl = language === 'ar'                │
+│                                           │
+│  Apply automatically:                     │
+│  • dir attribute                          │
+│  • flex-row-reverse                       │
+│  • Toast notifications                    │
+│                                           │
+│  Zero manual RTL code in components       │
+└───────────────────────────────────────────┘
+
+┌─ PRINCIPLE 4: Composability ──────────────┐
+│                                            │
+│  Stage(payload):                          │
+│    payload = build(data, lang)            │
+│    <Button payload={payload} />           │
+│                                            │
+│  Retrieve(language):                      │
+│    signals = fetch(...)                   │
+│    filtered = filter(signals, language)   │
+│                                            │
+│  Everything combines cleanly              │
+└────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+SUMMARY OF FLOW:
+
+  Feature Module → Builder Function → UnifiedStagingPayload
+        ↓              ↓                      ↓
+    useLocale()    (with lang)            (with lang)
+        │               │                      │
+        └───────────────┴──────────────────────┘
+                        ↓
+                  StagingButton
+                   (renders with RTL if lang='ar')
+                        ↓
+                  useStaging Hook
+                  (validates, transforms, API)
+                        ↓
+            workspace_staging_vault
+            (stores with language field)
+                        ↓
+             AI Listing Optimizer
+              (filters by language)
+                        ↓
+           Language-Pure Recommendations
+           (no cross-language contamination)
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════

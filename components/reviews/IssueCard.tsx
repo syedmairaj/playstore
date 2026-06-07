@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
+import { useLocale } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StageButton } from "@/components/staging/StageButton";
+import { StageButtonRefactored } from "@/components/staging/StageButtonRefactored";
 import type { IssueSeverity, IssueItem } from "@/lib/gemini/generate-review-analysis";
 
 
@@ -55,6 +56,7 @@ export type IssueCardProps = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function IssueCard({ issue, workspaceId, appId }: IssueCardProps) {
+  const locale = useLocale();
   const config = SEVERITY_CONFIG[issue.severity] ?? SEVERITY_CONFIG.MEDIUM;
   const impactPct = Math.round(issue.impact * 100);
 
@@ -110,13 +112,16 @@ export function IssueCard({ issue, workspaceId, appId }: IssueCardProps) {
         )}
 
         {/* ── Staging Vault CTA ── */}
-        <StageButton
+        <StageButtonRefactored
+          module="reviews"
           signalType="review_issue"
           content={issue.title}
           source="review_analysis"
+          sourceContext="common_issues_theme"
+          sourceContextId={issue.id || issue.title}
           workspaceId={workspaceId}
-          sourceAppId={appId || ""}
-          language="en"
+          sourceAppId={appId}
+          language={locale === "ar" ? "ar" : "en"}
           metadata={{
             description: issue.description,
             severity: issue.severity,
