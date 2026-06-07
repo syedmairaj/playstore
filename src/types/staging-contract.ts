@@ -128,6 +128,68 @@ export interface UnifiedStagingPayload {
 }
 
 /**
+ * COMPETITOR WEAKNESS SIGNAL
+ * Specialized contract for competitor intelligence signals
+ * CRITICAL: Includes competitor_id for strict data isolation
+ */
+export interface CompetitorWeaknessSignal extends UnifiedStagingPayload {
+  /**
+   * MANDATORY: The specific competitor this signal represents
+   * Used for strict isolation when switching between competitors
+   * Examples: 'com.fittrack.pro', 'com.myfitnesspal.pro'
+   *
+   * This MUST be unique per signal - prevents data collision
+   */
+  competitor_id: string;
+
+  /**
+   * MANDATORY: Human-readable competitor name
+   * Used in AI Optimizer UI and audit logs
+   * Example: 'FitTrack Pro'
+   */
+  competitor_name: string;
+
+  /**
+   * OPTIONAL: Competitor's current rank
+   * Used for prioritization: rank 1 > rank 2
+   */
+  competitor_rank?: number;
+
+  /**
+   * MANDATORY: Category for domain-specific context
+   * Example: 'Health & Fitness', 'Productivity', 'Social Networking'
+   */
+  category_label: string;
+
+  /**
+   * MANDATORY: Keywords grouped by AI-determined strategy
+   * This is the primary content rendered in Keyword Strategy component
+   */
+  keywords_by_strategy: {
+    high_volume: string[];      // Keywords with high monthly search volume
+    intent_based: string[];     // Keywords with commercial/transaction intent
+    competitor_gap: string[];   // Keywords competitors target but user doesn't
+  };
+
+  /**
+   * OPTIONAL: Vulnerabilities in competitor's app metadata/ASO
+   * Complementary insight for AI optimization
+   */
+  vulnerabilities?: string[];
+
+  /**
+   * METADATA MUST INCLUDE these fields for retrieval:
+   * {
+   *   competitor_id: string,
+   *   competitor_name: string,
+   *   category_label: string,
+   *   keywords_by_strategy: { high_volume, intent_based, competitor_gap },
+   *   vulnerabilities?: string[]
+   * }
+   */
+}
+
+/**
  * Database Payload Transformation
  *
  * Maps UnifiedStagingPayload to workspace_staging_vault schema
