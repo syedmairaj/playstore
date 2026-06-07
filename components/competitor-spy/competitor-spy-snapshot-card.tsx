@@ -184,29 +184,15 @@ export function CompetitorSpySnapshotCard({
                 </dd>
               </div>
 
-              {/* Inline Expandable Keyword Container */}
+              {/* Inline Expandable Keyword Container - Fetches keywords from staging vault */}
               <div className="rounded-xl border border-white/[0.06] bg-[#070a0f] p-3 text-start">
                 <KeywordSurfacesInline
-                  keywords={
-                    keywordSurfaces && keywordSurfaces.length > 0
-                      ? keywordSurfaces
-                      : [
-                          "fitness tracker",
-                          "calorie counter",
-                          "workout planner",
-                          "weight loss",
-                          "step counter",
-                          "meal tracker",
-                          "food scanner app",
-                          "diet goals app",
-                          "nutrition tracking",
-                          "health monitoring",
-                          "exercise routine",
-                          "activity tracker",
-                        ]
-                  }
+                  keywords={keywordSurfaces || []}
                   count={metricsKeywordCount}
                   isRtl={isRtl}
+                  competitorPackageId={packageId}
+                  workspaceId={workspaceId}
+                  language={isRtl ? "ar" : "en"}
                 />
               </div>
 

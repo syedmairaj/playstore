@@ -2,19 +2,20 @@
  * Keyword Surfaces Inline Expandable Container
  *
  * Features:
+ * - Fetches keywords from staging vault based on competitor + language
  * - Expands inline within the snapshot container
  * - No modals, drawers, or popovers
  * - Animated height transition using framer-motion
  * - Dense 2-column grid layout
  * - Color-coded keyword chips (blue/green/amber by strategy)
- * - Full RTL support
+ * - Full RTL support (EN/AR)
  * - Copy-to-clipboard with visual feedback
  * - Chevron icon indicates expanded/collapsed state
  */
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocale } from "next-intl";
 import { Copy, Check, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -26,10 +27,13 @@ interface KeywordGroup {
 }
 
 interface KeywordSurfacesInlineProps {
-  keywords: string[];
+  keywords?: string[];
   groupedKeywords?: KeywordGroup[];
   count: number;
   isRtl?: boolean;
+  competitorPackageId?: string;
+  workspaceId?: string;
+  language?: string;
 }
 
 /**
@@ -175,18 +179,99 @@ function KeywordPill({
 
 /**
  * Keyword Surfaces Inline Component
+ * Fetches keywords from staging vault when competitor or language changes
  */
 export function KeywordSurfacesInline({
-  keywords,
+  keywords: initialKeywords = [],
   groupedKeywords,
   count,
   isRtl: forceRtl,
+  competitorPackageId,
+  workspaceId,
+  language: passedLanguage,
 }: KeywordSurfacesInlineProps) {
   const locale = useLocale();
   const isRtl = forceRtl !== undefined ? forceRtl : locale === "ar";
   const [isExpanded, setIsExpanded] = useState(false);
+  const [fetchedKeywords, setFetchedKeywords] = useState<string[]>(initialKeywords);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const organizedGroups = organizeKeywords(keywords, groupedKeywords);
+  const language = passedLanguage || (isRtl ? "ar" : "en");
+
+  // Fetch keywords from staging vault when competitor or language changes
+  // THREE-DIMENSIONAL ISOLATION: workspaceId + competitorPackageId + language
+  useEffect(() => {
+    if (!competitorPackageId || !workspaceId) {
+      setFetchedKeywords(initialKeywords);
+      return;
+    }
+
+    const fetchKeywords = async () => {
+      setIsLoading(true);
+      try {
+        // ISOLATED ENDPOINT: Returns ONLY keywords for this competitor + language
+        // No data collision when switching competitors
+        const response = await fetch(
+          `/api/workspaces/${workspaceId}/competitors/${competitorPackageId}/keywords?language=${language}`,
+          { method: "GET", headers: { "Content-Type": "application/json" } }
+        );
+
+        if (!response.ok) {
+          console.warn("[KeywordSurfacesInline] API error:", response.status);
+          setFetchedKeywords(initialKeywords);
+          return;
+        }
+
+        const data = await response.json();
+
+        // Extract keywords from the keywords_by_strategy object or use flat array
+        let keywordsArray: string[] = [];
+        if (data.keywords) {
+          if (typeof data.keywords === 'object' && !Array.isArray(data.keywords)) {
+            // Structure: { high_volume: [], intent_based: [], competitor_gap: [] }
+            keywordsArray = [
+              ...(data.keywords.high_volume || []),
+              ...(data.keywords.intent_based || []),
+              ...(data.keywords.competitor_gap || []),
+            ];
+          } else if (Array.isArray(data.keywords)) {
+            // Structure: flat array
+            keywordsArray = data.keywords;
+          }
+        }
+
+        if (keywordsArray.length > 0) {
+          console.log(
+            "[KeywordSurfacesInline] Fetched",
+            keywordsArray.length,
+            "keywords for",
+            competitorPackageId,
+            "language:",
+            language
+          );
+          setFetchedKeywords(keywordsArray);
+        } else {
+          console.warn(
+            "[KeywordSurfacesInline] No keywords found for",
+            competitorPackageId,
+            "language:",
+            language
+          );
+          setFetchedKeywords(initialKeywords);
+        }
+      } catch (error) {
+        console.error("[KeywordSurfacesInline] Fetch error:", error);
+        setFetchedKeywords(initialKeywords);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchKeywords();
+  }, [competitorPackageId, language, workspaceId, initialKeywords]);
+
+  const keywordsToUse = fetchedKeywords.length > 0 ? fetchedKeywords : initialKeywords;
+  const organizedGroups = organizeKeywords(keywordsToUse, groupedKeywords);
   const badgeLabel = locale === "ar" ? `كلمات مفتاحية` : `keywords`;
 
   return (
@@ -194,6 +279,7 @@ export function KeywordSurfacesInline({
       {/* Trigger Button */}
       <motion.button
         onClick={() => setIsExpanded(!isExpanded)}
+        disabled={isLoading}
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
         className={cn(
@@ -203,17 +289,18 @@ export function KeywordSurfacesInline({
           "text-emerald-200 text-sm font-semibold",
           "transition-all duration-150",
           "cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/50",
+          isLoading && "opacity-60 cursor-wait",
           isRtl && "flex-row-reverse"
         )}
       >
         <span className={cn("flex items-center gap-1.5", isRtl && "flex-row-reverse")}>
-          <span className="font-mono font-bold text-emerald-300">{count}</span>
+          <span className="font-mono font-bold text-emerald-300">{keywordsToUse.length}</span>
           <span>{badgeLabel}</span>
         </span>
         <motion.div
           animate={{ rotate: isExpanded ? 180 : 0 }}
           transition={{ duration: 0.3, type: "spring", stiffness: 200, damping: 20 }}
-          className="flex-shrink-0"
+          className={cn("flex-shrink-0", isLoading && "animate-spin")}
         >
           <ChevronDown className="w-4 h-4" />
         </motion.div>
