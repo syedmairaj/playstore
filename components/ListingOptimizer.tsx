@@ -38,6 +38,7 @@ import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog"
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
 import { useAppLimits, workspaceAppsQueryKey } from "@/hooks/use-app-limits";
+import { useOptimizerSync } from "@/hooks/useOptimizerSync";
 import { precheckAddApp } from "@/lib/client/precheck-add-app";
 import {
   clearFinalListingCache,
@@ -397,6 +398,9 @@ export function ListingOptimizer({
       ? initialAiCreditsRemaining
       : null,
   );
+
+  // ── Staging Vault Context ────────────────────────────────────────────────
+  const { data: optimizerContext, mutate: refreshOptimizerContext } = useOptimizerSync(workspaceId);
 
   // ── Localization expansion state ──────────────────────────────────────────
   type LocalizeMarket = LocalizeMarketCode;
@@ -1045,6 +1049,39 @@ export function ListingOptimizer({
       });
     },
     [workspaceId, refreshQueuedImprovements],
+  );
+
+  // ── Remove signal from staging vault ──────────────────────────────────────
+  const handleRemoveFromStagingVault = useCallback(
+    (signalId: string) => {
+      if (!workspaceId) return;
+
+      // Optimistically remove from context
+      if (optimizerContext) {
+        // This would require a more complex state update
+        // For now, just call the API and refresh
+      }
+
+      void fetch(
+        `/api/workspaces/${workspaceId}/staging/delete`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ signalId }),
+          credentials: "same-origin",
+        },
+      ).then((res) => {
+        if (res.ok) {
+          // Refresh optimizer context after deletion
+          refreshOptimizerContext();
+        }
+      }).catch((err) => {
+        console.error("Failed to delete signal from staging vault:", err);
+        // Refresh to show current state
+        refreshOptimizerContext();
+      });
+    },
+    [workspaceId, refreshOptimizerContext],
   );
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -2654,12 +2691,49 @@ export function ListingOptimizer({
   // ── Active Context Canvas: pre-compute pill groups outside JSX ───────────
   // These MUST be plain variables (not IIFEs inside JSX) so that Framer Motion
   // AnimatePresence can track key identity across renders without frame.join errors.
-  const reviewQueuePills = queuedImprovements.filter(
-    (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
-  );
-  const spotlightQueuePills = queuedImprovements.filter(
-    (item) => item.sentimentTag?.startsWith("market_spotlight:"),
-  );
+
+  // Combine queued improvements with staging vault signals
+  const reviewQueuePills = [
+    // From listing backlog
+    ...queuedImprovements.filter(
+      (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
+    ).map((item) => ({
+      id: item.id,
+      label: item.title,
+      source: "backlog" as const,
+      item,
+    })),
+    // From staging vault - review_issue signals
+    ...(optimizerContext?.activeItems || [])
+      .filter((item) => item.signalType === "review_issue")
+      .map((item) => ({
+        id: item.id,
+        label: item.content,
+        source: "staging_vault" as const,
+        item,
+      })),
+  ];
+
+  const spotlightQueuePills = [
+    // From listing backlog
+    ...queuedImprovements.filter(
+      (item) => item.sentimentTag?.startsWith("market_spotlight:"),
+    ).map((item) => ({
+      id: item.id,
+      label: item.title,
+      source: "backlog" as const,
+      item,
+    })),
+    // From staging vault - keyword/optimization_insight signals
+    ...(optimizerContext?.activeItems || [])
+      .filter((item) => item.signalType === "keyword" || item.signalType === "optimization_insight")
+      .map((item) => ({
+        id: item.id,
+        label: item.content,
+        source: "staging_vault" as const,
+        item,
+      })),
+  ];
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
@@ -3205,12 +3279,12 @@ export function ListingOptimizer({
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
                           {isRtl ? "السياق النشط" : "Active Context"}
                         </p>
-                        {(queuedImprovements.length > 0 || competitorWeaknesses.length > 0) ? (
+                        {(queuedImprovements.length > 0 || competitorWeaknesses.length > 0 || (optimizerContext?.activeItems?.length ?? 0) > 0) ? (
                           <span className="ms-auto rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/20">
-                            {queuedImprovements.length + competitorWeaknesses.length}{" "}
+                            {queuedImprovements.length + competitorWeaknesses.length + (optimizerContext?.activeItems?.length ?? 0)}{" "}
                             {isRtl
                               ? "إشارة نشطة"
-                              : `signal${queuedImprovements.length + competitorWeaknesses.length !== 1 ? "s" : ""} active`}
+                              : `signal${queuedImprovements.length + competitorWeaknesses.length + (optimizerContext?.activeItems?.length ?? 0) !== 1 ? "s" : ""} active`}
                           </span>
                         ) : null}
                       </div>
@@ -3235,11 +3309,11 @@ export function ListingOptimizer({
                           {reviewQueuePills.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
                               <AnimatePresence initial={false}>
-                                {reviewQueuePills.map((item) => {
-                                  const label = item.sentimentTag?.trim() || item.reviewText?.slice(0, 24) || "Issue";
+                                {reviewQueuePills.map((pill) => {
+                                  const label = pill.label;
                                   return (
                                     <motion.span
-                                      key={item.id}
+                                      key={`${pill.source}-${pill.id}`}
                                       layout
                                       initial={{ opacity: 0, scale: 0.85 }}
                                       animate={{ opacity: 1, scale: 1 }}
@@ -3256,7 +3330,15 @@ export function ListingOptimizer({
                                         <button
                                           type="button"
                                           aria-label={`Remove ${label}`}
-                                          onClick={() => handleRemoveQueueItem(item.id)}
+                                          onClick={() => {
+                                            if (pill.source === "staging_vault") {
+                                              // Delete from staging vault
+                                              handleRemoveFromStagingVault(pill.id);
+                                            } else {
+                                              // Delete from backlog
+                                              handleRemoveQueueItem(pill.id);
+                                            }
+                                          }}
                                           className="ms-0.5 rounded-full p-0.5 text-rose-400/50 transition hover:bg-rose-500/20 hover:text-rose-300"
                                         >
                                           ×
@@ -3288,13 +3370,11 @@ export function ListingOptimizer({
                           {spotlightQueuePills.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
                               <AnimatePresence initial={false}>
-                                {spotlightQueuePills.map((item) => {
-                                  const label = (item.sentimentTag ?? "")
-                                    .replace(/^market_spotlight:/, "")
-                                    .trim() || "Keyword";
+                                {spotlightQueuePills.map((pill) => {
+                                  const label = pill.label;
                                   return (
                                     <motion.span
-                                      key={item.id}
+                                      key={`${pill.source}-${pill.id}`}
                                       layout
                                       initial={{ opacity: 0, scale: 0.85 }}
                                       animate={{ opacity: 1, scale: 1 }}
@@ -3311,7 +3391,13 @@ export function ListingOptimizer({
                                         <button
                                           type="button"
                                           aria-label={`Remove ${label}`}
-                                          onClick={() => handleRemoveQueueItem(item.id)}
+                                          onClick={() => {
+                                            if (pill.source === "staging_vault") {
+                                              handleRemoveFromStagingVault(pill.id);
+                                            } else {
+                                              handleRemoveQueueItem(pill.id);
+                                            }
+                                          }}
                                           className="ms-0.5 rounded-full p-0.5 text-emerald-400/50 transition hover:bg-emerald-500/20 hover:text-emerald-300"
                                         >
                                           ×

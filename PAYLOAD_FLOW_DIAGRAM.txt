@@ -1,0 +1,287 @@
+╔════════════════════════════════════════════════════════════════════════════════════════════════╗
+║                   COMPETITOR SPY → STAGING VAULT → AI LISTING OPTIMIZER                        ║
+║                              KEYWORD PAYLOAD FLOW (UPDATED)                                    ║
+╚════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+
+1. USER INTERACTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    Competitor Spy Snapshot Card
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │  Competitor: "FitTrack Pro"                                    │
+    │  My App: "HealthHub"                                           │
+    │  Best Rank: #42                                                │
+    │  Keywords: 12 (expandable)                                     │
+    │                                                                 │
+    │  [Open in Play Store]  [Send to AI Listing Optimizer] ◄── CLICK HERE
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+2. PAYLOAD CONSTRUCTION (React Component)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    competitor-spy-snapshot-card.tsx
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ const payload = {                                               │
+    │   content: JSON.stringify({                                     │
+    │     competitor_name: "FitTrack Pro",                            │
+    │     app_title: "HealthHub",                                     │
+    │     keywords: [                                                 │
+    │       "fitness tracker",                                        │
+    │       "calorie counter",                                        │
+    │       "workout planner",                                        │
+    │       "weight loss",                                            │
+    │       "step counter",                                           │
+    │       "meal tracker",                                           │
+    │       "food scanner app",                                       │
+    │       "diet goals app",                                         │
+    │       "nutrition tracking",                                     │
+    │       "health monitoring",                                      │
+    │       "exercise routine",                                       │
+    │       "activity tracker"                                        │
+    │     ]                                                           │
+    │   }),                                                           │
+    │   metadata: {                                                   │
+    │     competitorName: "FitTrack Pro",                             │
+    │     competitorPackageId: "com.fittrack.pro",                    │
+    │     appTitle: "HealthHub",                                      │
+    │     categoryLabel: "Health & Fitness",                          │
+    │     bestRank: 42,                                               │
+    │     metricsKeywordCount: 12,                                    │
+    │     keywords: [12-item array],  ◄── KEYWORDS IN METADATA       │
+    │     keywordCount: 12                                            │
+    │   },                                                            │
+    │   signalType: "competitor_weakness",                            │
+    │   source: "competitor_spy",                                     │
+    │   sourceContext: "competitor_weakness",                         │
+    │   sourceContextId: "com.fittrack.pro",                          │
+    │   workspaceId: "workspace-uuid-here",                           │
+    │   language: "en"  (or "ar" for Arabic)                         │
+    │ }                                                               │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+3. VALIDATION & LOGGING (StageButtonRefactored)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    Button onClick Handler
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ ✓ Validate payload (no errors)                                  │
+    │                                                                 │
+    │ ✓ Log PAYLOAD VERIFICATION (Before DB Write)                   │
+    │   [StageButton] [COMPETITOR_SPY] workspace_id: ...             │
+    │   [StageButton] [COMPETITOR_SPY] signal_type: competitor_...   │
+    │   [StageButton] [COMPETITOR_SPY] source: competitor_spy        │
+    │   [StageButton] [COMPETITOR_SPY] source_context: ...           │
+    │   [StageButton] [COMPETITOR_SPY] content (length=345): {...}   │
+    │   [StageButton] [COMPETITOR_SPY] content (parsed): {...}       │
+    │   [StageButton] [COMPETITOR_SPY] ✓ Keywords found in content:  │
+    │                                    ["fitness tracker", ...]     │
+    │   [StageButton] [COMPETITOR_SPY] metadata: {...}               │
+    │   [StageButton] [COMPETITOR_SPY] ✓ Keywords found in metadata  │
+    │                                    (12 items): [...]            │
+    │                                                                 │
+    │ ✓ Show Loading State: "⟳ Staging..."                          │
+    └─────────────────────────────────────────────────────────────────┘
+            ↓
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ stageSignal(supabase, request) ◄── Call Staging Utility        │
+    │   - Validates workspace access                                  │
+    │   - Creates signal record in DB                                 │
+    │   - Returns signal ID + created_at                              │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+4. DATABASE WRITE (workspace_staging_vault Table)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    Supabase Database
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ INSERT INTO workspace_staging_vault (                            │
+    │   id,                                         ← uuid (auto)      │
+    │   workspace_id,                               ← workspace-uuid   │
+    │   signal_type,                                ← competitor_...   │
+    │   source,                                     ← competitor_spy   │
+    │   source_context,                             ← competitor_...   │
+    │   source_context_id,                          ← com.fittrack... │
+    │   source_app_id,                              ← app-uuid         │
+    │   content,  ◄── JSON STRING WITH KEYWORDS                       │
+    │   metadata, ◄── JSON OBJECT WITH KEYWORDS ARRAY                 │
+    │   language,                                   ← "en" or "ar"     │
+    │   created_at,                                 ← timestamp        │
+    │   updated_at                                  ← timestamp        │
+    │ ) VALUES (...)                                                  │
+    │                                                                 │
+    │ ✓ Record created successfully                                   │
+    │ ✓ Signal ID: 550e8400-e29b-41d4-a716-446655440000              │
+    └─────────────────────────────────────────────────────────────────┘
+            ↓
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ ✓ Log SUCCESS - Signal Stored in Vault                         │
+    │   [StageButton] [COMPETITOR_SPY] signal_id: 550e8400-...       │
+    │   [StageButton] [COMPETITOR_SPY] signal_type: competitor_...   │
+    │   [StageButton] [COMPETITOR_SPY] created_at: 2026-06-05T...    │
+    │   [StageButton] [COMPETITOR_SPY] content (first 200 chars):    │
+    │                                    {"competitor_name":...       │
+    │   [StageButton] [COMPETITOR_SPY] metadata keys:                │
+    │                                    ["competitorName", ...       │
+    │   [StageButton] [COMPETITOR_SPY] ✓ Retrieved keywords from     │
+    │                                    metadata (12): [...]         │
+    │                                                                 │
+    │ ✓ Show Success State: "✓ Staged"                              │
+    │ ✓ Show Toast: "Successfully Staged: Competitor App"            │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+5. AI LISTING OPTIMIZER READS SIGNAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    When user opens AI Listing Optimizer:
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ SELECT * FROM workspace_staging_vault                           │
+    │ WHERE source_context = 'competitor_weakness'                    │
+    │ ORDER BY created_at DESC                                        │
+    │ LIMIT 10;                                                       │
+    │                                                                 │
+    │ Results in signal with:                                         │
+    │   - content: JSON string containing keywords                    │
+    │   - metadata: Object with keywords array                        │
+    │                                                                 │
+    │ AI system can parse keywords from EITHER:                       │
+    │   1. JSON.parse(signal.content).keywords                        │
+    │   2. signal.metadata.keywords (direct array access)             │
+    └─────────────────────────────────────────────────────────────────┘
+            ↓
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ AI Listing Optimizer UI                                         │
+    │                                                                 │
+    │ Recent Signals                                                  │
+    │ ─────────────────────────────────────────────────────────────   │
+    │                                                                 │
+    │ ✓ Competitor Weakness: FitTrack Pro vs HealthHub               │
+    │   Rank: #42                                                     │
+    │   Category: Health & Fitness                                    │
+    │                                                                 │
+    │   ┌─ Keyword Strategy ─────────────────────────────────────┐   │
+    │   │                                                        │   │
+    │   │ HIGH-VOLUME (4 keywords)                              │   │
+    │   │ • fitness tracker    • calorie counter                │   │
+    │   │ • workout planner    • weight loss                    │   │
+    │   │                                                        │   │
+    │   │ INTENT-BASED (4 keywords)                             │   │
+    │   │ • step counter       • meal tracker                   │   │
+    │   │ • food scanner app   • diet goals app                 │   │
+    │   │                                                        │   │
+    │   │ COMPETITOR GAP (4 keywords)                           │   │
+    │   │ • nutrition tracking • health monitoring              │   │
+    │   │ • exercise routine   • activity tracker               │   │
+    │   │                                                        │   │
+    │   └────────────────────────────────────────────────────────┘   │
+    │                                                                 │
+    │   [Copy All] [Generate Recommendations]                       │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+6. VERIFICATION CHECKLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    After clicking "Send to AI Listing Optimizer":
+
+    ✓ STEP 1: Browser Console
+      └─ See: [StageButton] [COMPETITOR_SPY] PAYLOAD VERIFICATION
+      └─ See: [StageButton] [COMPETITOR_SPY] ✓ Keywords found in content
+      └─ See: [StageButton] [COMPETITOR_SPY] ✓ Keywords found in metadata
+      └─ See: [StageButton] [COMPETITOR_SPY] SUCCESS - Signal Stored
+      └─ See: ✓ Checkmark and success toast notification
+
+    ✓ STEP 2: Database Query
+      └─ Query: SELECT * FROM workspace_staging_vault WHERE source_context = 'competitor_weakness' LIMIT 1;
+      └─ Verify: content field contains valid JSON with 12 keywords
+      └─ Verify: metadata.keywords is array of 12 strings
+      └─ Verify: created_at is recent timestamp
+
+    ✓ STEP 3: AI Listing Optimizer
+      └─ Open AI Listing Optimizer module
+      └─ See: New signal in "Recent Signals" list
+      └─ See: "Keyword Strategy" section with all 12 keywords
+      └─ See: Keywords grouped by strategy (High-Volume, Intent-Based, Competitor Gap)
+      └─ See: Copy buttons work on each keyword
+
+
+7. LOCALIZATION FLOW (English ↔ Arabic)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    English (LTR)                          │    Arabic (RTL)
+    ─────────────────────────────────────────────────────────────────
+                                          │
+    Button: "Send to AI Listing..."       │    "إضافة إلى مُحسّن..."
+    Language: "en"                        │    Language: "ar"
+    Console logs in English               │    Console logs in English
+    isRtl: false                          │    isRtl: true
+                                          │
+    Payload structure IDENTICAL:          │    Same payload structure
+    - Keywords are language-agnostic      │    - Keywords unchanged
+    - Metadata keys in English            │    - Same metadata keys
+    - Signal stored with language: "en"   │    - Stored with language: "ar"
+                                          │
+    AI Listing Optimizer (EN):            │    AI Listing Optimizer (AR):
+    "Keyword Strategy"                    │    "استراتيجية الكلمات المفتاحية"
+    Left-to-right layout                  │    Right-to-left layout
+    [Copy All] on left                    │    [Copy All] on right
+    Keywords in rows                      │    Keywords in rows (RTL)
+
+
+8. ERROR HANDLING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    If something fails:
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ Validation Errors:                                              │
+    │   - Missing workspace_id → Error toast + console log            │
+    │   - Empty content → Error toast + console log                   │
+    │   - Invalid metadata → Error toast + console log                │
+    │   → Button stays enabled, no changes made                       │
+    │                                                                 │
+    │ Network Errors:                                                 │
+    │   - stageSignal fetch fails → Error toast + catch block         │
+    │   - Supabase timeout → Handled by stageSignal utility           │
+    │   → Button shows "Failed" state, auto-resets                    │
+    │                                                                 │
+    │ Database Errors:                                                │
+    │   - Insert fails → Exception caught                             │
+    │   - Constraint violation → Logged to console                    │
+    │   → User sees "Failed" toast, retry enabled                     │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+                                        SUMMARY
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+✅ Keywords Flow:
+   Competitor Spy UI (12 keywords)
+   → Payload construction (content JSON + metadata array)
+   → Validation & logging (pre-flight checks)
+   → Database write (workspace_staging_vault)
+   → AI Listing Optimizer reads (populates Keyword Strategy)
+   → User sees all 12 keywords
+
+✅ Verification:
+   Console logs + Database query + AI Listing Optimizer UI
+
+✅ Localization:
+   Works in English (LTR) and Arabic (RTL)
+
+✅ Error Handling:
+   All paths covered with user-friendly messages
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════

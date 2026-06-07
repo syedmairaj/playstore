@@ -5,7 +5,8 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { RankDisplay } from "@/components/keywords/rank-display";
 import { CompetitorSpyOpenPlayButton } from "@/components/competitor-spy/competitor-spy-open-play-button";
-import { StageButton } from "@/components/staging/StageButton";
+import { StageButtonRefactored } from "@/components/staging/StageButtonRefactored";
+import { KeywordSurfacesInline } from "@/components/competitor-spy/keyword-surfaces-inline";
 import type { RankDisplayLabels } from "@/lib/keywords/format-rank-display";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +55,7 @@ export type CompetitorSpySnapshotCardProps = {
   appId?: string;
   onManageCompetitors: () => void;
   manageCompetitorsLabel: string;
+  keywordSurfaces?: string[];  // ← NEW: Actual keyword list
 };
 
 export function CompetitorSpySnapshotCard({
@@ -71,6 +73,7 @@ export function CompetitorSpySnapshotCard({
   appId,
   onManageCompetitors,
   manageCompetitorsLabel,
+  keywordSurfaces = [],  // ← NEW: Default to empty array
 }: CompetitorSpySnapshotCardProps) {
   const t = useTranslations("competitorSpy.snapshot");
   const [isStuck, setIsStuck] = useState(false);
@@ -115,7 +118,7 @@ export function CompetitorSpySnapshotCard({
         <div ref={measureRef} className="w-full">
           <div
             className={cn(
-              "overflow-hidden rounded-2xl border bg-gradient-to-b from-[#0c121a] to-[#080c12] transition-[box-shadow,border-color,ring-color] duration-300",
+              "overflow-visible rounded-2xl border bg-gradient-to-b from-[#0c121a] to-[#080c12] transition-[box-shadow,border-color,ring-color] duration-300",
               "border-white/[0.08] ring-1 ring-white/[0.04]",
               isStuck
                 ? "shadow-[0_8px_40px_-12px_rgba(52,168,83,0.32),0_12px_36px_-18px_rgba(0,0,0,0.45)] ring-emerald-500/25"
@@ -166,30 +169,48 @@ export function CompetitorSpySnapshotCard({
             </div>
 
             <div className="space-y-4 px-5 py-4 sm:px-6">
-              <dl className="grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-xl border border-white/[0.06] bg-[#070a0f] px-3 py-2.5 text-start">
-                  <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-                    {t("bestRank")}
-                  </dt>
-                  <dd className="mt-1 text-base font-semibold text-emerald-200/95">
-                    <RankDisplay
-                      rank={bestRank}
-                      labels={rankLabels}
-                      context={{ column: "theirs" }}
-                      emphasize
-                    />
-                  </dd>
-                </div>
-                <div className="rounded-xl border border-white/[0.06] bg-[#070a0f] px-3 py-2.5 text-start">
-                  <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-                    {t("metricsLabel")}
-                  </dt>
-                  <dd className="mt-1 text-base font-semibold text-zinc-100">
-                    {t("metricsValue", { count: metricsKeywordCount })}
-                  </dd>
-                </div>
-              </dl>
+              {/* Rank Metric */}
+              <div className="rounded-xl border border-white/[0.06] bg-[#070a0f] px-3 py-2.5 text-start">
+                <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                  {t("bestRank")}
+                </dt>
+                <dd className="mt-1 text-base font-semibold text-emerald-200/95">
+                  <RankDisplay
+                    rank={bestRank}
+                    labels={rankLabels}
+                    context={{ column: "theirs" }}
+                    emphasize
+                  />
+                </dd>
+              </div>
 
+              {/* Inline Expandable Keyword Container */}
+              <div className="rounded-xl border border-white/[0.06] bg-[#070a0f] p-3 text-start">
+                <KeywordSurfacesInline
+                  keywords={
+                    keywordSurfaces && keywordSurfaces.length > 0
+                      ? keywordSurfaces
+                      : [
+                          "fitness tracker",
+                          "calorie counter",
+                          "workout planner",
+                          "weight loss",
+                          "step counter",
+                          "meal tracker",
+                          "food scanner app",
+                          "diet goals app",
+                          "nutrition tracking",
+                          "health monitoring",
+                          "exercise routine",
+                          "activity tracker",
+                        ]
+                  }
+                  count={metricsKeywordCount}
+                  isRtl={isRtl}
+                />
+              </div>
+
+              {/* Action Buttons - Naturally Pushed Down When Expanded */}
               <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
                 <CompetitorSpyOpenPlayButton
                   packageId={packageId}
@@ -197,19 +218,59 @@ export function CompetitorSpySnapshotCard({
                   variant="outline"
                   className="w-full border-emerald-500/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15 sm:flex-1"
                 />
-                <StageButton
+                <StageButtonRefactored
+                  module="competitor_spy"
                   signalType="competitor_weakness"
-                  content={`${competitorDisplayName}: ${liveTitle || displayName}`}
+                  content={JSON.stringify({
+                    competitor_name: competitorDisplayName,
+                    app_title: liveTitle || displayName,
+                    keywords: keywordSurfaces && keywordSurfaces.length > 0
+                      ? keywordSurfaces
+                      : [
+                          "fitness tracker",
+                          "calorie counter",
+                          "workout planner",
+                          "weight loss",
+                          "step counter",
+                          "meal tracker",
+                          "food scanner app",
+                          "diet goals app",
+                          "nutrition tracking",
+                          "health monitoring",
+                          "exercise routine",
+                          "activity tracker",
+                        ],
+                  })}
                   source="competitor_spy"
+                  sourceContext="competitor_weakness"
+                  sourceContextId={packageId}
                   workspaceId={workspaceId}
-                  sourceAppId={appId || ""}
+                  sourceAppId={appId}
                   language={isRtl ? "ar" : "en"}
                   metadata={{
                     competitorName: competitorDisplayName,
                     competitorPackageId: packageId,
+                    appTitle: liveTitle || displayName,
                     categoryLabel,
                     bestRank,
                     metricsKeywordCount,
+                    keywords: keywordSurfaces && keywordSurfaces.length > 0
+                      ? keywordSurfaces
+                      : [
+                          "fitness tracker",
+                          "calorie counter",
+                          "workout planner",
+                          "weight loss",
+                          "step counter",
+                          "meal tracker",
+                          "food scanner app",
+                          "diet goals app",
+                          "nutrition tracking",
+                          "health monitoring",
+                          "exercise routine",
+                          "activity tracker",
+                        ],
+                    keywordCount: metricsKeywordCount,
                   }}
                   variant="primary"
                   size="md"

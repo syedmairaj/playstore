@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Coins, Lock, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { StageButton } from "@/components/staging/StageButton";
+import { StageButtonRefactored } from "@/components/staging/StageButtonRefactored";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
 import type { KeywordSpotlightResult } from "@/app/api/market/keyword-spotlight/route";
 import { SELECTABLE_CATEGORIES, getCategoryLabel } from "@/lib/market/category-labels";
@@ -148,12 +148,15 @@ function OptimizeWithSpotlightButton({
   isRtl: boolean;
 }) {
   return (
-    <StageButton
+    <StageButtonRefactored
+      module="market_intel"
       signalType="keyword"
       content={spotlight.trendingKeywords.slice(0, 5).join(", ")}
       source="keyword_spotlight"
+      sourceContext="keyword_spotlight"
+      sourceContextId={spotlight.category || "spotlight"}
       workspaceId={workspaceId}
-      sourceAppId={ownAppId || ""}
+      sourceAppId={ownAppId}
       language={isRtl ? "ar" : "en"}
       metadata={{
         allTrendingKeywords: spotlight.trendingKeywords,

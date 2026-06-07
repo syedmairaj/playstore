@@ -3012,6 +3012,7 @@ export function CompetitorSpyClient({
           {activeCompetitor ? (
             <CompetitorSpySnapshotCard
               isRtl={isRtl}
+              workspaceId={workspaceId}
               workspaceAppName={workspaceAppDisplayName}
               competitorDisplayName={activeCompetitor.displayName}
               displayName={activeCompetitor.displayName}
