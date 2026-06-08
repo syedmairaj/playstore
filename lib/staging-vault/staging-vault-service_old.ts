@@ -23,8 +23,7 @@ export type SignalType =
   | "keyword"
   | "review_issue"
   | "competitor_weakness"
-  | "optimization_insight"
-  | "optimizer_selection";
+  | "optimization_insight";
 
 /**
  * Signal source enum (matches database)
@@ -36,231 +35,6 @@ export type SignalSource =
   | "competitor_spy"
   | "manual"
   | "api";
-
-/**
- * Keyword payload structure for optimizer_selection signals
- */
-export interface KeywordPayload {
-  term: string;
-  category: string;
-  [key: string]: unknown;
-}
-
-/**
- * ═════════════════════════════════════════════════════════════════════════════
- * SCHEMA VALIDATION: validateKeywordPayload
- *
- * Validates that keyword selections conform to { term: string, category: string }
- * structure. Multilingual-safe (EN/AR support with Unicode preservation).
- *
- * @param keywords - Array of keyword payloads to validate
- * @returns Validation result with detailed error info
- * ═════════════════════════════════════════════════════════════════════════════
- */
-export function validateKeywordPayload(
-  keywords: unknown
-): {
-  valid: boolean;
-  errors: string[];
-  invalidObjects?: KeywordPayload[];
-} {
-  const errors: string[] = [];
-  const invalidObjects: KeywordPayload[] = [];
-
-  console.log('[StagingVault] 🔍 KEYWORD VALIDATION STARTING:', {
-    payloadType: typeof keywords,
-    isArray: Array.isArray(keywords),
-    payloadLength: Array.isArray(keywords) ? keywords.length : 'N/A',
-    timestamp: new Date().toISOString(),
-  });
-
-  // Check 1: Must be an array
-  if (!Array.isArray(keywords)) {
-    const errorMsg = `Keywords must be an array. Got: ${typeof keywords}`;
-    errors.push(errorMsg);
-    console.error('[StagingVault] ❌ VALIDATION FAILED - Not an array:', {
-      errorMsg,
-      payloadType: typeof keywords,
-    });
-    return { valid: false, errors };
-  }
-
-  if (keywords.length === 0) {
-    const errorMsg = `Keywords array cannot be empty`;
-    errors.push(errorMsg);
-    console.error('[StagingVault] ❌ VALIDATION FAILED - Empty array:', {
-      errorMsg,
-    });
-    return { valid: false, errors };
-  }
-
-  console.log('[StagingVault] 🔍 VALIDATING KEYWORD ARRAY:', {
-    itemCount: keywords.length,
-    items: keywords.map((kw: unknown, idx: number) => ({
-      index: idx,
-      type: typeof kw,
-      isObject: typeof kw === 'object' && kw !== null,
-      keys: typeof kw === 'object' && kw !== null ? Object.keys(kw as object) : [],
-    })),
-  });
-
-  // Check 2: Iterate and validate each keyword
-  keywords.forEach((keyword: unknown, index: number) => {
-    console.log(`[StagingVault] 🔍 CHECKING KEYWORD #${index}:`, {
-      type: typeof keyword,
-      isObject: typeof keyword === 'object' && keyword !== null,
-      value: keyword,
-    });
-
-    // 2a: Each item must be an object
-    if (typeof keyword !== 'object' || keyword === null || Array.isArray(keyword)) {
-      const errorMsg = `Keyword at index ${index} must be an object. Got: ${typeof keyword}`;
-      errors.push(errorMsg);
-      invalidObjects.push(keyword as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Invalid type at index:', {
-        index,
-        errorMsg,
-        actualType: typeof keyword,
-        value: keyword,
-      });
-      return;
-    }
-
-    const kw = keyword as Record<string, unknown>;
-
-    // 2b: Must have 'term' property
-    if (!('term' in kw)) {
-      const errorMsg = `Keyword at index ${index} is missing 'term' property. Keys: ${Object.keys(kw).join(', ')}`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Missing term:', {
-        index,
-        errorMsg,
-        availableKeys: Object.keys(kw),
-        keyword: kw,
-      });
-      return;
-    }
-
-    // 2c: 'term' must be a non-empty string (multilingual safe)
-    if (typeof kw.term !== 'string') {
-      const errorMsg = `Keyword at index ${index} has 'term' as ${typeof kw.term}, not string`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - term is not string:', {
-        index,
-        errorMsg,
-        termType: typeof kw.term,
-        termValue: kw.term,
-      });
-      return;
-    }
-
-    if (kw.term.trim().length === 0) {
-      const errorMsg = `Keyword at index ${index} has empty 'term' (after trim)`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - term is empty:', {
-        index,
-        errorMsg,
-        termLength: kw.term.length,
-        termAfterTrim: kw.term.trim().length,
-      });
-      return;
-    }
-
-    // 2d: Must have 'category' property
-    if (!('category' in kw)) {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") is missing 'category' property. Keys: ${Object.keys(kw).join(', ')}`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Missing category:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        availableKeys: Object.keys(kw),
-        keyword: kw,
-      });
-      return;
-    }
-
-    // 2e: 'category' must be a non-empty string
-    if (typeof kw.category !== 'string') {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") has 'category' as ${typeof kw.category}, not string`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - category is not string:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        categoryType: typeof kw.category,
-        categoryValue: kw.category,
-      });
-      return;
-    }
-
-    if (kw.category.trim().length === 0) {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") has empty 'category' (after trim)`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - category is empty:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        categoryLength: kw.category.length,
-        categoryAfterTrim: kw.category.trim().length,
-      });
-      return;
-    }
-
-    // 2f: Multilingual validation - ensure no corruption of Unicode
-    // This is a safety check to ensure Arabic (and other RTL/Unicode) chars survive
-    try {
-      JSON.stringify(kw);
-      console.log(`[StagingVault] ✓ KEYWORD #${index} VALIDATED (multilingual-safe)`, {
-        term: kw.term,
-        category: kw.category,
-        termByteLength: Buffer.byteLength(kw.term, 'utf8'),
-        categoryByteLength: Buffer.byteLength(kw.category, 'utf8'),
-      });
-    } catch (stringifyErr) {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") contains non-serializable values`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Non-serializable keyword:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        stringifyError: String(stringifyErr),
-      });
-      return;
-    }
-  });
-
-  // Final result
-  const validationPassed = errors.length === 0;
-
-  if (validationPassed) {
-    console.log('[StagingVault] ✓ KEYWORD VALIDATION PASSED - All items valid:', {
-      totalItems: keywords.length,
-      timestamp: new Date().toISOString(),
-    });
-  } else {
-    console.error('[StagingVault] ❌ KEYWORD VALIDATION FAILED - See errors above:', {
-      totalItems: keywords.length,
-      errorCount: errors.length,
-      errors,
-      invalidObjects,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  return {
-    valid: validationPassed,
-    errors,
-    ...(invalidObjects.length > 0 && { invalidObjects }),
-  };
-}
 
 /**
  * Add Signal to Staging Vault
@@ -282,7 +56,6 @@ export async function addSignalToVault(
     sourceContextId?: string;
     language?: string;
     metadata?: Record<string, unknown>;
-    keywords?: KeywordPayload[];
     expiresAt?: string;
   }
 ): Promise<{
@@ -302,7 +75,6 @@ export async function addSignalToVault(
     competitorIdValue: (signal.metadata as any)?.competitor_id,
     competitorIdType: typeof (signal.metadata as any)?.competitor_id,
     contentLength: signal.content?.length || 0,
-    keywordsCount: signal.keywords?.length || 0,
     source: signal.source || 'manual (default)',
     sourceAppId: signal.sourceAppId,
     workspaceId,
@@ -318,7 +90,6 @@ export async function addSignalToVault(
     sourceContextId,
     language = "en",
     metadata = {},
-    keywords,
     expiresAt,
   } = signal;
 
@@ -363,51 +134,6 @@ export async function addSignalToVault(
   }
 
   try {
-    // ═══════════════════════════════════════════════════════════════════════
-    // SCHEMA VALIDATION: optimizer_selection keyword validation
-    // If signal_type === 'optimizer_selection', validate keywords payload
-    // ═══════════════════════════════════════════════════════════════════════
-    if (signalType === 'optimizer_selection') {
-      console.log('[StagingVault] 🔍 OPTIMIZER_SELECTION VALIDATION STARTING:', {
-        keywordsProvided: !!keywords,
-        keywordsLength: keywords?.length || 0,
-        language,
-        workspaceId,
-      });
-
-      if (!keywords || !Array.isArray(keywords)) {
-        const errorMsg = `optimizer_selection signals MUST include 'keywords' array. Got: ${typeof keywords}`;
-        console.error('[StagingVault] ❌ VALIDATION FAILED - Missing keywords array:', {
-          signalType,
-          language,
-          workspaceId,
-          keywordsProvided: !!keywords,
-          keywordsType: typeof keywords,
-        });
-        throw new Error(errorMsg);
-      }
-
-      const keywordValidation = validateKeywordPayload(keywords);
-      if (!keywordValidation.valid) {
-        const errorMsg = keywordValidation.errors.join('\n');
-        console.error('[StagingVault] ❌ KEYWORD SCHEMA VALIDATION FAILED:', {
-          signalType,
-          language,
-          workspaceId,
-          validationErrors: keywordValidation.errors,
-          invalidObjects: keywordValidation.invalidObjects,
-          errorMessage: errorMsg,
-        });
-        throw new Error(`Keyword validation failed:\n${errorMsg}`);
-      }
-
-      console.log('[StagingVault] ✓ KEYWORD SCHEMA VALIDATION PASSED:', {
-        keywordsCount: keywords.length,
-        language,
-        workspaceId,
-      });
-    }
-
     // ═══════════════════════════════════════════════════════════════════
     // CRITICAL VALIDATION: Ensure metadata is JSON-serializable
     // This prevents 22P02: invalid input syntax for type json errors
@@ -570,8 +296,6 @@ export async function addSignalToVault(
       metadataType: typeof finalMetadata,
       metadataKeys: Object.keys(finalMetadata),
       competitorId: (finalMetadata as any)?.competitor_id,
-      metadataFullContent: JSON.stringify(finalMetadata),
-      keywordsCount: keywords?.length || 0,
       allInsertFields: {
         workspace_id: workspaceId,
         signal_type: signalType,
@@ -586,19 +310,7 @@ export async function addSignalToVault(
       },
     });
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // INSERT: Handle duplicate constraint gracefully
-    // If this competitor/language/workspace combo already exists, that's OK
-    // Just treat it as a successful "no-op" instead of failing
-    // ═══════════════════════════════════════════════════════════════════════
-
-    let data: any;
-    let error: any;
-    let insertMethod = 'INSERT';
-    let generatedSignalId = '';
-
-    // First, try insert
-    const insertResult = await supabase
+    const { data, error } = await supabase
       .from("workspace_staging_vault")
       .insert({
         workspace_id: workspaceId,
@@ -615,31 +327,8 @@ export async function addSignalToVault(
       .select("id")
       .single();
 
-    data = insertResult.data;
-    error = insertResult.error;
-
-    // If duplicate constraint error (23505), that's OK - data already exists
-    // Treat as success since the user's intent (to stage this competitor) is satisfied
-    if (error && (error as any)?.code === '23505') {
-      console.log('[StagingVault] 🔄 DUPLICATE DETECTED - This competitor signal already staged:', {
-        errorCode: (error as any)?.code,
-        competitorId: (finalMetadata as any)?.competitor_id,
-        language,
-        signalType,
-        message: 'Treating as success (already in vault)',
-      });
-
-      insertMethod = 'DUPLICATE (no-op)';
-      // Generate a pseudo-ID for logging purposes (not used further)
-      generatedSignalId = `existing-${workspaceId}-${signalType}`;
-      // Clear the error since we're treating it as success
-      error = null;
-      data = { id: generatedSignalId };
-    }
-
     if (error) {
       console.error('[StagingVault] ❌ DATABASE INSERT ERROR:', {
-        method: insertMethod,
         errorCode: (error as any)?.code,
         errorMessage: error.message,
         errorDetails: error,
@@ -652,104 +341,18 @@ export async function addSignalToVault(
         `Failed to add signal: ${error.message}\n` +
         `Error code: ${(error as any)?.code}\n` +
         `Signal type: ${signalType}\n` +
-        `Method: ${insertMethod}`
+        `This usually means metadata is malformed.`
       );
     }
 
-    console.log('[StagingVault] ✅ SUCCESS - Signal staged:', {
-      method: insertMethod,
+    console.log('[StagingVault] ✅ SUCCESS - Signal inserted:', {
       signalId: data.id,
       signalType,
       competitorId: (finalMetadata as any)?.competitor_id,
       language,
       workspaceId,
-      contentLength: content.trim().length,
-      metadataKeys: Object.keys(finalMetadata),
-      metadataStructure: JSON.stringify(finalMetadata),
-      keywordsCount: keywords?.length || 0,
       timestamp: new Date().toISOString(),
     });
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // VERIFICATION: Immediately read back to confirm data was actually inserted
-    // ✅ FIX: Get most recent signal instead of filtering by ID
-    // (Don't use .single() - it causes PGRST116 when response is array)
-    // ═════════════════════════════════════════════════════════════════════════
-    console.log('[StagingVault] 🔍 VERIFICATION - Checking if data actually made it to DB...');
-
-    // ✅ VERIFICATION: Get most recent signal in this workspace
-    // (Don't filter by type/language - just confirm something was inserted in last few seconds)
-    console.log('[StagingVault] 🔍 VERIFICATION - Getting most recent signal in workspace:', {
-      workspace_id: workspaceId,
-      signal_type: signalType,
-      language,
-      competitorId: (finalMetadata as any)?.competitor_id,
-      metadataKeys: Object.keys(finalMetadata),
-    });
-
-    const { data: verifyDataArray, error: verifyError } = await supabase
-      .from('workspace_staging_vault')
-      .select('id, signal_type, language, metadata, created_at, source_context_id, created_by_user_id')
-      .eq('workspace_id', workspaceId)
-      .is('deleted_at', null)  // Only get non-deleted signals
-      .order('created_at', { ascending: false })
-      .limit(5);  // Get top 5 to see what's there
-
-    // ✅ Handle response as array (PostgREST always returns array)
-    const verifyDataArray_safe = Array.isArray(verifyDataArray) ? verifyDataArray : (verifyDataArray ? [verifyDataArray] : []);
-    const verifyData = verifyDataArray_safe[0];
-
-    // ✅ Log all returned records for debugging
-    if (verifyDataArray_safe.length > 0) {
-      console.log('[StagingVault] 📊 VERIFICATION FOUND RECORDS:', {
-        total_records: verifyDataArray_safe.length,
-        records: verifyDataArray_safe.map((r: any) => ({
-          id: r.id,
-          signal_type: r.signal_type,
-          language: r.language,
-          source_context_id: r.source_context_id,
-          competitor_id: (r.metadata as any)?.competitor_id,
-          created_at: r.created_at,
-          created_by_user_id: r.created_by_user_id,
-        })),
-      });
-    } else {
-      console.warn('[StagingVault] 📊 VERIFICATION FOUND NO RECORDS:', {
-        workspace_id: workspaceId,
-      });
-    }
-
-    if (verifyError) {
-      console.warn('[StagingVault] ⚠️ VERIFICATION QUERY ERROR:', {
-        errorCode: (verifyError as any)?.code,
-        errorMessage: verifyError.message,
-        hint: 'Query execution failed',
-      });
-      // Continue anyway - signal was inserted successfully
-    } else if (verifyData) {
-      console.log('[StagingVault] ✅ VERIFICATION PASSED - Signal confirmed in database:', {
-        id: verifyData.id,
-        signal_type: verifyData.signal_type,
-        language: verifyData.language,
-        competitor_id: (verifyData.metadata as any)?.competitor_id,
-        source_context_id: verifyData.source_context_id,
-        created_at: verifyData.created_at,
-        created_by_user_id: verifyData.created_by_user_id,
-        matches_expected_signal: {
-          type: verifyData.signal_type === signalType,
-          language: verifyData.language === language,
-          competitor: (verifyData.metadata as any)?.competitor_id === (finalMetadata as any)?.competitor_id,
-        },
-      });
-    } else {
-      // No error, but query returned 0 records in this workspace
-      console.warn('[StagingVault] ⚠️ VERIFICATION - No records found in workspace:', {
-        workspaceId,
-        note: 'Signal insert returned 200 OK but we cannot read any records from this workspace. This could indicate: (1) RLS policy is blocking SELECT, (2) Different Supabase client permissions for insert vs select, or (3) Data in different workspace than expected.',
-        recommendation: 'Check: (1) Supabase RLS policies for workspace_staging_vault table, (2) Are INSERT and SELECT using same auth context?, (3) Verify workspaceId is correct',
-      });
-      // Don't treat as error - we know insert succeeded (200 OK)
-    }
 
     return {
       id: data.id,
@@ -791,7 +394,6 @@ export async function listVaultSignals(
   reviewIssues: VaultSignal[];
   competitorWeaknesses: VaultSignal[];
   optimizationInsights: VaultSignal[];
-  optimizerSelections: VaultSignal[];
   total: number;
   lastUpdated: string;
 }> {
@@ -835,9 +437,6 @@ export async function listVaultSignals(
       ),
       optimizationInsights: signals.filter(
         (s) => s.signal_type === "optimization_insight"
-      ),
-      optimizerSelections: signals.filter(
-        (s) => s.signal_type === "optimizer_selection"
       ),
       total: count || 0,
       lastUpdated: new Date().toISOString(),
@@ -938,14 +537,6 @@ export async function getAppVaultContext(
           isRtl: s.is_rtl,
           competitorId: s.source_context_id,
         })),
-      optimizerSelections: signals
-        .filter((s) => s.signal_type === "optimizer_selection")
-        .map((s) => ({
-          content: s.content,
-          language: s.language,
-          isRtl: s.is_rtl,
-          metadata: s.metadata,
-        })),
       totalSignals: signals.length,
     };
   } catch (err) {
@@ -957,7 +548,6 @@ export async function getAppVaultContext(
       keywords: [],
       reviewIssues: [],
       competitorWeaknesses: [],
-      optimizerSelections: [],
       totalSignals: 0,
     };
   }
@@ -1036,12 +626,6 @@ export interface AppVaultContext {
     language: string;
     isRtl: boolean;
     competitorId?: string;
-  }>;
-  optimizerSelections: Array<{
-    content: string;
-    language: string;
-    isRtl: boolean;
-    metadata: Record<string, unknown>;
   }>;
   totalSignals: number;
 }

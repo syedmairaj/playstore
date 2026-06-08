@@ -10,6 +10,7 @@
  * - Delete signals (soft delete)
  * - RTL/LTR preservation
  * - Workspace isolation via RLS
+ * - Schema validation for optimizer_selection signals
  */
 
 import { SupabaseClient } from "@supabase/supabase-js";
@@ -408,10 +409,10 @@ export async function addSignalToVault(
       });
     }
 
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════
     // CRITICAL VALIDATION: Ensure metadata is JSON-serializable
     // This prevents 22P02: invalid input syntax for type json errors
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════
 
     const finalMetadata = metadata || {};
 
@@ -516,9 +517,9 @@ export async function addSignalToVault(
       language,
     });
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // SCHEMA ENFORCEMENT: For competitor_weakness, validate strict schema
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     if (signalType === 'competitor_weakness') {
       console.log('[StagingVault] 🔍 SCHEMA VALIDATION STARTED for competitor_weakness:', {
         competitorId: (finalMetadata as any)?.competitor_id,
@@ -621,7 +622,7 @@ export async function addSignalToVault(
     // If duplicate constraint error (23505), that's OK - data already exists
     // Treat as success since the user's intent (to stage this competitor) is satisfied
     if (error && (error as any)?.code === '23505') {
-      console.log('[StagingVault] 🔄 DUPLICATE DETECTED - This competitor signal already staged:', {
+      console.log('[StagingVault] 🔄 DUPLICATE DETECTED - This signal already staged:', {
         errorCode: (error as any)?.code,
         competitorId: (finalMetadata as any)?.competitor_id,
         language,
@@ -672,83 +673,42 @@ export async function addSignalToVault(
 
     // ═════════════════════════════════════════════════════════════════════════
     // VERIFICATION: Immediately read back to confirm data was actually inserted
-    // ✅ FIX: Get most recent signal instead of filtering by ID
-    // (Don't use .single() - it causes PGRST116 when response is array)
     // ═════════════════════════════════════════════════════════════════════════
     console.log('[StagingVault] 🔍 VERIFICATION - Checking if data actually made it to DB...');
 
-    // ✅ VERIFICATION: Get most recent signal in this workspace
-    // (Don't filter by type/language - just confirm something was inserted in last few seconds)
-    console.log('[StagingVault] 🔍 VERIFICATION - Getting most recent signal in workspace:', {
-      workspace_id: workspaceId,
-      signal_type: signalType,
-      language,
-      competitorId: (finalMetadata as any)?.competitor_id,
-      metadataKeys: Object.keys(finalMetadata),
-    });
-
-    const { data: verifyDataArray, error: verifyError } = await supabase
+    const { data: verifyData, error: verifyError } = await supabase
       .from('workspace_staging_vault')
-      .select('id, signal_type, language, metadata, created_at, source_context_id, created_by_user_id')
+      .select('id, signal_type, language, metadata, created_at')
       .eq('workspace_id', workspaceId)
-      .is('deleted_at', null)  // Only get non-deleted signals
+      .eq('signal_type', signalType)
+      .eq('language', language)
+      .filter("metadata->>'competitor_id'", 'eq', (finalMetadata as any)?.competitor_id)
       .order('created_at', { ascending: false })
-      .limit(5);  // Get top 5 to see what's there
-
-    // ✅ Handle response as array (PostgREST always returns array)
-    const verifyDataArray_safe = Array.isArray(verifyDataArray) ? verifyDataArray : (verifyDataArray ? [verifyDataArray] : []);
-    const verifyData = verifyDataArray_safe[0];
-
-    // ✅ Log all returned records for debugging
-    if (verifyDataArray_safe.length > 0) {
-      console.log('[StagingVault] 📊 VERIFICATION FOUND RECORDS:', {
-        total_records: verifyDataArray_safe.length,
-        records: verifyDataArray_safe.map((r: any) => ({
-          id: r.id,
-          signal_type: r.signal_type,
-          language: r.language,
-          source_context_id: r.source_context_id,
-          competitor_id: (r.metadata as any)?.competitor_id,
-          created_at: r.created_at,
-          created_by_user_id: r.created_by_user_id,
-        })),
-      });
-    } else {
-      console.warn('[StagingVault] 📊 VERIFICATION FOUND NO RECORDS:', {
-        workspace_id: workspaceId,
-      });
-    }
+      .limit(1)
+      .single();
 
     if (verifyError) {
-      console.warn('[StagingVault] ⚠️ VERIFICATION QUERY ERROR:', {
+      console.warn('[StagingVault] ⚠️ VERIFICATION QUERY FAILED:', {
         errorCode: (verifyError as any)?.code,
         errorMessage: verifyError.message,
-        hint: 'Query execution failed',
+        hint: 'Data may exist but query filter is not matching',
       });
-      // Continue anyway - signal was inserted successfully
     } else if (verifyData) {
-      console.log('[StagingVault] ✅ VERIFICATION PASSED - Signal confirmed in database:', {
-        id: verifyData.id,
-        signal_type: verifyData.signal_type,
-        language: verifyData.language,
-        competitor_id: (verifyData.metadata as any)?.competitor_id,
-        source_context_id: verifyData.source_context_id,
-        created_at: verifyData.created_at,
-        created_by_user_id: verifyData.created_by_user_id,
-        matches_expected_signal: {
-          type: verifyData.signal_type === signalType,
-          language: verifyData.language === language,
-          competitor: (verifyData.metadata as any)?.competitor_id === (finalMetadata as any)?.competitor_id,
-        },
+      console.log('[StagingVault] ✓ VERIFICATION PASSED - Data is in database:', {
+        verified_id: verifyData.id,
+        verified_signal_type: verifyData.signal_type,
+        verified_language: verifyData.language,
+        verified_competitor_id: (verifyData.metadata as any)?.competitor_id,
+        verified_created_at: verifyData.created_at,
       });
     } else {
-      // No error, but query returned 0 records in this workspace
-      console.warn('[StagingVault] ⚠️ VERIFICATION - No records found in workspace:', {
+      console.error('[StagingVault] ❌ VERIFICATION FAILED - No data found after insert!', {
         workspaceId,
-        note: 'Signal insert returned 200 OK but we cannot read any records from this workspace. This could indicate: (1) RLS policy is blocking SELECT, (2) Different Supabase client permissions for insert vs select, or (3) Data in different workspace than expected.',
-        recommendation: 'Check: (1) Supabase RLS policies for workspace_staging_vault table, (2) Are INSERT and SELECT using same auth context?, (3) Verify workspaceId is correct',
+        signalType,
+        language,
+        competitorId: (finalMetadata as any)?.competitor_id,
+        hint: 'Data was not actually inserted to database. Check RLS policies.',
       });
-      // Don't treat as error - we know insert succeeded (200 OK)
     }
 
     return {

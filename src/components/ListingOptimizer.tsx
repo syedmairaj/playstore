@@ -965,25 +965,36 @@ export function ListingOptimizer({
       })
       .catch(() => [] as ListingImprovementItem[]);
 
-    void Promise.all([listingImprovementsPromise, backlogPromise]).then(([listingRows, backlogRows]) => {
-      // Deduplicate: backlog rows are prefixed "backlog-", listing rows have plain UUIDs.
-      // Preserve ephemeral url-exploit- stubs — they are never in the DB and would be
-      // silently wiped by a full replace. Read from both current state AND sessionStorage
-      // to cover the race where the DB fetch completes before the URL-param effect fires.
-      setQueuedImprovements((prev) => {
-        const stateStubs = prev.filter((item) => item.id.startsWith("url-exploit-"));
-        const sessionStubs = readSpotlightStubsFromSession();
-        // Merge state stubs + session stubs, deduplicating by id
-        const allStubIds = new Set(stateStubs.map((s) => s.id));
-        const extraSessionStubs = sessionStubs.filter((s) => !allStubIds.has(s.id));
-        const ephemeralStubs = [...stateStubs, ...extraSessionStubs];
-        const dbRows = [...listingRows, ...backlogRows];
-        const dbIds = new Set(dbRows.map((r) => r.id));
-        const freshStubs = ephemeralStubs.filter((s) => !dbIds.has(s.id));
-        return [...dbRows, ...freshStubs];
+    void Promise.all([listingImprovementsPromise, backlogPromise])
+      .then(([listingRows, backlogRows]) => {
+        // Deduplicate: backlog rows are prefixed "backlog-", listing rows have plain UUIDs.
+        // Preserve ephemeral url-exploit- stubs — they are never in the DB and would be
+        // silently wiped by a full replace. Read from both current state AND sessionStorage
+        // to cover the race where the DB fetch completes before the URL-param effect fires.
+        setQueuedImprovements((prev) => {
+          const stateStubs = prev.filter((item) => item.id.startsWith("url-exploit-"));
+          const sessionStubs = readSpotlightStubsFromSession();
+          // Merge state stubs + session stubs, deduplicating by id
+          const allStubIds = new Set(stateStubs.map((s) => s.id));
+          const extraSessionStubs = sessionStubs.filter((s) => !allStubIds.has(s.id));
+          const ephemeralStubs = [...stateStubs, ...extraSessionStubs];
+          const dbRows = [...listingRows, ...backlogRows];
+          const dbIds = new Set(dbRows.map((r) => r.id));
+          const freshStubs = ephemeralStubs.filter((s) => !dbIds.has(s.id));
+          return [...dbRows, ...freshStubs];
+        });
+        setQueuedImprovementsLoading(false);
+      })
+      .catch((error) => {
+        // Handle fetch errors gracefully
+        console.error('[ListingOptimizer] Failed to refresh queued improvements:', error instanceof Error ? error.message : error);
+        // Keep UI functional — just show empty queue
+        setQueuedImprovements((prev) => {
+          // Preserve ephemeral stubs even if fetch fails
+          return prev.filter((item) => item.id.startsWith("url-exploit-"));
+        });
+        setQueuedImprovementsLoading(false);
       });
-      setQueuedImprovementsLoading(false);
-    });
   }, [workspaceId]);
 
   useEffect(() => {
