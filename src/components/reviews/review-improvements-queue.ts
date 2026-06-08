@@ -31,23 +31,50 @@ export type ListingImprovementItem = {
 };
 
 async function fetchListingImprovementsResponse(workspaceId: string): Promise<ListingImprovementItem[]> {
-  const res = await fetch(
-    `/api/workspaces/${workspaceId}/listing-improvements?unutilized=1`,
-    { credentials: "same-origin" },
-  );
-  const json = (await res.json()) as {
-    ok?: boolean;
-    items?: ListingImprovementItem[];
-  };
-  if (!res.ok || !json.ok || !Array.isArray(json.items)) return [];
-  return json.items.filter(
-    (item): item is ListingImprovementItem =>
-      typeof item === "object" &&
-      item !== null &&
-      typeof item.id === "string" &&
-      typeof item.reviewId === "string" &&
-      typeof item.reviewText === "string",
-  );
+  try {
+    const res = await fetch(
+      `/api/workspaces/${workspaceId}/listing-improvements?unutilized=1`,
+      { credentials: "same-origin" },
+    );
+
+    // Handle network errors
+    if (!res.ok) {
+      console.warn(`[ListingImprovements] API returned ${res.status}:`, res.statusText);
+      return [];
+    }
+
+    // Handle JSON parsing errors
+    let json;
+    try {
+      json = (await res.json()) as {
+        ok?: boolean;
+        items?: ListingImprovementItem[];
+      };
+    } catch (parseError) {
+      console.warn('[ListingImprovements] Failed to parse JSON response:', parseError);
+      return [];
+    }
+
+    // Validate response structure
+    if (!json.ok || !Array.isArray(json.items)) {
+      console.warn('[ListingImprovements] Invalid response structure:', { ok: json.ok, hasItems: Array.isArray(json.items) });
+      return [];
+    }
+
+    // Filter and validate items
+    return json.items.filter(
+      (item): item is ListingImprovementItem =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof item.id === "string" &&
+        typeof item.reviewId === "string" &&
+        typeof item.reviewText === "string",
+    );
+  } catch (error) {
+    // Catch network errors, timeout, etc.
+    console.error('[ListingImprovements] Fetch failed:', error instanceof Error ? error.message : error);
+    return [];
+  }
 }
 
 export async function fetchUnutilizedListingImprovements(

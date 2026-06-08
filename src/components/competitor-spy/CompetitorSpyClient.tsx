@@ -5,6 +5,8 @@ import { Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
+import { KeywordSelectionProvider } from "@/contexts/KeywordSelectionContext";
+import { KeywordCurationModeProvider } from "@/contexts/KeywordCurationModeContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -1884,7 +1886,9 @@ export function CompetitorSpyClient({
   const gridDir = isRtl ? "rtl" : "ltr";
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-8" dir={gridDir}>
+    <KeywordSelectionProvider>
+      <KeywordCurationModeProvider>
+        <div className="mx-auto w-full max-w-[1600px] space-y-8" dir={gridDir}>
       <CompetitorSpyCreditsConfirmDialog
         open={creditsConfirmOpen}
         onOpenChange={setCreditsConfirmOpen}
@@ -3213,6 +3217,8 @@ export function CompetitorSpyClient({
       <p className="rounded-xl border border-white/[0.06] bg-[#080c12] px-4 py-3 text-center text-xs leading-relaxed text-zinc-500">
         {t("disclaimer")}
       </p>
-    </div>
+        </div>
+      </KeywordCurationModeProvider>
+    </KeywordSelectionProvider>
   );
 }
