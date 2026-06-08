@@ -1,5 +1,5 @@
 "use client";
-
+import { useStaging } from "@/src/hooks/useStaging"; // Update path if needed
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
@@ -294,6 +294,7 @@ export function CompetitorSpyClient({
   const router = useRouter();
   const isRtl = locale === "ar";
   const defaultMarket = (locale === "ar" ? "sa" : "us") as SupportedCountryCode;
+  const { stage } = useStaging();
   const rankLabels = useMemo(
     () => ({
       notInTop: tRanks("notInTop"),
@@ -2904,15 +2905,20 @@ export function CompetitorSpyClient({
                                 asChild
                               >
                                 <Button
-                                  type="button"
-                                  size="sm"
-                                  className="shrink-0 border border-amber-400/30 bg-amber-500/80 text-white hover:bg-amber-400"
-                                  onClick={() => pushListingOptimizer(exploitKeywords, exploitVulnerabilities)}
-                                >
-                                  <Sparkles className="me-1.5 size-3.5 shrink-0" aria-hidden />
-                                  {t("reviewSentiment.exploitCta")}
-                                  <Info className="ms-1.5 size-3 shrink-0 opacity-70" aria-hidden />
-                                </Button>
+                                    type="button"
+                                    size="sm"
+                                    className="shrink-0 border border-amber-400/30 bg-amber-500/80 text-white hover:bg-amber-400"
+                                    // Here we call the 'stage' function instead of the old pushListingOptimizer
+                                    onClick={() => stage({ 
+                                      action: "exploit_data", 
+                                      data: { keywords: exploitKeywords, vulnerabilities: exploitVulnerabilities } 
+                                    })}
+                                  >
+                                    <Sparkles className="me-1.5 size-3.5 shrink-0" aria-hidden />
+                                    {t("reviewSentiment.exploitCta")}
+                                    <Info className="ms-1.5 size-3 shrink-0 opacity-70" aria-hidden />
+                                  </Button>
+                  
                               </Tooltip>
                             </TooltipProvider>
                           </div>
@@ -3010,42 +3016,53 @@ export function CompetitorSpyClient({
           ) : null}
 
           {activeCompetitor ? (
-            <CompetitorSpySnapshotCard
-              isRtl={isRtl}
-              workspaceId={workspaceId}
-              workspaceAppName={workspaceAppDisplayName}
-              competitorDisplayName={activeCompetitor.displayName}
-              displayName={activeCompetitor.displayName}
-              categoryLabel={t("snapshot.listingCategory")}
-              packageId={activeCompetitor.packageId}
-              bestRank={bestRankForActive}
-              metricsKeywordCount={metricsKeywordCount}
-              liveTitle={liveTitleForActive}
-              rankLabels={rankLabels}
-              manageCompetitorsLabel={t("manage.button")}
-              onManageCompetitors={() => setManageOpen(true)}
-              onSendToOptimizer={() => {
-                // Primary competitor seed (active)
-                const activeSeed = [
-                  ...(countryInsights?.topKeywords ?? activeCompetitor.topKeywords),
-                  ...(countryInsights?.gaps ?? activeCompetitor.gaps).map((g) => g.keyword),
-                ].filter(Boolean);
-                // Merge second competitor's keywords when both rivals are tracked
-                const inactiveSeed = inactiveCompetitor
-                  ? [
-                      ...inactiveCompetitor.topKeywords,
-                      ...inactiveCompetitor.gaps.map((g) => g.keyword),
-                    ].filter(Boolean)
-                  : [];
-                // Deduplicate across both rivals, active competitor's terms take priority
-                const seen = new Set(activeSeed.map((k) => k.trim().toLowerCase()));
-                const merged = [
-                  ...activeSeed,
-                  ...inactiveSeed.filter((k) => !seen.has(k.trim().toLowerCase())),
-                ];
-                pushListingOptimizer(merged.slice(0, 15));
-              }}
-            />
+            (() => {
+              // Build keyword array for staging vault
+              const competitorKeywords = [
+                ...(countryInsights?.topKeywords ?? activeCompetitor.topKeywords),
+                ...(countryInsights?.gaps ?? activeCompetitor.gaps).map((g) => g.keyword),
+              ].filter(Boolean);
+
+              return (
+                <CompetitorSpySnapshotCard
+                  isRtl={isRtl}
+                  workspaceId={workspaceId}
+                  workspaceAppName={workspaceAppDisplayName}
+                  competitorDisplayName={activeCompetitor.displayName}
+                  displayName={activeCompetitor.displayName}
+                  categoryLabel={t("snapshot.listingCategory")}
+                  packageId={activeCompetitor.packageId}
+                  bestRank={bestRankForActive}
+                  metricsKeywordCount={metricsKeywordCount}
+                  liveTitle={liveTitleForActive}
+                  rankLabels={rankLabels}
+                  manageCompetitorsLabel={t("manage.button")}
+                  onManageCompetitors={() => setManageOpen(true)}
+                  keywordSurfaces={competitorKeywords}
+                  onSendToOptimizer={() => {
+                    // Primary competitor seed (active)
+                    const activeSeed = [
+                      ...(countryInsights?.topKeywords ?? activeCompetitor.topKeywords),
+                      ...(countryInsights?.gaps ?? activeCompetitor.gaps).map((g) => g.keyword),
+                    ].filter(Boolean);
+                    // Merge second competitor's keywords when both rivals are tracked
+                    const inactiveSeed = inactiveCompetitor
+                      ? [
+                          ...inactiveCompetitor.topKeywords,
+                          ...inactiveCompetitor.gaps.map((g) => g.keyword),
+                        ].filter(Boolean)
+                      : [];
+                    // Deduplicate across both rivals, active competitor's terms take priority
+                    const seen = new Set(activeSeed.map((k) => k.trim().toLowerCase()));
+                    const merged = [
+                      ...activeSeed,
+                      ...inactiveSeed.filter((k) => !seen.has(k.trim().toLowerCase())),
+                    ];
+                    pushListingOptimizer(merged.slice(0, 15));
+                  }}
+                />
+              );
+            })()
           ) : (
             /* min-h matches RHS column reservation — prevents card collapse CLS on competitor swap */
             <aside

@@ -1,0 +1,80 @@
+ENHANCED LOGGING - FILES UPDATED
+═════════════════════════════════════════════════════════════════════════════
+
+✅ 3 FILES UPDATED WITH COMPREHENSIVE TRACING
+
+1. lib/competitor-spy/capture-and-stage-keywords.ts
+   - Added: REQUEST BODY log (shows exact payload before POST)
+   - Added: RESPONSE log (shows status + body after receiving)
+   - Impact: Client-side visibility into what's being sent to API
+
+2. app/api/workspaces/[workspaceId]/staging/add/route.ts
+   - Added: INCOMING REQUEST log (auth + workspace verification)
+   - Added: REQUEST BODY (raw) log (parsed form data)
+   - Added: CALLING addSignalToVault log (pre-function call)
+   - Added: Success/Failure logs (post-function call)
+   - Impact: Server-side visibility into request handling
+
+3. lib/staging-vault/staging-vault-service.ts
+   - Already complete from previous update
+   - Has: 5+ metadata validation checkpoints
+   - Has: Schema validation logs
+   - Has: Database insert attempt logs
+   - Impact: Vault service visibility into all validation + insert
+
+SUPPORTING DOCUMENTS CREATED
+═════════════════════════════════════════════════════════════════════════════
+
+✅ DEBUG_INSERTION_FLOW.md
+   - Complete 3-stage insertion flow documentation
+   - Stage 1: Client-side (Browser Console)
+   - Stage 2: Server API route (Server Console)
+   - Stage 3: Vault service (Server Console)
+   - Includes: Decision tree for finding breakpoints
+
+✅ ENHANCED_LOGGING_SUMMARY.md
+   - Quick reference of all new logs
+   - Complete log flow example
+   - Common breakpoints & fixes table
+   - Multilingual support details
+
+✅ NEXT_ACTION_EMPTY_DATABASE.md
+   - Step-by-step action plan for you
+   - What to expect if success
+   - What to expect if failure
+   - Key things to check in logs
+   - Common issues & quick fixes
+
+COMPLETE TRACE NOW AVAILABLE
+═════════════════════════════════════════════════════════════════════════════
+
+Browser Console → Server API → Vault Service → Database
+
+Each stage logs:
+  ✓ Input data (what was received)
+  ✓ Processing (what checks were done)
+  ✓ Output (what was sent forward)
+  ✓ Errors (exactly where it broke)
+
+MULTILINGUAL SUPPORT
+═════════════════════════════════════════════════════════════════════════════
+
+Both EN and AR language codes logged at:
+  • Client: language detection via useLocale()
+  • Server API: language parameter from request
+  • Vault service: language validation + logging
+  • Database: language column filter
+
+WHAT TO DO NOW
+═════════════════════════════════════════════════════════════════════════════
+
+1. npm run dev
+2. Analyze a competitor in your app
+3. Check browser console (F12 → Console tab)
+4. Check server terminal (where npm run dev is running)
+5. Find the first ❌ error in the logs
+6. Share that error for root cause analysis
+
+The enhanced logging will pinpoint EXACTLY where the insertion breaks.
+
+═════════════════════════════════════════════════════════════════════════════
