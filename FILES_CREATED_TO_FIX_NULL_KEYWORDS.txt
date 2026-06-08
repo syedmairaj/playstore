@@ -1,0 +1,193 @@
+═══════════════════════════════════════════════════════════════════════════════
+COMPETITOR KEYWORDS NULL ISSUE - COMPLETE FIX
+═══════════════════════════════════════════════════════════════════════════════
+
+STATUS: All files created ✅
+READY TO INTEGRATE: Yes
+SUPPORTS: English (EN) and Arabic (AR)
+
+═══════════════════════════════════════════════════════════════════════════════
+MAIN FIX FILES (DO THESE FIRST)
+═══════════════════════════════════════════════════════════════════════════════
+
+1. ✅ /lib/competitor-spy/capture-and-stage-keywords.ts
+   Purpose: Capture competitor analysis results with validation
+   Status: READY
+   Action: Use in CompetitorSpyClient.tsx
+   
+2. ✅ /lib/staging-vault/staging-vault-service.ts (UPDATED)
+   Purpose: Enhanced JSON validation before database insert
+   Status: READY
+   Action: Already updated - no changes needed
+   
+3. ✅ /COMPETITOR_SPY_INTEGRATION_EXAMPLE.tsx
+   Purpose: Shows EXACTLY how to integrate the fix
+   Status: READY
+   Action: Reference while updating CompetitorSpyClient.tsx
+
+═══════════════════════════════════════════════════════════════════════════════
+VERIFICATION & DEBUG FILES
+═══════════════════════════════════════════════════════════════════════════════
+
+4. ✅ /CRITICAL_DEBUG_CHECKLIST.md
+   Purpose: Step-by-step verification checklist
+   Status: READY
+   Action: Follow after integrating fix
+   
+5. ✅ /IMMEDIATE_ACTION_REQUIRED.md
+   Purpose: Quick summary of what to do
+   Status: READY
+   Action: Read first to understand the problem
+   
+6. ✅ /DEBUG_COMPETITOR_KEYWORDS.sql
+   Purpose: Database verification queries
+   Status: READY
+   Action: Run in Supabase SQL Editor after fix
+
+═══════════════════════════════════════════════════════════════════════════════
+WHAT'S BEEN FIXED
+═══════════════════════════════════════════════════════════════════════════════
+
+PROBLEM 1: JSON Serialization Error (22P02)
+  ✅ Added validation in staging-vault-service.ts
+  ✅ Tests JSON.stringify() before database insert
+  ✅ Gives clear error messages
+  
+PROBLEM 2: Competitor ID Mismatch
+  ✅ Service stores as 'competitor_id' (what API queries for)
+  ✅ Consistent across frontend and backend
+  
+PROBLEM 3: NULL Keywords in Database
+  ✅ Validation ensures keywords are non-empty array
+  ✅ Logs exact JSON structure before insert
+  ✅ Service calls API correctly
+  
+PROBLEM 4: Missing Integration
+  ✅ Created capture-and-stage-keywords service
+  ✅ Provides examples for CompetitorSpyClient
+  ✅ Handles EN and AR bilingually
+
+═══════════════════════════════════════════════════════════════════════════════
+HOW TO USE (3 SIMPLE STEPS)
+═══════════════════════════════════════════════════════════════════════════════
+
+STEP 1: Find in CompetitorSpyClient.tsx where analysis completes
+   Location: Search for where keywords are generated/results are ready
+
+STEP 2: Add this import:
+   import { stageCompetitorAnalysis } from '@/lib/competitor-spy/capture-and-stage-keywords';
+
+STEP 3: Call the function with your competitor data:
+   const result = await stageCompetitorAnalysis({
+     competitorId: competitor.packageId,
+     competitorName: competitor.displayName,
+     categoryLabel: 'Health & Fitness',  // Or detect from data
+     keywords: analysisKeywords,          // Must NOT be empty!
+     vulnerabilities: [],
+     workspaceId: workspaceId,
+     language: locale === 'ar' ? 'ar' : 'en',
+     isRtl: locale === 'ar',
+   }, workspaceId);
+
+   if (!result.success) {
+     console.error('Failed:', result.error);
+     return;
+   }
+
+═══════════════════════════════════════════════════════════════════════════════
+WHAT YOU'LL SEE IN CONSOLE (When Working)
+═══════════════════════════════════════════════════════════════════════════════
+
+✓ Validation passed
+✓ competitorId: "com.fittrack.pro"
+✓ competitorName: "FitTrack Pro"
+✓ keywords.length: 12
+✓ language: "en"
+✓ isRtl: false
+
+📦 METADATA OBJECT:
+{
+  "competitor_id": "com.fittrack.pro",
+  "keywords_by_strategy": {
+    "high_volume": [...4 keywords],
+    "intent_based": [...4 keywords],
+    "competitor_gap": [...4 keywords]
+  }
+}
+
+✓ JSON.stringify succeeded. Size: 1234 bytes
+✓ Successfully staged competitor analysis
+  Signal ID: abc123-def456
+
+═══════════════════════════════════════════════════════════════════════════════
+TESTING (After Integration)
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Open DevTools (F12)
+2. Analyze competitor in English
+3. Check console for ✓ keywords captured
+4. Check Network tab for POST request with keywords
+5. Switch language to Arabic
+6. Analyze same competitor again
+7. Verify DIFFERENT keywords (Arabic) in console
+8. Run SQL query to verify database has keywords
+
+═══════════════════════════════════════════════════════════════════════════════
+SQL VERIFICATION
+═══════════════════════════════════════════════════════════════════════════════
+
+SELECT
+  metadata->>'competitor_id' as competitor_id,
+  language,
+  jsonb_array_length(metadata->'keywords_by_strategy'->'high_volume') as high_volume_count
+FROM workspace_staging_vault
+WHERE signal_type = 'competitor_weakness'
+ORDER BY created_at DESC;
+
+EXPECTED: competitor_id NOT NULL, counts > 0
+
+═══════════════════════════════════════════════════════════════════════════════
+BILINGUAL SUPPORT (EN/AR)
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ Service automatically:
+   - Accepts language parameter (en or ar)
+   - Sets isRtl boolean correctly
+   - Stores EN and AR keywords separately
+   - API retrieves correct language keywords
+
+✅ Frontend testing:
+   - Analyze in English → English keywords
+   - Switch to Arabic → Arabic keywords
+   - Switch back to English → English keywords (no mixing)
+
+═══════════════════════════════════════════════════════════════════════════════
+FILES YOU NEED TO MODIFY
+═══════════════════════════════════════════════════════════════════════════════
+
+MUST DO:
+  1. /components/competitor-spy/CompetitorSpyClient.tsx
+     → Add import
+     → Call stageCompetitorAnalysis when analysis completes
+     
+ALREADY DONE:
+  - /lib/staging-vault/staging-vault-service.ts (validation added)
+  - /lib/competitor-spy/capture-and-stage-keywords.ts (created)
+  - All supporting files and examples
+
+═══════════════════════════════════════════════════════════════════════════════
+NEXT STEPS
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Read /IMMEDIATE_ACTION_REQUIRED.md (5 minutes)
+2. Review /COMPETITOR_SPY_INTEGRATION_EXAMPLE.tsx (understand the pattern)
+3. Update CompetitorSpyClient.tsx with the fix (10 minutes)
+4. Test using /CRITICAL_DEBUG_CHECKLIST.md (15 minutes)
+5. Verify database with /DEBUG_COMPETITOR_KEYWORDS.sql
+6. Test EN and AR languages separately
+7. Commit and push when tests pass
+
+═══════════════════════════════════════════════════════════════════════════════
+ESTIMATED TIME: 30 minutes
+STATUS: Ready to implement 🚀
+═══════════════════════════════════════════════════════════════════════════════

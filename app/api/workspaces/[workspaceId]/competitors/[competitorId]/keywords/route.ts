@@ -64,21 +64,93 @@ export async function GET(
     // Result: ONLY the current competitor's keywords in the current language
     // ═════════════════════════════════════════════════════════════════════════
 
-    const { data, error } = await supabase
+    // ═════════════════════════════════════════════════════════════════════════
+    // DEBUG LOG: First, check what's in the database for this workspace
+    // ═════════════════════════════════════════════════════════════════════════
+    console.log('[CompetitorKeywords] 🔍 PRE-QUERY DEBUG - Checking all records in vault for workspace:');
+
+    const { data: allRecords, error: allError } = await supabase
+      .from('workspace_staging_vault')
+      .select('id, workspace_id, signal_type, language, metadata, created_at')
+      .eq('workspace_id', workspaceId)
+      .limit(50);
+
+    if (allRecords && allRecords.length > 0) {
+      console.log('[CompetitorKeywords] 📊 All vault records for this workspace:', {
+        total_count: allRecords.length,
+        records: allRecords.map((r: any) => ({
+          id: r.id,
+          signal_type: r.signal_type,
+          language: r.language,
+          competitor_id: r.metadata?.competitor_id,
+          metadata_keys: Object.keys(r.metadata || {}),
+          created_at: r.created_at,
+        })),
+      });
+    } else {
+      console.log('[CompetitorKeywords] ⚠️ No records found in vault for workspace:', { workspaceId });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // DEBUG LOG: Before main query
+    // ═════════════════════════════════════════════════════════════════════════
+    console.log('[CompetitorKeywords] Executing query:', {
+      signal_type: 'competitor_weakness',  // ← Exact value being queried
+      competitor_id: competitorId,  // ← Exact value being filtered
+      language: language,
+      workspace_id: workspaceId,
+      filter_description: `metadata->>'competitor_id' = '${competitorId}'`,  // ← Updated for text comparison
+    });
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // FIX: Supabase JS client doesn't support ->> operator in filters
+    // Use eq() with JSONB path instead, or filter client-side
+    // ═════════════════════════════════════════════════════════════════════════
+    const { data: allData, error } = await supabase
       .from('workspace_staging_vault')
       .select('metadata, content, created_at')
       .eq('workspace_id', workspaceId)
-      .eq('signal_type', 'competitor_weakness')
+      .eq('signal_type', 'competitor_weakness')  // ← MUST match INSERT exactly
       .eq('language', language)
-      .filter('metadata->competitor_id', 'eq', competitorId)  // ← ISOLATION: Competitor filter
       .order('created_at', { ascending: false })
-      .limit(1);  // Only latest signal per competitor per language
+      .limit(50);  // Get more records, filter client-side
+
+    // Client-side filter for competitor_id since Supabase doesn't support ->> in filters
+    let data: any[] | null = null;
+    if (allData && allData.length > 0) {
+      data = allData.filter((record: any) => {
+        const matchingCompetitor = (record.metadata as any)?.competitor_id === competitorId;
+        return matchingCompetitor;
+      });
+      // Keep only the latest one
+      data = data.slice(0, 1);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // DEBUG LOG: After query
+    // ═════════════════════════════════════════════════════════════════════════
+    console.log('[CompetitorKeywords] 🔍 DETAILED QUERY DEBUG:', {
+      workspace_id: workspaceId,
+      signal_type: 'competitor_weakness',
+      language: language,
+      competitor_id: competitorId,
+      error: error ? { code: error.code, message: error.message } : null,
+      data_returned: data?.length || 0,
+      first_record: data?.[0] ? {
+        has_metadata: !!data[0].metadata,
+        metadata_type: typeof data[0].metadata,
+        metadata_keys: Object.keys(data[0].metadata || {}),
+      } : null,
+    });
 
     if (error) {
-      console.error('[CompetitorKeywords] Database error:', {
-        code: error.code,
-        message: error.message,
-        competitor: competitorId,
+      console.error('[CompetitorKeywords] ❌ DATABASE ERROR:', {
+        signal_type: 'competitor_weakness',
+        competitor_id: competitorId,
+        language: language,
+        error_code: error.code,
+        error_message: error.message,
+        status: 'QUERY_FAILED',
       });
 
       return NextResponse.json(
@@ -100,9 +172,19 @@ export async function GET(
 
     // No data found for this competitor + language
     if (!data || data.length === 0) {
-      console.log('[CompetitorKeywords] No signals found:', {
-        competitor: competitorId,
-        language,
+      console.log('[CompetitorKeywords] ❌ NO SIGNALS FOUND:', {
+        signal_type: 'competitor_weakness',
+        competitor_id: competitorId,
+        language: language,
+        workspace_id: workspaceId,
+        status: 'NOT_FOUND',
+        data_length: data?.length || 0,
+        possible_causes: [
+          '1. No competitor_weakness signals have been inserted yet',
+          '2. metadata->competitor_id does not match the queried value',
+          '3. language column does not match (check for case sensitivity)',
+          '4. signal_type in database does not match "competitor_weakness"',
+        ],
       });
 
       return NextResponse.json(
@@ -121,6 +203,18 @@ export async function GET(
         { status: 200 }
       );
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // DEBUG LOG: Signal found
+    // ═════════════════════════════════════════════════════════════════════════
+    console.log('[CompetitorKeywords] ✓ SIGNAL FOUND:', {
+      signal_type: 'competitor_weakness',
+      competitor_id: competitorId,
+      language: language,
+      status: 'FOUND',
+      data_count: data.length,
+      created_at: data[0]?.created_at,
+    });
 
     const signal = data[0];
     const metadata = signal.metadata as any;

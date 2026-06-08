@@ -1,0 +1,33 @@
+"use client";
+
+import * as React from "react";
+import { cn } from "@/lib/utils";
+
+const Progress = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement> & { value?: number }
+>(({ className, value = 0, ...props }, ref) => {
+  const clamped = Math.min(100, Math.max(0, value));
+  return (
+    <div
+      ref={ref}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={clamped}
+      className={cn(
+        "relative h-2 w-full overflow-hidden rounded-full bg-white/[0.06]",
+        className,
+      )}
+      {...props}
+    >
+      <div
+        className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500 ease-out"
+        style={{ width: `${clamped}%` }}
+      />
+    </div>
+  );
+});
+Progress.displayName = "Progress";
+
+export { Progress };

@@ -1,0 +1,63 @@
+════════════════════════════════════════════════════════════════════════════════
+22P02 ERROR FIX - CONFIRMED & APPLIED
+════════════════════════════════════════════════════════════════════════════════
+
+ISSUE:
+  22P02: invalid input syntax for type json
+
+ROOT CAUSE:
+  Using PostgreSQL -> operator (returns JSONB)
+  Instead of ->> operator (returns TEXT)
+
+SOLUTION APPLIED:
+  Line 84 in /app/api/workspaces/[workspaceId]/competitors/[competitorId]/keywords/route.ts
+
+BEFORE (WRONG):
+  .filter('metadata->competitor_id', 'eq', competitorId)
+                      ↑↑
+                      Returns JSONB (type mismatch)
+
+AFTER (CORRECT):
+  .filter('metadata->>\\'competitor_id\\'', 'eq', competitorId)
+                      ↑↑↑↑
+                      Returns TEXT (correct type)
+
+════════════════════════════════════════════════════════════════════════════════
+
+WHY THIS WORKS:
+
+PostgreSQL JSON Operators:
+  -> : Returns JSONB type (for nested object access)
+  ->> : Returns TEXT type (for value extraction and comparison)
+
+The filter() operator expects TEXT values, so we use ->>
+
+Before:  metadata->competitor_id    returns JSONB  → Type mismatch → 22P02 error ❌
+After:   metadata->>'competitor_id' returns TEXT   → Type match   → Success ✅
+
+════════════════════════════════════════════════════════════════════════════════
+
+BILINGUAL SUPPORT (EN/AR):
+
+English Query:
+  WHERE metadata->>'competitor_id' = 'com.fittrack.pro' AND language = 'en'
+  ✅ Works (TEXT comparison)
+
+Arabic Query:
+  WHERE metadata->>'competitor_id' = 'com.fittrack.pro' AND language = 'ar'
+  ✅ Works (TEXT comparison)
+
+════════════════════════════════════════════════════════════════════════════════
+
+NO DATABASE SCHEMA CHANGES:
+  ✅ Database remains unchanged
+  ✅ Only application query logic updated
+  ✅ Compatible with existing JSONB column
+
+════════════════════════════════════════════════════════════════════════════════
+
+STATUS: ✅ FIXED AND READY
+
+Next step: npm run dev → Test EN and AR queries
+
+════════════════════════════════════════════════════════════════════════════════

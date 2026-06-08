@@ -14,6 +14,7 @@
 
 import { SupabaseClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
+import { validateCompetitorWeaknessSchema } from "./BRAND-MIRROR-ENGINE-SCHEMA";
 
 /**
  * Signal type enum (matches database)
@@ -61,6 +62,25 @@ export async function addSignalToVault(
   id: string;
   message: string;
 }> {
+  // ═════════════════════════════════════════════════════════════════════════
+  // DEBUG TRACER #1: Log full signal object at function entry
+  // Shows exactly what is being passed to the vault
+  // ═════════════════════════════════════════════════════════════════════════
+  console.log('[StagingVault] 🔍 ENTRY - Full signal object:', {
+    signalType: signal.signalType,
+    language: signal.language || 'en (default)',
+    metadataProvided: !!signal.metadata,
+    metadataType: typeof signal.metadata,
+    metadataKeys: signal.metadata ? Object.keys(signal.metadata) : [],
+    competitorIdValue: (signal.metadata as any)?.competitor_id,
+    competitorIdType: typeof (signal.metadata as any)?.competitor_id,
+    contentLength: signal.content?.length || 0,
+    source: signal.source || 'manual (default)',
+    sourceAppId: signal.sourceAppId,
+    workspaceId,
+    timestamp: new Date().toISOString(),
+  });
+
   const {
     signalType,
     content,
@@ -73,21 +93,223 @@ export async function addSignalToVault(
     expiresAt,
   } = signal;
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // DEBUG TRACER #2: Validate content - expose failures immediately
+  // ═════════════════════════════════════════════════════════════════════════
+
   // Validate content
   if (!content || content.trim().length === 0) {
-    throw new Error("Signal content cannot be empty");
+    const errorMsg = "Signal content cannot be empty";
+    console.error('[StagingVault] ❌ VALIDATION FAILED - Content is empty:', {
+      signalType,
+      language,
+      competitorId: (metadata as any)?.competitor_id,
+      workspaceId,
+    });
+    throw new Error(errorMsg);
   }
 
   if (content.length > 5000) {
-    throw new Error("Signal content exceeds 5000 character limit");
+    const errorMsg = `Signal content exceeds 5000 character limit (length: ${content.length})`;
+    console.error('[StagingVault] ❌ VALIDATION FAILED - Content too long:', {
+      signalType,
+      language,
+      competitorId: (metadata as any)?.competitor_id,
+      contentLength: content.length,
+      workspaceId,
+    });
+    throw new Error(errorMsg);
   }
 
   // Validate language code
   if (!/^[a-z]{2}(-[A-Z]{2})?$/.test(language)) {
-    throw new Error("Invalid language code format (use: en, ar, en-US, etc)");
+    const errorMsg = `Invalid language code format: "${language}" (use: en, ar, en-US, etc)`;
+    console.error('[StagingVault] ❌ VALIDATION FAILED - Invalid language:', {
+      signalType,
+      language,
+      competitorId: (metadata as any)?.competitor_id,
+      workspaceId,
+    });
+    throw new Error(errorMsg);
   }
 
   try {
+    // ═══════════════════════════════════════════════════════════════════
+    // CRITICAL VALIDATION: Ensure metadata is JSON-serializable
+    // This prevents 22P02: invalid input syntax for type json errors
+    // ═══════════════════════════════════════════════════════════════════
+
+    const finalMetadata = metadata || {};
+
+    console.log('[StagingVault] 🔍 METADATA CHECK #1 - Type validation:', {
+      finalMetadataType: typeof finalMetadata,
+      isObject: typeof finalMetadata === 'object',
+      isNotNull: finalMetadata !== null,
+      isNotArray: !Array.isArray(finalMetadata),
+      competitorId: (finalMetadata as any)?.competitor_id,
+      signalType,
+    });
+
+    // Check 1: Is it an object?
+    if (typeof finalMetadata !== 'object' || finalMetadata === null || Array.isArray(finalMetadata)) {
+      const errorMsg = `Metadata must be an object. Got: ${typeof finalMetadata} (${JSON.stringify(finalMetadata)})`;
+      console.error('[StagingVault] ❌ VALIDATION FAILED - Metadata type error:', {
+        expectedType: 'object',
+        actualType: typeof finalMetadata,
+        isNull: finalMetadata === null,
+        isArray: Array.isArray(finalMetadata),
+        signalType,
+        competitorId: (finalMetadata as any)?.competitor_id,
+      });
+      throw new Error(errorMsg);
+    }
+
+    // Check 2: Can we stringify it? (catches circular references)
+    let metadataString: string;
+    try {
+      metadataString = JSON.stringify(finalMetadata);
+      console.log('[StagingVault] 🔍 METADATA CHECK #2 - JSON.stringify succeeded:', {
+        stringLength: metadataString.length,
+        competitorId: (finalMetadata as any)?.competitor_id,
+      });
+    } catch (stringifyErr) {
+      const errorMsg = `Metadata contains non-serializable values (circular reference?): ${stringifyErr}`;
+      console.error('[StagingVault] ❌ VALIDATION FAILED - JSON stringify error:', {
+        error: String(stringifyErr),
+        metadataKeys: Object.keys(finalMetadata),
+        signalType,
+        competitorId: (finalMetadata as any)?.competitor_id,
+      });
+      throw new Error(errorMsg);
+    }
+
+    // Check 3: Can we parse it back?
+    try {
+      JSON.parse(metadataString);
+      console.log('[StagingVault] 🔍 METADATA CHECK #3 - Round-trip JSON succeeded:', {
+        competitorId: (finalMetadata as any)?.competitor_id,
+        metadataKeys: Object.keys(finalMetadata),
+      });
+    } catch (parseErr) {
+      const errorMsg = `Metadata failed round-trip JSON serialization: ${parseErr}`;
+      console.error('[StagingVault] ❌ VALIDATION FAILED - JSON parse error:', {
+        error: String(parseErr),
+        stringifiedMetadata: metadataString.substring(0, 200),
+        signalType,
+        competitorId: (finalMetadata as any)?.competitor_id,
+      });
+      throw new Error(errorMsg);
+    }
+
+    // Check 4: For competitor_weakness signals, verify competitor_id exists
+    if (signalType === 'competitor_weakness') {
+      console.log('[StagingVault] 🔍 METADATA CHECK #4 - competitor_weakness specific validation:', {
+        hasCompetitorId: !!finalMetadata.competitor_id,
+        competitorIdType: typeof (finalMetadata as any)?.competitor_id,
+        competitorIdValue: (finalMetadata as any)?.competitor_id,
+        competitorIdLength: typeof (finalMetadata as any)?.competitor_id === 'string' ? (finalMetadata as any)?.competitor_id.length : 'N/A',
+      });
+
+      if (!finalMetadata.competitor_id || typeof finalMetadata.competitor_id !== 'string') {
+        const errorMsg = `competitor_weakness signals MUST have metadata.competitor_id as string. Got: ${JSON.stringify(finalMetadata.competitor_id)}`;
+        console.error('[StagingVault] ❌ VALIDATION FAILED - Missing or wrong-type competitor_id:', {
+          competitorIdProvided: !!finalMetadata.competitor_id,
+          competitorIdType: typeof (finalMetadata as any)?.competitor_id,
+          competitorIdValue: (finalMetadata as any)?.competitor_id,
+          allMetadataKeys: Object.keys(finalMetadata),
+          metadataKeys: Object.keys(finalMetadata),
+          signalType,
+        });
+        throw new Error(errorMsg);
+      }
+
+      if ((finalMetadata as any).competitor_id.trim().length === 0) {
+        const errorMsg = `competitor_weakness signals MUST have non-empty metadata.competitor_id. Got empty string.`;
+        console.error('[StagingVault] ❌ VALIDATION FAILED - Empty competitor_id:', {
+          competitorIdValue: (finalMetadata as any)?.competitor_id,
+          competitorIdTrimmedLength: (finalMetadata as any)?.competitor_id.trim().length,
+          signalType,
+        });
+        throw new Error(errorMsg);
+      }
+    }
+
+    console.log(`[StagingVault] ✓ METADATA VALIDATION PASSED for ${signalType}:`, {
+      hasCompetitorId: !!finalMetadata.competitor_id,
+      competitorId: (finalMetadata as any)?.competitor_id,
+      metadataSize: metadataString.length,
+      metadataKeys: Object.keys(finalMetadata),
+      language,
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SCHEMA ENFORCEMENT: For competitor_weakness, validate strict schema
+    // ═══════════════════════════════════════════════════════════════════════
+    if (signalType === 'competitor_weakness') {
+      console.log('[StagingVault] 🔍 SCHEMA VALIDATION STARTED for competitor_weakness:', {
+        competitorId: (finalMetadata as any)?.competitor_id,
+        language,
+        contentLength: content.trim().length,
+        metadataKeys: Object.keys(finalMetadata),
+      });
+
+      const schemaValidation = validateCompetitorWeaknessSchema({
+        workspace_id: workspaceId,
+        signal_type: signalType,
+        source,
+        source_context: sourceContext,
+        source_context_id: sourceContextId,
+        content: content.trim(),
+        language,
+        metadata: finalMetadata,
+      });
+
+      if (!schemaValidation.valid) {
+        const errorMsg = schemaValidation.errors.join('\n');
+        console.error('[StagingVault] ❌ SCHEMA VALIDATION FAILED:', {
+          competitorId: (finalMetadata as any)?.competitor_id,
+          language,
+          signalType,
+          validationErrors: schemaValidation.errors,
+          errorMessage: errorMsg,
+        });
+        throw new Error(`Schema validation failed:\n${errorMsg}`);
+      }
+
+      console.log(`[StagingVault] ✓ SCHEMA VALIDATION PASSED for competitor_weakness:`, {
+        competitorId: (finalMetadata as any)?.competitor_id,
+        language: language,
+        metadataKeys: Object.keys(finalMetadata),
+        validationStatus: 'PASSED',
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // INSERT: metadata is NATIVE OBJECT (NOT stringified)
+    // Supabase will automatically serialize to JSONB
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log(`[StagingVault] 🔍 ABOUT TO INSERT signal:`, {
+      workspaceId,
+      signalType,
+      language,
+      metadataType: typeof finalMetadata,
+      metadataKeys: Object.keys(finalMetadata),
+      competitorId: (finalMetadata as any)?.competitor_id,
+      allInsertFields: {
+        workspace_id: workspaceId,
+        signal_type: signalType,
+        source,
+        content_length: content.trim().length,
+        language,
+        source_app_id: sourceAppId,
+        source_context: sourceContext,
+        source_context_id: sourceContextId,
+        metadata: finalMetadata,
+        expires_at: expiresAt,
+      },
+    });
+
     const { data, error } = await supabase
       .from("workspace_staging_vault")
       .insert({
@@ -99,22 +321,53 @@ export async function addSignalToVault(
         source_app_id: sourceAppId,
         source_context: sourceContext,
         source_context_id: sourceContextId,
-        metadata,
+        metadata: finalMetadata,  // ← NATIVE OBJECT (Supabase handles JSONB serialization)
         expires_at: expiresAt,
       })
       .select("id")
       .single();
 
     if (error) {
-      throw new Error(`Failed to add signal: ${error.message}`);
+      console.error('[StagingVault] ❌ DATABASE INSERT ERROR:', {
+        errorCode: (error as any)?.code,
+        errorMessage: error.message,
+        errorDetails: error,
+        signalType,
+        competitorId: (finalMetadata as any)?.competitor_id,
+        language,
+        workspaceId,
+      });
+      throw new Error(
+        `Failed to add signal: ${error.message}\n` +
+        `Error code: ${(error as any)?.code}\n` +
+        `Signal type: ${signalType}\n` +
+        `This usually means metadata is malformed.`
+      );
     }
+
+    console.log('[StagingVault] ✅ SUCCESS - Signal inserted:', {
+      signalId: data.id,
+      signalType,
+      competitorId: (finalMetadata as any)?.competitor_id,
+      language,
+      workspaceId,
+      timestamp: new Date().toISOString(),
+    });
 
     return {
       id: data.id,
       message: `Signal staged: ${signalType}`,
     };
   } catch (err) {
-    console.error("[StagingVault] Add signal failed:", err);
+    console.error("[StagingVault] ❌ CATCH BLOCK - Add signal failed:", {
+      errorMessage: err instanceof Error ? err.message : String(err),
+      errorStack: err instanceof Error ? err.stack : 'No stack available',
+      fullError: err,
+      signalType,
+      language,
+      competitorId: (metadata as any)?.competitor_id,
+      workspaceId,
+    });
     throw err;
   }
 }
