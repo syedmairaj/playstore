@@ -3028,8 +3028,8 @@ export function CompetitorSpyClient({
                   isRtl={isRtl}
                   workspaceId={workspaceId}
                   workspaceAppName={workspaceAppDisplayName}
-                  competitorDisplayName={activeCompetitor.displayName}
-                  displayName={activeCompetitor.displayName}
+                  competitorDisplayName={activeCompetitor.displayName || activeCompetitor.appName || activeCompetitor.packageId}
+                  displayName={activeCompetitor.displayName || activeCompetitor.appName || activeCompetitor.packageId}
                   categoryLabel={t("snapshot.listingCategory")}
                   packageId={activeCompetitor.packageId}
                   bestRank={bestRankForActive}

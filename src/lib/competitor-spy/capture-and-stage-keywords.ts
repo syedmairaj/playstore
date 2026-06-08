@@ -24,6 +24,16 @@ export interface CompetitorAnalysisResult {
 }
 
 /**
+ * Sanitize competitor name - use fallback if empty
+ */
+function sanitizeCompetitorName(name: string | undefined, fallback: string): string {
+  if (name && typeof name === 'string' && name.trim()) {
+    return name.trim();
+  }
+  return fallback || 'Unknown Competitor';
+}
+
+/**
  * STEP 1: VALIDATE BEFORE ANYTHING ELSE
  * Catches issues immediately - logs exact problems
  */
@@ -227,8 +237,14 @@ export async function stageCompetitorAnalysis(
 ): Promise<{ success: boolean; error?: string; signalId?: string }> {
   console.log(`[StageCompetitorAnalysis] Starting for competitor: ${data.competitorId}`);
 
+  // Sanitize competitor name before processing - use ID as fallback if needed
+  const sanitizedData = {
+    ...data,
+    competitorName: sanitizeCompetitorName(data.competitorName, data.competitorId),
+  };
+
   // Step 1: Validate
-  const validation = validateCompetitorAnalysisResult(data);
+  const validation = validateCompetitorAnalysisResult(sanitizedData);
   if (!validation.valid) {
     const errorMsg = validation.errors.join('\n');
     console.error('❌ VALIDATION FAILED:\n' + errorMsg);
@@ -238,12 +254,12 @@ export async function stageCompetitorAnalysis(
   console.log('✓ Validation passed');
 
   // Step 2: Log payload
-  logCompetitorAnalysisPayload(data);
+  logCompetitorAnalysisPayload(sanitizedData);
 
   // Step 3: Prepare vault payload
   let vaultPayload;
   try {
-    vaultPayload = prepareVaultPayload(data);
+    vaultPayload = prepareVaultPayload(sanitizedData);
     console.log('✓ Vault payload prepared');
   } catch (err) {
     const errorMsg = `Failed to prepare vault payload: ${err}`;
@@ -261,8 +277,8 @@ export async function stageCompetitorAnalysis(
       content: vaultPayload.content,
       source: 'competitor_spy',
       sourceContext: 'competitor_weakness',
-      sourceContextId: data.competitorId,
-      language: data.language,
+      sourceContextId: sanitizedData.competitorId,
+      language: sanitizedData.language,
       metadata: vaultPayload.metadata,
     };
 
@@ -273,6 +289,7 @@ export async function stageCompetitorAnalysis(
     console.log(JSON.stringify(requestPayload, null, 2));
     console.log(`Metadata type: ${typeof requestPayload.metadata}`);
     console.log(`Metadata.competitor_id: ${(requestPayload.metadata as any)?.competitor_id}`);
+    console.log(`Metadata.competitor_name: ${(requestPayload.metadata as any)?.competitor_name} (sanitized from: ${data.competitorName})`);
 
     const response = await fetch(`/api/workspaces/${workspaceIdForApi}/staging/add`, {
       method: 'POST',
