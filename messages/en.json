@@ -1,4 +1,61 @@
 {
+  "keywordValidator": {
+    "analysisToolLabel": "Analysis Tool",
+    "panelTitle": "Keyword Validator",
+    "panelSubtitle": "Viability · Difficulty · Search volume",
+    "closeLabel": "Close",
+    "inputPlaceholder": "e.g., photo editor",
+    "analyzeButton": "Analyze",
+    "enterHint": "Press Enter to analyze",
+    "resultsCount": "{count, plural, one {# result} other {# results}}",
+    "clearAll": "Clear all",
+    "estimatedBadge": "Est.",
+    "estimatedTooltip": "Estimated based on historical model. Live data available in the Keyword Tracker.",
+    "metricConf": "Conf.",
+    "metricComp": "Comp.",
+    "metricInstalls": "Installs",
+    "searchVolLabel": "Search vol · {volume}/mo",
+    "tierHighOpportunity": "High Opportunity",
+    "tierMediumOpportunity": "Medium Opportunity",
+    "tierLowPriority": "Low Priority",
+    "difficultyEasy": "Easy",
+    "difficultyMedium": "Medium",
+    "difficultyHard": "Hard",
+    "stageButton": "Stage to Keyword Tracker",
+    "stagingButton": "Staging…",
+    "stagedButton": "Staged to tracker",
+    "stageCreditNotice": "Free to stage · rank updates use 1 credit/country",
+    "toastValidated": "Keyword validated",
+    "toastValidationFailed": "Validation failed",
+    "toastStaged": "\"{keyword}\" staged to tracker",
+    "toastStagingFailed": "Staging failed",
+    "emptyHowItWorks": "How it works",
+    "emptyStep1": "Type any keyword in the field above",
+    "emptyStep2": "Press Analyze to get the viability score",
+    "emptyStep3": "Hit Stage to push it to the tracker",
+
+    "liveRankEducationTitle": "What does Live Rank mean?",
+    "liveRankEducationBody": "This is your app's organic position in Google Play search results for this keyword, right now. Ranks are real-time snapshots — they shift based on algorithm signals, competitor installs, ratings, and listing relevance. Each market is independent.",
+
+    "liveRankResultTitle": "Live rank fetched",
+    "liveRankResultBodyRanked": "Your app ranks #{rank} in {market} for \"{keyword}\". This is a point-in-time snapshot — ranks can shift within hours.",
+    "liveRankResultBodyNotInTop": "Your app is not in the top 100 results in {market} for \"{keyword}\" right now. Optimise your listing or target a lower-competition keyword.",
+    "liveRankResultBodyMulti": "Ranked across {count} markets for \"{keyword}\". Each result is an independent point-in-time snapshot.",
+
+    "liveRankPartialTitle": "Partial results",
+    "liveRankPartialBody": "{succeeded} of {total} markets returned. Failed markets were not charged.",
+
+    "liveRankNoPackageTitle": "Package name required",
+    "liveRankNoPackageBody": "Add your app's Android package name (e.g. com.yourapp.id) in workspace Settings → App to enable live rank checks.",
+
+    "liveRankInsufficientCreditsTitle": "Not enough credits",
+    "liveRankInsufficientCreditsBody": "Live rank uses {cost} credit per market. You have {remaining} credits. Top up in workspace settings.",
+
+    "toastLiveRankSingle": "#{rank} in {market} for \"{keyword}\"",
+    "toastLiveRankNotInTop": "Not in top 100 in {market} for \"{keyword}\"",
+    "toastLiveRankMulti": "\"{keyword}\" ranked across {count} markets",
+    "toastLiveRankAllFailed": "Rank fetch failed — no results returned"
+  },
   "meta": {
     "title": "PlayStore — Google Play ASO without the enterprise weight",
     "description": "Discover keywords, generate high-converting listings, and spot competitor gaps. Built for indie Android founders and MENA teams."

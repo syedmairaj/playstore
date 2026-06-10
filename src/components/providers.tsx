@@ -9,7 +9,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
       <SentryClientInit />
       {children}
-      <Toaster richColors position="top-center" />
+      <Toaster richColors theme="dark" position="top-right" closeButton />
     </ThemeProvider>
   );
 }
