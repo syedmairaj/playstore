@@ -1,11 +1,8 @@
 import "server-only";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import type { SchemaType } from "@google-cloud/vertexai";
 import { clampListingGenerationParsed } from "@/lib/gemini/clamp-listing-generation-parsed";
 import type { ClampListingResult } from "@/lib/gemini/clamp-listing-generation-parsed";
-import {
-  assertGeminiApiKey,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
   normalizeListingGenerationParsed,
@@ -136,21 +133,14 @@ async function attemptGeneration(
   input: ListingOptimizerInput,
   isRetry: boolean,
 ): Promise<GenerateListingWithGeminiResult> {
-  const apiKey = assertGeminiApiKey();
-  const modelName = resolveGeminiModel();
-
   const { system, user: baseUser } = buildListingOptimizerMessages(input);
   // On retry: append the strict-format addendum to the user message so the
   // model gets an explicit re-statement of every required field + constraint.
   const user = isRetry ? `${baseUser}\n\n${STRICT_RETRY_ADDENDUM}` : baseUser;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  // generationConfig MUST be inline on generateContent, NOT on getGenerativeModel —
-  // SDK ^0.21.0 strips unknown keys from the constructor before the request is built.
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction: system,
-  });
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+  const model = getGenerativeModel();
+  model.systemInstruction = system;
 
   const result = await model.generateContent({
     contents: [{ role: "user", parts: [{ text: user }] }],

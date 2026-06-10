@@ -1,14 +1,8 @@
-import {
-  GoogleGenerativeAIFetchError,
-  GoogleGenerativeAIResponseError,
-} from "@google/generative-ai";
 import { NextResponse, type NextRequest } from "next/server";
 import { ZodError } from "zod";
 import { getClientIp } from "@/lib/client-ip";
 import { upsertOptimizerInputsAfterAutofill } from "@/lib/db/listing-generations";
 import { generateOptimizerAutofillWithGemini } from "@/lib/gemini/generate-optimizer-autofill";
-import { resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
-import { logGeminiApiKeyDiagnostics } from "@/lib/gemini/log-gemini-env";
 import {
   AI_CREDIT_COSTS,
   buildInsufficientAiCreditsPayload,
@@ -31,19 +25,13 @@ const ROUTE = "POST /api/listings/optimizer-autofill";
 const LOCK_ACTION = "listing_optimizer_autofill";
 
 function inferOptimizerAutofillHttpStatus(error: unknown): number {
-  if (error instanceof GoogleGenerativeAIFetchError) {
-    const s = error.status;
-    if (s === 429) return 429;
-    if (s === 503 || s === 502 || s === 504) return 503;
-    if (s === 404) return 503;
-  }
-  if (error instanceof GoogleGenerativeAIResponseError) {
-    return 503;
-  }
-
   const message =
     error instanceof Error ? error.message : String(error);
-  if (message.includes("GEMINI_API_KEY")) return 503;
+
+  // Check for status codes in error message
+  if (/\b429\b/.test(message)) return 429;
+  if (/\b503\b/.test(message) || /\b502\b/.test(message) || /\b504\b/.test(message)) return 503;
+  if (/\b404\b/.test(message)) return 503;
 
   const lower = message.toLowerCase();
   if (
@@ -86,7 +74,6 @@ function splitKeywordLines(raw: string): string[] {
 }
 
 export async function POST(request: NextRequest) {
-  logGeminiApiKeyDiagnostics();
   const started = Date.now();
   const clientIp = getClientIp(request);
 
@@ -248,7 +235,6 @@ export async function POST(request: NextRequest) {
   }
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const model = resolveGeminiModel();
   const creditCost = AI_CREDIT_COSTS.listing_optimizer_autofill;
 
   // All paths past the idempotency lock must release it so the user can retry

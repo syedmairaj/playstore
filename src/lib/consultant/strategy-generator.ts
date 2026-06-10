@@ -5,7 +5,6 @@
  * Senior consultant tone, market benchmarked, task-oriented.
  */
 
-import type { GoogleGenerativeAI } from "@google/generative-ai";
 import type { AsoReportCard } from "@/lib/gemini/aso-report-card-types";
 import type {
   GrowthRoadmap,

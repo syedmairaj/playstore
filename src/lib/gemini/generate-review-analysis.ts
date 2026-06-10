@@ -1,9 +1,6 @@
 import "server-only";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import {
-  assertGeminiApiKey,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import type { SchemaType } from "@google-cloud/vertexai";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import type { GeminiUsageCounts } from "@/lib/gemini/pricing";
 import { parseGeminiUsageMetadata } from "@/lib/gemini/pricing";
 
@@ -315,11 +312,12 @@ export async function generateReviewAnalysis(
   //   responseSchema      — enforces exact shape; SDK rejects non-conforming output
   //                         before it reaches our parse layer, eliminating the
   //                         "Unterminated string / JSON.parse failed" crash.
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction: SYSTEM_INSTRUCTION,
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+  const model = getGenerativeModel({
+    temperature: 0.2,
+    maxOutputTokens: 4096,
   });
+  model.systemInstruction = SYSTEM_INSTRUCTION;
 
   const result = await model.generateContent({
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],

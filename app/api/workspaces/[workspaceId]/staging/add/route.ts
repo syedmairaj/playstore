@@ -34,6 +34,7 @@ const bodySchema = z.object({
   sourceContextId: z.string().optional(),
   language: z.string().default("en"),
   metadata: z.record(z.unknown()).optional(),
+  category: z.string().optional(),  // ✅ CATEGORIZATION: Route signal to correct bucket (e.g., 'competitor_keyword')
   expiresAt: z.string().datetime().optional(),
 });
 

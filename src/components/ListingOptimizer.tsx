@@ -69,6 +69,12 @@ import {
 } from "@/lib/apps/logo-generator-metadata";
 import { LocalizedResults } from "@/components/optimizer/LocalizedResults";
 import { ListingHistory } from "@/components/listing/ListingHistory";
+import { ActiveContextKeywords } from "@/components/optimizer/ActiveContextKeywords";
+import {
+  type KeywordDisplayItem,
+  extractKeywordsFromContext,
+  deduplicateKeywords,
+} from "@/lib/client/optimizer-keywords-display";
 import {
   LOCALIZE_MARKETS,
   type LocalizeMarketCode,
@@ -79,6 +85,17 @@ import {
   fetchUnutilizedListingImprovements,
   type ListingImprovementItem,
 } from "@/components/reviews/review-improvements-queue";
+import StagingWorkspace from "@/components/staging-workspace/StagingWorkspace";
+import { useStagingWorkspace } from "@/hooks/useStagingWorkspace";
+import {
+  buildStagingWorkspaceState,
+  getSignalsForAISynthesis,
+} from "@/lib/client/staging-workspace-service";
+import type {
+  ReviewIssueSignal,
+  MarketOpportunitySignal,
+  CompetitorKeywordSignal,
+} from "@/lib/client/staging-workspace-types";
 import { cn } from "@/lib/utils";
 
 type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
@@ -298,6 +315,159 @@ function hasValidHttpsPreviewIcon(raw: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * StagingWorkspaceSection Component
+ *
+ * Adapter that bridges ListingOptimizer state with the new StagingWorkspace component.
+ * Converts existing pill/keyword arrays into properly typed signals and manages removal callbacks.
+ */
+interface StagingWorkspaceSectionProps {
+  reviewQueuePills: import("@/components/reviews/review-improvements-queue").ListingImprovementItem[];
+  spotlightQueuePills: import("@/components/reviews/review-improvements-queue").ListingImprovementItem[];
+  stagedKeywords: KeywordDisplayItem[];
+  competitorWeaknesses: string[];
+  locale: string;
+  isRtl: boolean;
+  loading: boolean;
+  onRemoveReviewIssue: (id: string) => void;
+  onRemoveMarketOpportunity: (id: string) => void;
+  onRemoveCompetitorKeyword: (keywordId: string, signalId: string) => void;
+  onRemoveCompetitorWeakness: (idx: number) => void;
+}
+
+function StagingWorkspaceSection({
+  reviewQueuePills,
+  spotlightQueuePills,
+  stagedKeywords,
+  competitorWeaknesses,
+  locale,
+  isRtl,
+  loading,
+  onRemoveReviewIssue,
+  onRemoveMarketOpportunity,
+  onRemoveCompetitorKeyword,
+  onRemoveCompetitorWeakness,
+}: StagingWorkspaceSectionProps) {
+  // Convert review queue pills to ReviewIssueSignal format
+  const reviewIssues: ReviewIssueSignal[] = reviewQueuePills.map((pill) => ({
+    id: pill.id,
+    source: "review_issue" as const,
+    content: pill.label,
+    timestamp: Date.now(),
+    metadata: { originalPill: pill },
+  }));
+
+  // Convert spotlight pills to MarketOpportunitySignal format
+  const marketOpportunities: MarketOpportunitySignal[] = spotlightQueuePills.map((pill) => ({
+    id: pill.id,
+    source: "market_spotlight" as const,
+    keyword: pill.label,
+    timestamp: Date.now(),
+    metadata: { originalPill: pill },
+  }));
+
+  // Convert staged keywords to CompetitorKeywordSignal format
+  const competitorKeywords: CompetitorKeywordSignal[] = stagedKeywords.map((kw) => ({
+    id: kw.id,
+    source: "competitor_keyword" as const,
+    keyword: kw.term,
+    category: kw.category,
+    userSelected: true,
+    timestamp: Date.now(),
+    metadata: { originalId: kw.originalId },
+  }));
+
+  // Create unified removal handler
+  const handleRemoveSignal = async (signalId: string, source: string) => {
+    if (source === "review_issue") {
+      onRemoveReviewIssue(signalId);
+    } else if (source === "market_spotlight") {
+      onRemoveMarketOpportunity(signalId);
+    } else if (source === "competitor_keyword") {
+      // Find the original ID from metadata
+      const keyword = stagedKeywords.find((kw) => kw.id === signalId);
+      if (keyword) {
+        onRemoveCompetitorKeyword(signalId, keyword.originalId);
+      }
+    }
+  };
+
+  // Use the staging workspace hook
+  const {
+    workspaceState,
+    workspaceConfig,
+    handleRemoveSignal: wrappedRemoveHandler,
+  } = useStagingWorkspace({
+    reviewIssues,
+    marketOpportunities,
+    competitorKeywords,
+    locale: locale as "en" | "ar",
+    isRtl,
+    isLoading: loading,
+    onRemoveSignal: handleRemoveSignal,
+  });
+
+  return (
+    <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
+      <StagingWorkspace
+        state={workspaceState}
+        config={workspaceConfig}
+        onRemoveSignal={wrappedRemoveHandler}
+      />
+
+      {/* Competitor Weaknesses - kept separate as it's a different data model */}
+      {competitorWeaknesses.length > 0 && (
+        <div className="mt-4 space-y-4 border-t border-white/[0.07] pt-4">
+          <div>
+            <div className="mb-2 flex items-center gap-1.5">
+              <Shield className="size-3 shrink-0 text-amber-400/80" aria-hidden />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-400/80">
+                {isRtl ? "نقاط ضعف المنافسين" : "Competitor Weaknesses"}
+              </span>
+              <span className="text-[10px] text-white/25">
+                {isRtl ? "← تُستخدم لإبراز التميز في الوصف الطويل" : "→ position you as the superior alternative"}
+              </span>
+            </div>
+            {competitorWeaknesses.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                <AnimatePresence initial={false}>
+                  {competitorWeaknesses.map((weakness, idx) => (
+                    <motion.span
+                      key={`cweak-${idx}-${weakness.slice(0, 20).replace(/\s/g, "-")}`}
+                      layout
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ duration: 0.18 }}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200/90",
+                        loading && "pointer-events-none opacity-60",
+                      )}
+                    >
+                      <Shield className="size-2.5 shrink-0 text-amber-400/70" aria-hidden />
+                      <span className="max-w-[160px] truncate">{weakness}</span>
+                      {!loading ? (
+                        <button
+                          type="button"
+                          aria-label={`Remove ${weakness}`}
+                          onClick={() => onRemoveCompetitorWeakness(idx)}
+                          className="ms-0.5 rounded-full p-0.5 text-amber-400/50 transition hover:bg-amber-500/20 hover:text-amber-300"
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </motion.span>
+                  ))}
+                </AnimatePresence>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ListingOptimizer({
@@ -1093,6 +1263,77 @@ export function ListingOptimizer({
       });
     },
     [workspaceId, refreshOptimizerContext],
+  );
+
+  // ── Remove individual keyword from staging vault ──────────────────────────
+  const handleRemoveKeyword = useCallback(
+    (keywordId: string, signalId: string) => {
+      if (!workspaceId) {
+        console.error("[ListingOptimizer] ❌ REMOVAL FAILED: No workspaceId");
+        return;
+      }
+
+      // Extract keyword term from keywordId (format: "{signalId}-{term}")
+      const keywordTerm = keywordId.split('-').slice(1).join('-');
+
+      console.log("[ListingOptimizer] 🗑️ GRANULAR KEYWORD DELETION (EN/AR SUPPORT):", {
+        keywordId,
+        keywordTerm,
+        signalId,
+        workspaceId,
+        locale,
+        timestamp: new Date().toISOString(),
+      });
+
+      // ✅ GRANULAR DELETION: Remove just this keyword from the signal
+      const deletePayload = {
+        signalId,
+        keywordTerm,  // ✅ Pass the keyword term for granular deletion
+      };
+
+      console.log("[ListingOptimizer] 📤 SENDING DELETE REQUEST:", {
+        endpoint: `/api/workspaces/${workspaceId}/staging/delete`,
+        payload: deletePayload,
+      });
+
+      void fetch(
+        `/api/workspaces/${workspaceId}/staging/delete`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(deletePayload),
+          credentials: "same-origin",
+        },
+      ).then(async (res) => {
+        const resBody = await res.json();
+
+        if (res.ok) {
+          console.log("[ListingOptimizer] ✅ DELETE SUCCESSFUL:", {
+            status: res.status,
+            response: resBody,
+          });
+
+          // Refresh optimizer context after deletion
+          console.log("[ListingOptimizer] 🔄 INVALIDATING QUERY to refresh optimizer context...");
+          refreshOptimizerContext();
+
+          console.log("[ListingOptimizer] ✅ Keyword removed successfully, context refreshed");
+        } else {
+          console.error("[ListingOptimizer] ❌ DELETE FAILED:", {
+            status: res.status,
+            response: resBody,
+          });
+          refreshOptimizerContext();
+        }
+      }).catch((err) => {
+        console.error("[ListingOptimizer] ❌ ERROR REMOVING KEYWORD:", {
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : 'no stack',
+        });
+        refreshOptimizerContext();
+      });
+    },
+    [workspaceId, locale, refreshOptimizerContext],
   );
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -2747,6 +2988,13 @@ export function ListingOptimizer({
   ];
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── Extract individual keywords from staging vault signals ────────────────
+  const stagedKeywords = useMemo(() => {
+    const extracted = extractKeywordsFromContext(optimizerContext?.activeItems);
+    return deduplicateKeywords(extracted);
+  }, [optimizerContext?.activeItems]);
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
     <div
       dir={isRtl ? "rtl" : "ltr"}
@@ -2787,7 +3035,11 @@ export function ListingOptimizer({
                   .map((item) => ({
                     keyword: item.sentimentTag!.replace(/^market_spotlight:/, "").trim(),
                   }));
-                const competitorItems = competitorWeaknesses.slice(0, 3);
+                // ✅ INCLUDE STAGED COMPETITOR KEYWORDS (not just weaknesses)
+                const competitorItems = [
+                  ...stagedKeywords.map((kw) => kw.term),  // Add staged keywords from Competitor Spy
+                  ...competitorWeaknesses.slice(0, 3),     // Add manual competitor weaknesses
+                ];
                 return { reviewItems, marketItems, competitorItems };
               })()
             : undefined
@@ -3280,207 +3532,24 @@ export function ListingOptimizer({
                 >
                   <div className="space-y-6 border-t border-zinc-800/60 pt-5 sm:pt-6">
 
-                    {/* ── Active Context Canvas ─────────────────────────────────── */}
-                    {/* Three signal groups: Review Issues, Market Keywords, Competitor Weaknesses.
-                        Each pill is individually removable. Empty groups show a quiet "none staged" hint.
-                        This is the "Data-Aggregating Canvas" — the user manages their strategy deck here. */}
-                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
-                      <div className="mb-3 flex items-center gap-2">
-                        <Sparkles className="size-3.5 shrink-0 text-emerald-400" aria-hidden />
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
-                          {isRtl ? "السياق النشط" : "Active Context"}
-                        </p>
-                        {(queuedImprovements.length > 0 || competitorWeaknesses.length > 0 || (optimizerContext?.activeItems?.length ?? 0) > 0) ? (
-                          <span className="ms-auto rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/20">
-                            {queuedImprovements.length + competitorWeaknesses.length + (optimizerContext?.activeItems?.length ?? 0)}{" "}
-                            {isRtl
-                              ? "إشارة نشطة"
-                              : `signal${queuedImprovements.length + competitorWeaknesses.length + (optimizerContext?.activeItems?.length ?? 0) !== 1 ? "s" : ""} active`}
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mb-4 text-[11px] leading-relaxed text-white/40">
-                        {isRtl
-                          ? "المدخلات أدناه سيتم دمجها تلقائياً في القائمة. انقر × لإزالة أي إشارة قبل التوليد."
-                          : "All inputs below will be woven into the listing automatically. Click × to remove any signal before generating."}
-                      </p>
-
-                      <div className="space-y-4">
-                        {/* ── Signal Group 1: Review Issues ──────────────────────── */}
-                        <div>
-                          <div className="mb-2 flex items-center gap-1.5">
-                            <AlertTriangle className="size-3 shrink-0 text-rose-400/80" aria-hidden />
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-400/80">
-                              {isRtl ? "مشكلات المراجعات" : "Review Issues"}
-                            </span>
-                            <span className="text-[10px] text-white/25">
-                              {isRtl ? "← تُعالَج في الوصف + ما هو جديد" : "→ addressed in description + what's new"}
-                            </span>
-                          </div>
-                          {reviewQueuePills.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              <AnimatePresence initial={false}>
-                                {reviewQueuePills.map((pill) => {
-                                  const label = pill.label;
-                                  return (
-                                    <motion.span
-                                      key={`${pill.source}-${pill.id}`}
-                                      layout
-                                      initial={{ opacity: 0, scale: 0.85 }}
-                                      animate={{ opacity: 1, scale: 1 }}
-                                      exit={{ opacity: 0, scale: 0.8 }}
-                                      transition={{ duration: 0.18 }}
-                                      className={cn(
-                                        "inline-flex items-center gap-1.5 rounded-full border border-rose-500/25 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-200/90",
-                                        loading && "pointer-events-none opacity-60",
-                                      )}
-                                    >
-                                      <AlertTriangle className="size-2.5 shrink-0 text-rose-400/70" aria-hidden />
-                                      <span className="max-w-[160px] truncate">{label}</span>
-                                      {!loading ? (
-                                        <button
-                                          type="button"
-                                          aria-label={`Remove ${label}`}
-                                          onClick={() => {
-                                            if (pill.source === "staging_vault") {
-                                              // Delete from staging vault
-                                              handleRemoveFromStagingVault(pill.id);
-                                            } else {
-                                              // Delete from backlog
-                                              handleRemoveQueueItem(pill.id);
-                                            }
-                                          }}
-                                          className="ms-0.5 rounded-full p-0.5 text-rose-400/50 transition hover:bg-rose-500/20 hover:text-rose-300"
-                                        >
-                                          ×
-                                        </button>
-                                      ) : null}
-                                    </motion.span>
-                                  );
-                                })}
-                              </AnimatePresence>
-                            </div>
-                          ) : (
-                            <p className="text-[11px] italic text-white/25">
-                              {isRtl ? "لا توجد مشكلات مراجعات — اذهب إلى المراجعات لإضافة الإشارات" : "None staged — visit Reviews to add signals"}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* ── Signal Group 2: Market Keywords ───────────────────── */}
-                        <div>
-                          <div className="mb-2 flex items-center gap-1.5">
-                            <Hash className="size-3 shrink-0 text-emerald-400/80" aria-hidden />
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-400/80">
-                              {isRtl ? "فرص السوق" : "Market Opportunities"}
-                            </span>
-                            <span className="text-[10px] text-white/25">
-                              {isRtl ? "← تُنسج في العنوان + الوصف القصير" : "→ woven into title + short description"}
-                            </span>
-                          </div>
-                          {spotlightQueuePills.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              <AnimatePresence initial={false}>
-                                {spotlightQueuePills.map((pill) => {
-                                  const label = pill.label;
-                                  return (
-                                    <motion.span
-                                      key={`${pill.source}-${pill.id}`}
-                                      layout
-                                      initial={{ opacity: 0, scale: 0.85 }}
-                                      animate={{ opacity: 1, scale: 1 }}
-                                      exit={{ opacity: 0, scale: 0.8 }}
-                                      transition={{ duration: 0.18 }}
-                                      className={cn(
-                                        "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200/90",
-                                        loading && "pointer-events-none opacity-60",
-                                      )}
-                                    >
-                                      <Hash className="size-2.5 shrink-0 text-emerald-400/70" aria-hidden />
-                                      <span className="max-w-[160px] truncate">{label}</span>
-                                      {!loading ? (
-                                        <button
-                                          type="button"
-                                          aria-label={`Remove ${label}`}
-                                          onClick={() => {
-                                            if (pill.source === "staging_vault") {
-                                              handleRemoveFromStagingVault(pill.id);
-                                            } else {
-                                              handleRemoveQueueItem(pill.id);
-                                            }
-                                          }}
-                                          className="ms-0.5 rounded-full p-0.5 text-emerald-400/50 transition hover:bg-emerald-500/20 hover:text-emerald-300"
-                                        >
-                                          ×
-                                        </button>
-                                      ) : null}
-                                    </motion.span>
-                                  );
-                                })}
-                              </AnimatePresence>
-                            </div>
-                          ) : (
-                            <p className="text-[11px] italic text-white/25">
-                              {isRtl ? "لا توجد كلمات مفتاحية — اذهب إلى Market Intel لإضافة spotlight" : "None staged — visit Market Intel to add a spotlight"}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* ── Signal Group 3: Competitor Weaknesses ─────────────── */}
-                        <div>
-                          <div className="mb-2 flex items-center gap-1.5">
-                            <Shield className="size-3 shrink-0 text-amber-400/80" aria-hidden />
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-400/80">
-                              {isRtl ? "نقاط ضعف المنافسين" : "Competitor Weaknesses"}
-                            </span>
-                            <span className="text-[10px] text-white/25">
-                              {isRtl ? "← تُستخدم لإبراز التميز في الوصف الطويل" : "→ position you as the superior alternative"}
-                            </span>
-                          </div>
-                          {competitorWeaknesses.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              <AnimatePresence initial={false}>
-                                {competitorWeaknesses.map((weakness, idx) => (
-                                  <motion.span
-                                    key={`cweak-${idx}-${weakness.slice(0, 20).replace(/\s/g, "-")}`}
-                                    layout
-                                    initial={{ opacity: 0, scale: 0.85 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    exit={{ opacity: 0, scale: 0.8 }}
-                                    transition={{ duration: 0.18 }}
-                                    className={cn(
-                                      "inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200/90",
-                                      loading && "pointer-events-none opacity-60",
-                                    )}
-                                  >
-                                    <Shield className="size-2.5 shrink-0 text-amber-400/70" aria-hidden />
-                                    <span className="max-w-[160px] truncate">{weakness}</span>
-                                    {!loading ? (
-                                      <button
-                                        type="button"
-                                        aria-label={`Remove ${weakness}`}
-                                        onClick={() => {
-                                          const updated = competitorWeaknesses.filter((_, i) => i !== idx);
-                                          setCompetitorWeaknesses(updated);
-                                          competitorVulnerabilitiesRef.current = updated;
-                                        }}
-                                        className="ms-0.5 rounded-full p-0.5 text-amber-400/50 transition hover:bg-amber-500/20 hover:text-amber-300"
-                                      >
-                                        ×
-                                      </button>
-                                    ) : null}
-                                  </motion.span>
-                                ))}
-                              </AnimatePresence>
-                            </div>
-                          ) : (
-                            <p className="text-[11px] italic text-white/25">
-                              {isRtl ? "لا توجد بيانات منافسين — اذهب إلى Competitor Spy لتحليل المنافسين" : "None staged — visit Competitor Spy to analyse rivals"}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                    {/* ── Staging Workspace (Transparent Three-Pillar Control Center) ────────── */}
+                    <StagingWorkspaceSection
+                      reviewQueuePills={reviewQueuePills}
+                      spotlightQueuePills={spotlightQueuePills}
+                      stagedKeywords={stagedKeywords}
+                      competitorWeaknesses={competitorWeaknesses}
+                      locale={locale}
+                      isRtl={isRtl}
+                      loading={loading}
+                      onRemoveReviewIssue={handleRemoveQueueItem}
+                      onRemoveMarketOpportunity={handleRemoveFromStagingVault}
+                      onRemoveCompetitorKeyword={handleRemoveKeyword}
+                      onRemoveCompetitorWeakness={(idx) => {
+                        const updated = competitorWeaknesses.filter((_, i) => i !== idx);
+                        setCompetitorWeaknesses(updated);
+                        competitorVulnerabilitiesRef.current = updated;
+                      }}
+                    />
                     {/* ─────────────────────────────────────────────────────────── */}
 
                     <p className="text-xs leading-relaxed text-white/45">

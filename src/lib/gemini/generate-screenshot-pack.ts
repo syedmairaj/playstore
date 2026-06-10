@@ -1,10 +1,6 @@
 import "server-only";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import {
-  assertGeminiApiKey,
-  mergeGeminiGenerationConfig,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import type { SchemaType } from "@google-cloud/vertexai";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,18 +393,10 @@ export async function generateScreenshotPack(
 ): Promise<ScreenshotPackResult> {
   const inferredMood = input.theme?.trim() || inferMood(input.category);
 
-  const apiKey = assertGeminiApiKey();
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: resolveGeminiModel(),
-    generationConfig: mergeGeminiGenerationConfig({
-      responseMimeType: "application/json",
-      responseSchema: PACK_SCHEMA as never,
-      // 6 slides × ~120 tokens each (4 strings + uiFocus + role) + inferredMood + overhead
-      // 3500 was the ceiling that caused the truncation. 6000 gives 70% headroom.
-      maxOutputTokens: 6000,
-      temperature: 0.65,
-    }),
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+  const model = getGenerativeModel({
+    maxOutputTokens: 6000,
+    temperature: 0.65,
   });
 
   const prompt = buildPrompt(input, inferredMood);

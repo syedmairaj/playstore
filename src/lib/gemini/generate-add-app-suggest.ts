@@ -1,10 +1,5 @@
 import "server-only";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import {
-  assertGeminiApiKey,
-  mergeGeminiGenerationConfig,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 
 function sanitize(value: string, maxLen: number): string {
   return value
@@ -109,14 +104,11 @@ export async function generateAddAppFieldSuggest(input: {
       ? "Output only the single suggested app name."
       : "Output only the single suggested short description line.";
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction,
-    generationConfig: mergeGeminiGenerationConfig({
-      maxOutputTokens: 256,
-    }),
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+  const model = getGenerativeModel({
+    maxOutputTokens: 256,
   });
+  model.systemInstruction = systemInstruction;
 
   const result = await model.generateContent(userPrompt);
   const text = result.response.text();
