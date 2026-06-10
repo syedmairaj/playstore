@@ -39,3 +39,5 @@ yarn-error.log*
 .env.local.*
 *.swp
 *.swo
+*.swp
+*.swo
