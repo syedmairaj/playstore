@@ -1,10 +1,5 @@
 import "server-only";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import {
-  assertGeminiApiKey,
-  mergeGeminiGenerationConfig,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import type { GeminiUsageCounts } from "@/lib/gemini/pricing";
 import { parseGeminiUsageMetadata } from "@/lib/gemini/pricing";
 
@@ -62,14 +57,11 @@ export async function generateReviewReplyDraft(input: {
 
   const userPrompt = `Review text:\n${sanitize(input.reviewText, 4000)}\n\nOutput the developer reply in ${lang} only.`;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction,
-    generationConfig: mergeGeminiGenerationConfig({
-      maxOutputTokens: 512,
-    }),
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+  const model = getGenerativeModel({
+    maxOutputTokens: 512,
   });
+  model.systemInstruction = systemInstruction;
 
   const result = await model.generateContent(userPrompt);
   const text = result.response.text();

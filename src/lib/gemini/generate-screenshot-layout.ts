@@ -1,10 +1,6 @@
 import "server-only";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import {
-  assertGeminiApiKey,
-  mergeGeminiGenerationConfig,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import type { SchemaType } from "@google-cloud/vertexai";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
   MOOD_SCHEMAS,
@@ -538,16 +534,10 @@ export async function generateScreenshotLayout(
   // Pre-compute selected Mood Schema for fallback reference
   const selectedMoodSchema = selectMoodSchemaForCategory(input.category);
 
-  const apiKey = assertGeminiApiKey();
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: resolveGeminiModel(),
-    generationConfig: mergeGeminiGenerationConfig({
-      responseMimeType: "application/json",
-      responseSchema: LAYOUT_SCHEMA as never,
-      maxOutputTokens: 1400,
-      temperature: 0.7,
-    }),
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+  const model = getGenerativeModel({
+    maxOutputTokens: 1400,
+    temperature: 0.7,
   });
 
   const prompt = buildLayoutPrompt(input);

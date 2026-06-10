@@ -1,10 +1,6 @@
 import "server-only";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import {
-  assertGeminiApiKey,
-  mergeGeminiGenerationConfig,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import type { SchemaType } from "@google-cloud/vertexai";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,16 +196,8 @@ function parseVariation(raw: unknown, index: number): CaptionVariation {
 export async function generateScreenshotCaptions(
   input: GenerateScreenshotCaptionsInput,
 ): Promise<GenerateScreenshotCaptionsResult> {
-  const apiKey = assertGeminiApiKey();
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: resolveGeminiModel(),
-    generationConfig: mergeGeminiGenerationConfig({
-      responseMimeType: "application/json",
-      responseSchema: RESPONSE_SCHEMA as Parameters<typeof mergeGeminiGenerationConfig>[0] extends never ? never : never,
-      maxOutputTokens: 3000,
-    }),
-  });
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+  const model = getGenerativeModel();
 
   const prompt = buildPrompt(input);
   const result = await model.generateContent(prompt);

@@ -39,6 +39,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useLocale } from "next-intl";
 import { ChevronDown, ToggleLeft, ToggleRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useKeywordCurationMode } from "@/contexts/KeywordCurationModeContext";
 import { useKeywordSelectionGlobal } from "@/hooks/useKeywordSelectionGlobal";
@@ -47,6 +48,7 @@ import KeywordPillMemoized from "./keyword-pill-memoized";
 import { KeywordCategoryHeader } from "./keyword-category-header";
 import { KeywordSelectionSummaryBar } from "./keyword-selection-summary-bar";
 import { KeywordLoadingBadge } from "./keyword-loading-badge";
+import { KeywordCurationFloatingBar } from "./keyword-curation-floating-bar";
 
 interface KeywordGroup {
   strategy: "high_volume" | "intent_based" | "competitor_gap";
@@ -185,6 +187,9 @@ function KeywordSurfacesInlineContent({
     computeCategoryCount,  // ✅ Helper to count selected keywords per category
   } = useKeywordSelectionGlobal(language);
 
+  // Query client for invalidating optimizer context
+  const queryClient = useQueryClient();
+
   // Fetch keywords with intelligent caching
   // ✅ CHECK CACHE FIRST: In-memory (0ms) or LocalStorage (1-5ms)
   // ✅ FALLBACK TO API: Only if cache miss
@@ -306,6 +311,39 @@ function KeywordSurfacesInlineContent({
 
   return (
     <div className="w-full space-y-0 overflow-x-hidden" style={{ boxSizing: 'border-box' }}>
+      {/* ✅ CRITICAL: Floating Action Bar for Selected Keywords (In Selection Mode Only) */}
+      {isSelectionMode && selectedCount > 0 && workspaceId && (
+        <KeywordCurationFloatingBar
+          isRtl={computedIsRtl}
+          selectedCount={selectedCount}
+          countByCategory={countByCategory}
+          selectedKeywords={Array.from(selectedTerms).map((term) => ({
+            term,
+            category: "high_volume" as const, // Default category (term-based selection doesn't track category)
+          }))}
+          workspaceId={workspaceId}
+          appId={undefined}
+          competitorId={competitorPackageId || ""}
+          competitorName={competitorPackageId || "Competitor"}
+          onClear={clearAll}
+          formattedSummary={`${selectedCount} keywords selected`}
+          onSuccess={(signalId) => {
+            console.log("[KeywordSurfacesInline] ✅ Keywords sent successfully:", {
+              signalId,
+              count: selectedCount,
+            });
+            // Clear selections after send
+            clearAll();
+            // Invalidate optimizer context so new keywords appear immediately
+            if (workspaceId) {
+              queryClient.invalidateQueries({
+                queryKey: ["optimizer-context", workspaceId],
+              });
+            }
+          }}
+        />
+      )}
+
       {/* Trigger Button + Mode Toggle */}
       <div className={cn("flex items-center gap-2 px-0", computedIsRtl && "flex-row-reverse")}>
         <motion.button

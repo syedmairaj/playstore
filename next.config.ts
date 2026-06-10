@@ -21,6 +21,24 @@ const nextConfig: NextConfig = {
         level: "error",
       };
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // SENTRY DYNAMIC REQUIRE SUPPRESSION
+    //
+    // Sentry uses dynamic require in @sentry/node for optional instrumentation.
+    // This triggers webpack's dependency scanner warning but doesn't affect runtime.
+    // Safely suppress the warning to keep build logs clean.
+    //
+    // Reference: https://github.com/getsentry/sentry-javascript/issues/3794
+    // ═════════════════════════════════════════════════════════════════════════
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings || []),
+      {
+        module: /node_modules\/@sentry\/node/,
+        message: /Critical dependency: require function is used in a way/,
+      },
+    ];
+
     return config;
   },
 };

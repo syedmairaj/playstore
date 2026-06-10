@@ -147,6 +147,7 @@ export function logCompetitorAnalysisPayload(data: CompetitorAnalysisResult): vo
     competitor_name: data.competitorName,
     category_label: data.categoryLabel,
     language: data.language,
+    category: 'competitor_keyword',  // ✅ CATEGORIZE: Routes to Competitor Keywords bucket
     keywords_by_strategy: {
       high_volume: data.keywords.slice(0, Math.ceil(data.keywords.length / 3)),
       intent_based: data.keywords.slice(
@@ -155,6 +156,15 @@ export function logCompetitorAnalysisPayload(data: CompetitorAnalysisResult): vo
       ),
       competitor_gap: data.keywords.slice(Math.ceil((data.keywords.length * 2) / 3)),
     },
+    // ✅ EXTRACTION: Store keywords as array with categories for UI extraction
+    keywords: data.keywords.map((keyword, index) => ({
+      term: keyword,
+      category: index < Math.ceil(data.keywords.length / 3)
+        ? 'high_volume'
+        : index < Math.ceil((data.keywords.length * 2) / 3)
+        ? 'intent_based'
+        : 'competitor_gap',
+    })),
     vulnerabilities: data.vulnerabilities,
     is_rtl: data.isRtl,
   };
@@ -192,6 +202,7 @@ export function prepareVaultPayload(data: CompetitorAnalysisResult): {
     competitor_name: data.competitorName,
     category_label: data.categoryLabel,
     language: data.language,
+    category: 'competitor_keyword',  // ✅ CATEGORIZE: Routes to Competitor Keywords bucket
     keywords_by_strategy: {
       high_volume: data.keywords.slice(0, Math.ceil(data.keywords.length / 3)),
       intent_based: data.keywords.slice(
@@ -200,6 +211,15 @@ export function prepareVaultPayload(data: CompetitorAnalysisResult): {
       ),
       competitor_gap: data.keywords.slice(Math.ceil((data.keywords.length * 2) / 3)),
     },
+    // ✅ EXTRACTION: Store keywords as array with categories for UI extraction
+    keywords: data.keywords.map((keyword, index) => ({
+      term: keyword,
+      category: index < Math.ceil(data.keywords.length / 3)
+        ? 'high_volume'
+        : index < Math.ceil((data.keywords.length * 2) / 3)
+        ? 'intent_based'
+        : 'competitor_gap',
+    })),
     vulnerabilities: data.vulnerabilities,
     is_rtl: data.isRtl,
   };
@@ -280,6 +300,7 @@ export async function stageCompetitorAnalysis(
       sourceContextId: sanitizedData.competitorId,
       language: sanitizedData.language,
       metadata: vaultPayload.metadata,
+      category: 'competitor_keyword',  // ✅ CATEGORIZE: Route keywords to correct section in Optimizer
     };
 
     console.log(

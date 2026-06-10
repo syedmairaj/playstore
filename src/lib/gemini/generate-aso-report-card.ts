@@ -5,7 +5,6 @@
  * Integrates with Gemini, validates responses, and handles LTR/RTL localization.
  */
 
-import type { GoogleGenerativeAI } from "@google/generative-ai";
 import type {
   AsoListingInput,
   AsoReportCard,

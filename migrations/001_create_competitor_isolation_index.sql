@@ -24,6 +24,7 @@
  */
 
 -- Create the compound unique index for competitor signal isolation
+-- IMPORTANT: Exclude deleted_at IS NOT NULL so soft-deleted signals don't block new ones
 CREATE UNIQUE INDEX IF NOT EXISTS idx_competitor_signal_isolation
   ON workspace_staging_vault (
     workspace_id,
@@ -31,11 +32,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_competitor_signal_isolation
     language,
     signal_type
   )
-  WHERE signal_type = 'competitor_weakness';  -- Only apply to competitor signals
-
+  WHERE signal_type = 'competitor_weakness' AND deleted_at IS NULL;
 
 -- Documentation comment for future reference
 COMMENT ON INDEX idx_competitor_signal_isolation IS
 'Enforces competitor signal isolation: (workspace_id, metadata.competitor_id, language, signal_type).
-Guarantees each competitor has exactly ONE signal per language, preventing data collision.
-Enables fast O(1) lookup when users switch between competitors.';
+Only applies to active (non-deleted) competitor_weakness signals.
+Guarantees each competitor has exactly ONE active signal per language, preventing data collision.
+Enables fast O(1) lookup and atomic UPSERT operations when users switch between competitors.';

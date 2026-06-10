@@ -1,10 +1,6 @@
 import "server-only";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import {
-  assertGeminiApiKey,
-  mergeGeminiGenerationConfig,
-  resolveGeminiModel,
-} from "@/lib/gemini/gemini-defaults";
+import type { SchemaType } from "@google-cloud/vertexai";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
   selectMoodSchemaForCategory,
@@ -506,8 +502,7 @@ const ASO_ASSET_SCHEMA = {
 export async function generateASOAsset(
   input: GenerateASOAssetInput,
 ): Promise<ASOAsset> {
-  const apiKey = assertGeminiApiKey();
-  const genAI = new GoogleGenerativeAI(apiKey);
+  // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
 
   console.log(
     `[generateASOAsset] Starting generation: type=${input.generatorType}, category=${input.category}, locale=${input.locale}`
@@ -573,14 +568,9 @@ export async function generateASOAsset(
   // Call Gemini with structured output
   // IMPORTANT: maxOutputTokens MUST be high enough for complete JSON response
   // If set too low, Gemini truncates mid-JSON, causing parse failures
-  const model = genAI.getGenerativeModel({
-    model: resolveGeminiModel(),
-    generationConfig: mergeGeminiGenerationConfig({
-      responseMimeType: "application/json",
-      responseSchema: ASO_ASSET_SCHEMA as never,
-      maxOutputTokens: 2048, // ← INCREASED from 1400 to prevent truncation
-      temperature: 0.7,
-    }),
+  const model = getGenerativeModel({
+    maxOutputTokens: 2048, // ← INCREASED from 1400 to prevent truncation
+    temperature: 0.7,
   });
 
   console.log(`[generateASOAsset] Calling Gemini API (maxOutputTokens: 2048)...`);

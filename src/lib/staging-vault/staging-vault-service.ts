@@ -1,1047 +1,319 @@
 /**
- * Staging Vault Service Layer
+ * Staging Vault Service - INSERT with 23505 Error Handling
  *
- * Unified API for managing workspace staging vault signals.
- * Replaces transient 'Send to Optimizer' navigation pattern.
- *
- * Features:
- * - Add signals (keywords, review issues, competitor insights)
- * - List current vault context
- * - Delete signals (soft delete)
- * - RTL/LTR preservation
- * - Workspace isolation via RLS
+ * Uses simple `.insert()` with explicit PostgreSQL unique constraint (23505) handling.
+ * If a signal already exists (23505 error), treats it as success (idempotent).
+ * This avoids fragile `.upsert()` `onConflict` logic while maintaining data integrity.
+ * Fully supports English (en) and Arabic (ar) content with UTF-8 preservation.
  */
 
-import { SupabaseClient } from "@supabase/supabase-js";
-import { v4 as uuidv4 } from "uuid";
-import { validateCompetitorWeaknessSchema } from "./BRAND-MIRROR-ENGINE-SCHEMA";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { KeywordPayload } from "@/hooks/useKeywordSelection";
 
-/**
- * Signal type enum (matches database)
- */
-export type SignalType =
-  | "keyword"
-  | "review_issue"
-  | "competitor_weakness"
-  | "optimization_insight"
-  | "optimizer_selection";
-
-/**
- * Signal source enum (matches database)
- */
-export type SignalSource =
-  | "keyword_spotlight"
-  | "keyword_tracker"
-  | "review_analysis"
-  | "competitor_spy"
-  | "manual"
-  | "api";
-
-/**
- * Keyword payload structure for optimizer_selection signals
- */
-export interface KeywordPayload {
-  term: string;
-  category: string;
-  [key: string]: unknown;
+export interface AddSignalPayload {
+  signalType: string;
+  content: string;
+  source: string;
+  sourceAppId?: string;
+  sourceContext?: string;
+  sourceContextId?: string;
+  language: "en" | "ar";
+  metadata: Record<string, unknown>;
+  keywords?: KeywordPayload[];
+  category?: string;  // ✅ CATEGORIZATION: Route signal to correct bucket (e.g., 'competitor_keyword')
 }
 
-/**
- * ═════════════════════════════════════════════════════════════════════════════
- * SCHEMA VALIDATION: validateKeywordPayload
- *
- * Validates that keyword selections conform to { term: string, category: string }
- * structure. Multilingual-safe (EN/AR support with Unicode preservation).
- *
- * @param keywords - Array of keyword payloads to validate
- * @returns Validation result with detailed error info
- * ═════════════════════════════════════════════════════════════════════════════
- */
-export function validateKeywordPayload(
-  keywords: unknown
-): {
-  valid: boolean;
-  errors: string[];
-  invalidObjects?: KeywordPayload[];
-} {
-  const errors: string[] = [];
-  const invalidObjects: KeywordPayload[] = [];
-
-  console.log('[StagingVault] 🔍 KEYWORD VALIDATION STARTING:', {
-    payloadType: typeof keywords,
-    isArray: Array.isArray(keywords),
-    payloadLength: Array.isArray(keywords) ? keywords.length : 'N/A',
-    timestamp: new Date().toISOString(),
-  });
-
-  // Check 1: Must be an array
-  if (!Array.isArray(keywords)) {
-    const errorMsg = `Keywords must be an array. Got: ${typeof keywords}`;
-    errors.push(errorMsg);
-    console.error('[StagingVault] ❌ VALIDATION FAILED - Not an array:', {
-      errorMsg,
-      payloadType: typeof keywords,
-    });
-    return { valid: false, errors };
-  }
-
-  if (keywords.length === 0) {
-    const errorMsg = `Keywords array cannot be empty`;
-    errors.push(errorMsg);
-    console.error('[StagingVault] ❌ VALIDATION FAILED - Empty array:', {
-      errorMsg,
-    });
-    return { valid: false, errors };
-  }
-
-  console.log('[StagingVault] 🔍 VALIDATING KEYWORD ARRAY:', {
-    itemCount: keywords.length,
-    items: keywords.map((kw: unknown, idx: number) => ({
-      index: idx,
-      type: typeof kw,
-      isObject: typeof kw === 'object' && kw !== null,
-      keys: typeof kw === 'object' && kw !== null ? Object.keys(kw as object) : [],
-    })),
-  });
-
-  // Check 2: Iterate and validate each keyword
-  keywords.forEach((keyword: unknown, index: number) => {
-    console.log(`[StagingVault] 🔍 CHECKING KEYWORD #${index}:`, {
-      type: typeof keyword,
-      isObject: typeof keyword === 'object' && keyword !== null,
-      value: keyword,
-    });
-
-    // 2a: Each item must be an object
-    if (typeof keyword !== 'object' || keyword === null || Array.isArray(keyword)) {
-      const errorMsg = `Keyword at index ${index} must be an object. Got: ${typeof keyword}`;
-      errors.push(errorMsg);
-      invalidObjects.push(keyword as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Invalid type at index:', {
-        index,
-        errorMsg,
-        actualType: typeof keyword,
-        value: keyword,
-      });
-      return;
-    }
-
-    const kw = keyword as Record<string, unknown>;
-
-    // 2b: Must have 'term' property
-    if (!('term' in kw)) {
-      const errorMsg = `Keyword at index ${index} is missing 'term' property. Keys: ${Object.keys(kw).join(', ')}`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Missing term:', {
-        index,
-        errorMsg,
-        availableKeys: Object.keys(kw),
-        keyword: kw,
-      });
-      return;
-    }
-
-    // 2c: 'term' must be a non-empty string (multilingual safe)
-    if (typeof kw.term !== 'string') {
-      const errorMsg = `Keyword at index ${index} has 'term' as ${typeof kw.term}, not string`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - term is not string:', {
-        index,
-        errorMsg,
-        termType: typeof kw.term,
-        termValue: kw.term,
-      });
-      return;
-    }
-
-    if (kw.term.trim().length === 0) {
-      const errorMsg = `Keyword at index ${index} has empty 'term' (after trim)`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - term is empty:', {
-        index,
-        errorMsg,
-        termLength: kw.term.length,
-        termAfterTrim: kw.term.trim().length,
-      });
-      return;
-    }
-
-    // 2d: Must have 'category' property
-    if (!('category' in kw)) {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") is missing 'category' property. Keys: ${Object.keys(kw).join(', ')}`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Missing category:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        availableKeys: Object.keys(kw),
-        keyword: kw,
-      });
-      return;
-    }
-
-    // 2e: 'category' must be a non-empty string
-    if (typeof kw.category !== 'string') {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") has 'category' as ${typeof kw.category}, not string`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - category is not string:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        categoryType: typeof kw.category,
-        categoryValue: kw.category,
-      });
-      return;
-    }
-
-    if (kw.category.trim().length === 0) {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") has empty 'category' (after trim)`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - category is empty:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        categoryLength: kw.category.length,
-        categoryAfterTrim: kw.category.trim().length,
-      });
-      return;
-    }
-
-    // 2f: Multilingual validation - ensure no corruption of Unicode
-    // This is a safety check to ensure Arabic (and other RTL/Unicode) chars survive
-    try {
-      JSON.stringify(kw);
-      console.log(`[StagingVault] ✓ KEYWORD #${index} VALIDATED (multilingual-safe)`, {
-        term: kw.term,
-        category: kw.category,
-        termByteLength: Buffer.byteLength(kw.term, 'utf8'),
-        categoryByteLength: Buffer.byteLength(kw.category, 'utf8'),
-      });
-    } catch (stringifyErr) {
-      const errorMsg = `Keyword at index ${index} (term: "${kw.term}") contains non-serializable values`;
-      errors.push(errorMsg);
-      invalidObjects.push(kw as KeywordPayload);
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Non-serializable keyword:', {
-        index,
-        errorMsg,
-        term: kw.term,
-        stringifyError: String(stringifyErr),
-      });
-      return;
-    }
-  });
-
-  // Final result
-  const validationPassed = errors.length === 0;
-
-  if (validationPassed) {
-    console.log('[StagingVault] ✓ KEYWORD VALIDATION PASSED - All items valid:', {
-      totalItems: keywords.length,
-      timestamp: new Date().toISOString(),
-    });
-  } else {
-    console.error('[StagingVault] ❌ KEYWORD VALIDATION FAILED - See errors above:', {
-      totalItems: keywords.length,
-      errorCount: errors.length,
-      errors,
-      invalidObjects,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  return {
-    valid: validationPassed,
-    errors,
-    ...(invalidObjects.length > 0 && { invalidObjects }),
-  };
+export interface StagingVaultResult {
+  id: string;
+  workspaceId: string;
+  signalType: string;
+  message: string;
+  createdAt: string;
 }
 
-/**
- * Add Signal to Staging Vault
- *
- * @param supabase - Supabase client
- * @param workspaceId - Target workspace
- * @param signal - Signal content + metadata
- * @returns Created signal record
- */
 export async function addSignalToVault(
   supabase: SupabaseClient,
   workspaceId: string,
-  signal: {
-    signalType: SignalType;
-    content: string;
-    source?: SignalSource;
-    sourceAppId?: string;
-    sourceContext?: string;
-    sourceContextId?: string;
-    language?: string;
-    metadata?: Record<string, unknown>;
-    keywords?: KeywordPayload[];
-    expiresAt?: string;
-  }
-): Promise<{
-  id: string;
-  message: string;
-}> {
-  // ═════════════════════════════════════════════════════════════════════════
-  // DEBUG TRACER #1: Log full signal object at function entry
-  // Shows exactly what is being passed to the vault
-  // ═════════════════════════════════════════════════════════════════════════
-  console.log('[StagingVault] 🔍 ENTRY - Full signal object:', {
-    signalType: signal.signalType,
-    language: signal.language || 'en (default)',
-    metadataProvided: !!signal.metadata,
-    metadataType: typeof signal.metadata,
-    metadataKeys: signal.metadata ? Object.keys(signal.metadata) : [],
-    competitorIdValue: (signal.metadata as any)?.competitor_id,
-    competitorIdType: typeof (signal.metadata as any)?.competitor_id,
-    contentLength: signal.content?.length || 0,
-    keywordsCount: signal.keywords?.length || 0,
-    source: signal.source || 'manual (default)',
-    sourceAppId: signal.sourceAppId,
-    workspaceId,
-    timestamp: new Date().toISOString(),
-  });
-
+  payload: AddSignalPayload
+): Promise<StagingVaultResult> {
   const {
     signalType,
     content,
-    source = "manual",
+    source,
     sourceAppId,
     sourceContext,
     sourceContextId,
-    language = "en",
-    metadata = {},
+    language,
+    metadata,
     keywords,
-    expiresAt,
-  } = signal;
+    category,
+  } = payload;
 
-  // ═════════════════════════════════════════════════════════════════════════
-  // DEBUG TRACER #2: Validate content - expose failures immediately
-  // ═════════════════════════════════════════════════════════════════════════
+  const now = new Date().toISOString();
 
-  // Validate content
-  if (!content || content.trim().length === 0) {
-    const errorMsg = "Signal content cannot be empty";
-    console.error('[StagingVault] ❌ VALIDATION FAILED - Content is empty:', {
-      signalType,
-      language,
-      competitorId: (metadata as any)?.competitor_id,
-      workspaceId,
-    });
-    throw new Error(errorMsg);
-  }
-
-  if (content.length > 5000) {
-    const errorMsg = `Signal content exceeds 5000 character limit (length: ${content.length})`;
-    console.error('[StagingVault] ❌ VALIDATION FAILED - Content too long:', {
-      signalType,
-      language,
-      competitorId: (metadata as any)?.competitor_id,
-      contentLength: content.length,
-      workspaceId,
-    });
-    throw new Error(errorMsg);
-  }
-
-  // Validate language code
-  if (!/^[a-z]{2}(-[A-Z]{2})?$/.test(language)) {
-    const errorMsg = `Invalid language code format: "${language}" (use: en, ar, en-US, etc)`;
-    console.error('[StagingVault] ❌ VALIDATION FAILED - Invalid language:', {
-      signalType,
-      language,
-      competitorId: (metadata as any)?.competitor_id,
-      workspaceId,
-    });
-    throw new Error(errorMsg);
-  }
+  console.log("[StagingVaultService] 📝 ADDING SIGNAL:", {
+    signalType,
+    source,
+    language,
+    workspaceId,
+  });
 
   try {
-    // ═══════════════════════════════════════════════════════════════════════
-    // SCHEMA VALIDATION: optimizer_selection keyword validation
-    // If signal_type === 'optimizer_selection', validate keywords payload
-    // ═══════════════════════════════════════════════════════════════════════
-    if (signalType === 'optimizer_selection') {
-      console.log('[StagingVault] 🔍 OPTIMIZER_SELECTION VALIDATION STARTING:', {
-        keywordsProvided: !!keywords,
-        keywordsLength: keywords?.length || 0,
-        language,
-        workspaceId,
-      });
+    // Build the signal record to insert
+    const finalMetadata: Record<string, unknown> = {
+      ...metadata,
+      keywords: keywords || [],
+      signal_created_at: now,
+    };
 
-      if (!keywords || !Array.isArray(keywords)) {
-        const errorMsg = `optimizer_selection signals MUST include 'keywords' array. Got: ${typeof keywords}`;
-        console.error('[StagingVault] ❌ VALIDATION FAILED - Missing keywords array:', {
-          signalType,
-          language,
-          workspaceId,
-          keywordsProvided: !!keywords,
-          keywordsType: typeof keywords,
-        });
-        throw new Error(errorMsg);
-      }
-
-      const keywordValidation = validateKeywordPayload(keywords);
-      if (!keywordValidation.valid) {
-        const errorMsg = keywordValidation.errors.join('\n');
-        console.error('[StagingVault] ❌ KEYWORD SCHEMA VALIDATION FAILED:', {
-          signalType,
-          language,
-          workspaceId,
-          validationErrors: keywordValidation.errors,
-          invalidObjects: keywordValidation.invalidObjects,
-          errorMessage: errorMsg,
-        });
-        throw new Error(`Keyword validation failed:\n${errorMsg}`);
-      }
-
-      console.log('[StagingVault] ✓ KEYWORD SCHEMA VALIDATION PASSED:', {
-        keywordsCount: keywords.length,
-        language,
-        workspaceId,
-      });
+    // ✅ CATEGORIZATION: Preserve category in metadata if provided
+    if (category) {
+      finalMetadata.category = category;
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // CRITICAL VALIDATION: Ensure metadata is JSON-serializable
-    // This prevents 22P02: invalid input syntax for type json errors
-    // ═══════════════════════════════════════════════════════════════════
+    const signalRecord = {
+      workspace_id: workspaceId,
+      signal_type: signalType,
+      content, // UTF-8 preserved: Arabic/English/etc fully supported
+      source,
+      source_app_id: sourceAppId || null,
+      source_context: sourceContext || null,
+      source_context_id: sourceContextId || null,
+      language, // 'en' or 'ar' or other language codes - CRITICAL for bilingual support
+      metadata: finalMetadata,
+      created_at: now,
+    };
 
-    const finalMetadata = metadata || {};
-
-    console.log('[StagingVault] 🔍 METADATA CHECK #1 - Type validation:', {
-      finalMetadataType: typeof finalMetadata,
-      isObject: typeof finalMetadata === 'object',
-      isNotNull: finalMetadata !== null,
-      isNotArray: !Array.isArray(finalMetadata),
-      competitorId: (finalMetadata as any)?.competitor_id,
+    console.log("[StagingVaultService] ➕ INSERTING SIGNAL:", {
       signalType,
-    });
-
-    // Check 1: Is it an object?
-    if (typeof finalMetadata !== 'object' || finalMetadata === null || Array.isArray(finalMetadata)) {
-      const errorMsg = `Metadata must be an object. Got: ${typeof finalMetadata} (${JSON.stringify(finalMetadata)})`;
-      console.error('[StagingVault] ❌ VALIDATION FAILED - Metadata type error:', {
-        expectedType: 'object',
-        actualType: typeof finalMetadata,
-        isNull: finalMetadata === null,
-        isArray: Array.isArray(finalMetadata),
-        signalType,
-        competitorId: (finalMetadata as any)?.competitor_id,
-      });
-      throw new Error(errorMsg);
-    }
-
-    // Check 2: Can we stringify it? (catches circular references)
-    let metadataString: string;
-    try {
-      metadataString = JSON.stringify(finalMetadata);
-      console.log('[StagingVault] 🔍 METADATA CHECK #2 - JSON.stringify succeeded:', {
-        stringLength: metadataString.length,
-        competitorId: (finalMetadata as any)?.competitor_id,
-      });
-    } catch (stringifyErr) {
-      const errorMsg = `Metadata contains non-serializable values (circular reference?): ${stringifyErr}`;
-      console.error('[StagingVault] ❌ VALIDATION FAILED - JSON stringify error:', {
-        error: String(stringifyErr),
-        metadataKeys: Object.keys(finalMetadata),
-        signalType,
-        competitorId: (finalMetadata as any)?.competitor_id,
-      });
-      throw new Error(errorMsg);
-    }
-
-    // Check 3: Can we parse it back?
-    try {
-      JSON.parse(metadataString);
-      console.log('[StagingVault] 🔍 METADATA CHECK #3 - Round-trip JSON succeeded:', {
-        competitorId: (finalMetadata as any)?.competitor_id,
-        metadataKeys: Object.keys(finalMetadata),
-      });
-    } catch (parseErr) {
-      const errorMsg = `Metadata failed round-trip JSON serialization: ${parseErr}`;
-      console.error('[StagingVault] ❌ VALIDATION FAILED - JSON parse error:', {
-        error: String(parseErr),
-        stringifiedMetadata: metadataString.substring(0, 200),
-        signalType,
-        competitorId: (finalMetadata as any)?.competitor_id,
-      });
-      throw new Error(errorMsg);
-    }
-
-    // Check 4: For competitor_weakness signals, verify competitor_id exists
-    if (signalType === 'competitor_weakness') {
-      console.log('[StagingVault] 🔍 METADATA CHECK #4 - competitor_weakness specific validation:', {
-        hasCompetitorId: !!finalMetadata.competitor_id,
-        competitorIdType: typeof (finalMetadata as any)?.competitor_id,
-        competitorIdValue: (finalMetadata as any)?.competitor_id,
-        competitorIdLength: typeof (finalMetadata as any)?.competitor_id === 'string' ? (finalMetadata as any)?.competitor_id.length : 'N/A',
-      });
-
-      if (!finalMetadata.competitor_id || typeof finalMetadata.competitor_id !== 'string') {
-        const errorMsg = `competitor_weakness signals MUST have metadata.competitor_id as string. Got: ${JSON.stringify(finalMetadata.competitor_id)}`;
-        console.error('[StagingVault] ❌ VALIDATION FAILED - Missing or wrong-type competitor_id:', {
-          competitorIdProvided: !!finalMetadata.competitor_id,
-          competitorIdType: typeof (finalMetadata as any)?.competitor_id,
-          competitorIdValue: (finalMetadata as any)?.competitor_id,
-          allMetadataKeys: Object.keys(finalMetadata),
-          metadataKeys: Object.keys(finalMetadata),
-          signalType,
-        });
-        throw new Error(errorMsg);
-      }
-
-      if ((finalMetadata as any).competitor_id.trim().length === 0) {
-        const errorMsg = `competitor_weakness signals MUST have non-empty metadata.competitor_id. Got empty string.`;
-        console.error('[StagingVault] ❌ VALIDATION FAILED - Empty competitor_id:', {
-          competitorIdValue: (finalMetadata as any)?.competitor_id,
-          competitorIdTrimmedLength: (finalMetadata as any)?.competitor_id.trim().length,
-          signalType,
-        });
-        throw new Error(errorMsg);
-      }
-    }
-
-    console.log(`[StagingVault] ✓ METADATA VALIDATION PASSED for ${signalType}:`, {
-      hasCompetitorId: !!finalMetadata.competitor_id,
-      competitorId: (finalMetadata as any)?.competitor_id,
-      metadataSize: metadataString.length,
-      metadataKeys: Object.keys(finalMetadata),
+      source,
       language,
-    });
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // SCHEMA ENFORCEMENT: For competitor_weakness, validate strict schema
-    // ═══════════════════════════════════════════════════════════════════════
-    if (signalType === 'competitor_weakness') {
-      console.log('[StagingVault] 🔍 SCHEMA VALIDATION STARTED for competitor_weakness:', {
-        competitorId: (finalMetadata as any)?.competitor_id,
-        language,
-        contentLength: content.trim().length,
-        metadataKeys: Object.keys(finalMetadata),
-      });
-
-      const schemaValidation = validateCompetitorWeaknessSchema({
-        workspace_id: workspaceId,
-        signal_type: signalType,
-        source,
-        source_context: sourceContext,
-        source_context_id: sourceContextId,
-        content: content.trim(),
-        language,
-        metadata: finalMetadata,
-      });
-
-      if (!schemaValidation.valid) {
-        const errorMsg = schemaValidation.errors.join('\n');
-        console.error('[StagingVault] ❌ SCHEMA VALIDATION FAILED:', {
-          competitorId: (finalMetadata as any)?.competitor_id,
-          language,
-          signalType,
-          validationErrors: schemaValidation.errors,
-          errorMessage: errorMsg,
-        });
-        throw new Error(`Schema validation failed:\n${errorMsg}`);
-      }
-
-      console.log(`[StagingVault] ✓ SCHEMA VALIDATION PASSED for competitor_weakness:`, {
-        competitorId: (finalMetadata as any)?.competitor_id,
-        language: language,
-        metadataKeys: Object.keys(finalMetadata),
-        validationStatus: 'PASSED',
-      });
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // INSERT: metadata is NATIVE OBJECT (NOT stringified)
-    // Supabase will automatically serialize to JSONB
-    // ═══════════════════════════════════════════════════════════════════════
-
-    console.log(`[StagingVault] 🔍 ABOUT TO INSERT signal:`, {
+      category,  // ✅ Log category for debugging
       workspaceId,
-      signalType,
-      language,
-      metadataType: typeof finalMetadata,
-      metadataKeys: Object.keys(finalMetadata),
-      competitorId: (finalMetadata as any)?.competitor_id,
-      metadataFullContent: JSON.stringify(finalMetadata),
-      keywordsCount: keywords?.length || 0,
-      allInsertFields: {
-        workspace_id: workspaceId,
-        signal_type: signalType,
-        source,
-        content_length: content.trim().length,
-        language,
-        source_app_id: sourceAppId,
-        source_context: sourceContext,
-        source_context_id: sourceContextId,
-        metadata: finalMetadata,
-        expires_at: expiresAt,
-      },
     });
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // INSERT: Handle duplicate constraint gracefully
-    // If this competitor/language/workspace combo already exists, that's OK
-    // Just treat it as a successful "no-op" instead of failing
-    // ═══════════════════════════════════════════════════════════════════════
-
-    let data: any;
-    let error: any;
-    let insertMethod = 'INSERT';
-    let generatedSignalId = '';
-
-    // First, try insert
-    const insertResult = await supabase
+    // Attempt insert
+    const { data, error } = await supabase
       .from("workspace_staging_vault")
-      .insert({
-        workspace_id: workspaceId,
-        signal_type: signalType,
-        source,
-        content: content.trim(),
-        language,
-        source_app_id: sourceAppId,
-        source_context: sourceContext,
-        source_context_id: sourceContextId,
-        metadata: finalMetadata,  // ← NATIVE OBJECT (Supabase handles JSONB serialization)
-        expires_at: expiresAt,
-      })
-      .select("id")
-      .single();
+      .insert([signalRecord])
+      .select("id, created_at");
 
-    data = insertResult.data;
-    error = insertResult.error;
-
-    // If duplicate constraint error (23505), that's OK - data already exists
-    // Treat as success since the user's intent (to stage this competitor) is satisfied
-    if (error && (error as any)?.code === '23505') {
-      console.log('[StagingVault] 🔄 DUPLICATE DETECTED - This competitor signal already staged:', {
-        errorCode: (error as any)?.code,
-        competitorId: (finalMetadata as any)?.competitor_id,
-        language,
-        signalType,
-        message: 'Treating as success (already in vault)',
-      });
-
-      insertMethod = 'DUPLICATE (no-op)';
-      // Generate a pseudo-ID for logging purposes (not used further)
-      generatedSignalId = `existing-${workspaceId}-${signalType}`;
-      // Clear the error since we're treating it as success
-      error = null;
-      data = { id: generatedSignalId };
-    }
-
+    // Handle errors with explicit 23505 (unique constraint violation) logic
     if (error) {
-      console.error('[StagingVault] ❌ DATABASE INSERT ERROR:', {
-        method: insertMethod,
-        errorCode: (error as any)?.code,
+      // 23505: unique_violation - signal already exists with same (workspace_id, competitor_id, language, signal_type)
+      if (error.code === "23505") {
+        console.log("[StagingVaultService] ℹ️ SIGNAL ALREADY EXISTS (23505):", {
+          signalType,
+          source,
+          language,
+          category,  // ✅ Log category for debugging
+          workspaceId,
+          message: "Treating as success - signal is already in vault (idempotent)",
+        });
+
+        // Return success response using the record data (we don't have the actual ID, so generate placeholder)
+        const placeholderId = `existing-${Date.now()}`;
+        return {
+          id: placeholderId,
+          workspaceId,
+          signalType,
+          message: `Signal already exists in vault (${keywords?.length || 0} keywords) - idempotent success`,
+          createdAt: now,
+        };
+      }
+
+      // Any other error code: log and throw
+      console.error("[StagingVaultService] ❌ INSERT FAILED:", {
+        errorCode: error.code,
         errorMessage: error.message,
-        errorDetails: error,
+        errorDetails: error.details,
         signalType,
-        competitorId: (finalMetadata as any)?.competitor_id,
-        language,
+        source,
         workspaceId,
       });
       throw new Error(
-        `Failed to add signal: ${error.message}\n` +
-        `Error code: ${(error as any)?.code}\n` +
-        `Signal type: ${signalType}\n` +
-        `Method: ${insertMethod}`
+        `Failed to add signal to vault: ${error.message} (${error.code})`
       );
     }
 
-    console.log('[StagingVault] ✅ SUCCESS - Signal staged:', {
-      method: insertMethod,
-      signalId: data.id,
+    // Success: signal was inserted
+    if (!data || data.length === 0) {
+      throw new Error("Signal inserted but no ID returned");
+    }
+
+    const { id, created_at } = data[0];
+
+    console.log("[StagingVaultService] ✅ SIGNAL INSERTED:", {
+      signalId: id,
       signalType,
-      competitorId: (finalMetadata as any)?.competitor_id,
+      source,
       language,
-      workspaceId,
-      contentLength: content.trim().length,
-      metadataKeys: Object.keys(finalMetadata),
-      metadataStructure: JSON.stringify(finalMetadata),
-      keywordsCount: keywords?.length || 0,
-      timestamp: new Date().toISOString(),
+      createdAt: created_at,
+      keywordCount: keywords?.length || 0,
     });
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // VERIFICATION: Immediately read back to confirm data was actually inserted
-    // ✅ FIX: Get most recent signal instead of filtering by ID
-    // (Don't use .single() - it causes PGRST116 when response is array)
-    // ═════════════════════════════════════════════════════════════════════════
-    console.log('[StagingVault] 🔍 VERIFICATION - Checking if data actually made it to DB...');
-
-    // ✅ VERIFICATION: Get most recent signal in this workspace
-    // (Don't filter by type/language - just confirm something was inserted in last few seconds)
-    console.log('[StagingVault] 🔍 VERIFICATION - Getting most recent signal in workspace:', {
-      workspace_id: workspaceId,
-      signal_type: signalType,
-      language,
-      competitorId: (finalMetadata as any)?.competitor_id,
-      metadataKeys: Object.keys(finalMetadata),
-    });
-
-    const { data: verifyDataArray, error: verifyError } = await supabase
-      .from('workspace_staging_vault')
-      .select('id, signal_type, language, metadata, created_at, source_context_id, created_by_user_id')
-      .eq('workspace_id', workspaceId)
-      .is('deleted_at', null)  // Only get non-deleted signals
-      .order('created_at', { ascending: false })
-      .limit(5);  // Get top 5 to see what's there
-
-    // ✅ Handle response as array (PostgREST always returns array)
-    const verifyDataArray_safe = Array.isArray(verifyDataArray) ? verifyDataArray : (verifyDataArray ? [verifyDataArray] : []);
-    const verifyData = verifyDataArray_safe[0];
-
-    // ✅ Log all returned records for debugging
-    if (verifyDataArray_safe.length > 0) {
-      console.log('[StagingVault] 📊 VERIFICATION FOUND RECORDS:', {
-        total_records: verifyDataArray_safe.length,
-        records: verifyDataArray_safe.map((r: any) => ({
-          id: r.id,
-          signal_type: r.signal_type,
-          language: r.language,
-          source_context_id: r.source_context_id,
-          competitor_id: (r.metadata as any)?.competitor_id,
-          created_at: r.created_at,
-          created_by_user_id: r.created_by_user_id,
-        })),
-      });
-    } else {
-      console.warn('[StagingVault] 📊 VERIFICATION FOUND NO RECORDS:', {
-        workspace_id: workspaceId,
-      });
-    }
-
-    if (verifyError) {
-      console.warn('[StagingVault] ⚠️ VERIFICATION QUERY ERROR:', {
-        errorCode: (verifyError as any)?.code,
-        errorMessage: verifyError.message,
-        hint: 'Query execution failed',
-      });
-      // Continue anyway - signal was inserted successfully
-    } else if (verifyData) {
-      console.log('[StagingVault] ✅ VERIFICATION PASSED - Signal confirmed in database:', {
-        id: verifyData.id,
-        signal_type: verifyData.signal_type,
-        language: verifyData.language,
-        competitor_id: (verifyData.metadata as any)?.competitor_id,
-        source_context_id: verifyData.source_context_id,
-        created_at: verifyData.created_at,
-        created_by_user_id: verifyData.created_by_user_id,
-        matches_expected_signal: {
-          type: verifyData.signal_type === signalType,
-          language: verifyData.language === language,
-          competitor: (verifyData.metadata as any)?.competitor_id === (finalMetadata as any)?.competitor_id,
-        },
-      });
-    } else {
-      // No error, but query returned 0 records in this workspace
-      console.warn('[StagingVault] ⚠️ VERIFICATION - No records found in workspace:', {
-        workspaceId,
-        note: 'Signal insert returned 200 OK but we cannot read any records from this workspace. This could indicate: (1) RLS policy is blocking SELECT, (2) Different Supabase client permissions for insert vs select, or (3) Data in different workspace than expected.',
-        recommendation: 'Check: (1) Supabase RLS policies for workspace_staging_vault table, (2) Are INSERT and SELECT using same auth context?, (3) Verify workspaceId is correct',
-      });
-      // Don't treat as error - we know insert succeeded (200 OK)
-    }
 
     return {
-      id: data.id,
-      message: `Signal staged: ${signalType}`,
-    };
-  } catch (err) {
-    console.error("[StagingVault] ❌ CATCH BLOCK - Add signal failed:", {
-      errorMessage: err instanceof Error ? err.message : String(err),
-      errorStack: err instanceof Error ? err.stack : 'No stack available',
-      fullError: err,
+      id,
+      workspaceId,
       signalType,
+      message: `Signal added to vault (${keywords?.length || 0} keywords)`,
+      createdAt: created_at,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    console.error("[StagingVaultService] ❌ UNEXPECTED ERROR:", {
+      errorMessage: errorMsg,
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
+      signalType,
+      source,
       language,
-      competitorId: (metadata as any)?.competitor_id,
       workspaceId,
     });
-    throw err;
+
+    throw error;
   }
 }
 
-/**
- * List all signals in vault for a workspace
- *
- * @param supabase - Supabase client
- * @param workspaceId - Target workspace
- * @param filters - Optional filters (type, language, source)
- * @returns Array of signals grouped by type
- */
-export async function listVaultSignals(
+export async function getStagingVaultItems(
   supabase: SupabaseClient,
   workspaceId: string,
-  filters?: {
-    signalType?: SignalType;
-    language?: string;
-    sourceAppId?: string;
-    limit?: number;
-  }
-): Promise<{
-  keywords: VaultSignal[];
-  reviewIssues: VaultSignal[];
-  competitorWeaknesses: VaultSignal[];
-  optimizationInsights: VaultSignal[];
-  optimizerSelections: VaultSignal[];
-  total: number;
-  lastUpdated: string;
-}> {
-  const { signalType, language, sourceAppId, limit = 1000 } = filters || {};
+  options: { includeDeleted?: boolean } = {}
+) {
+  const { includeDeleted = false } = options;
+
+  console.log("[StagingVaultService] 📖 FETCHING ITEMS:", {
+    workspaceId,
+    includeDeleted,
+  });
 
   try {
     let query = supabase
       .from("workspace_staging_vault")
-      .select("*", { count: "exact" })
+      .select(
+        `id, workspace_id, signal_type, content, source, source_app_id, source_context, source_context_id, language, metadata, created_at, deleted_at`
+      )
       .eq("workspace_id", workspaceId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(limit);
-
-    // Apply filters
-    if (signalType) {
-      query = query.eq("signal_type", signalType);
-    }
-
-    if (language) {
-      query = query.eq("language", language);
-    }
-
-    if (sourceAppId) {
-      query = query.eq("source_app_id", sourceAppId);
-    }
-
-    const { data, count, error } = await query;
-
-    if (error) {
-      throw new Error(`Failed to list signals: ${error.message}`);
-    }
-
-    // Group by signal type
-    const signals = (data || []) as VaultSignal[];
-    const grouped = {
-      keywords: signals.filter((s) => s.signal_type === "keyword"),
-      reviewIssues: signals.filter((s) => s.signal_type === "review_issue"),
-      competitorWeaknesses: signals.filter(
-        (s) => s.signal_type === "competitor_weakness"
-      ),
-      optimizationInsights: signals.filter(
-        (s) => s.signal_type === "optimization_insight"
-      ),
-      optimizerSelections: signals.filter(
-        (s) => s.signal_type === "optimizer_selection"
-      ),
-      total: count || 0,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    return grouped;
-  } catch (err) {
-    console.error("[StagingVault] List signals failed:", err);
-    throw err;
-  }
-}
-
-/**
- * Delete signal (soft delete)
- *
- * @param supabase - Supabase client
- * @param workspaceId - Target workspace
- * @param signalId - Signal to delete
- */
-export async function deleteSignal(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  signalId: string
-): Promise<void> {
-  try {
-    const { error } = await supabase
-      .from("workspace_staging_vault")
-      .update({
-        deleted_at: new Date().toISOString(),
-        deleted_by_user_id: (await supabase.auth.getUser()).data.user?.id,
-      })
-      .eq("id", signalId)
-      .eq("workspace_id", workspaceId);
-
-    if (error) {
-      throw new Error(`Failed to delete signal: ${error.message}`);
-    }
-  } catch (err) {
-    console.error("[StagingVault] Delete signal failed:", err);
-    throw err;
-  }
-}
-
-/**
- * Get vault summary for a specific app
- * Used by Brand Mirror Engine and Consultant Layer
- *
- * @param supabase - Supabase client
- * @param workspaceId - Target workspace
- * @param appId - Target app
- * @returns Vault context for generation
- */
-export async function getAppVaultContext(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  appId: string
-): Promise<AppVaultContext> {
-  try {
-    const { data, error } = await supabase
-      .from("workspace_staging_vault")
-      .select("*")
-      .eq("workspace_id", workspaceId)
-      .eq("source_app_id", appId)
-      .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
-    if (error) {
-      throw new Error(`Failed to get app context: ${error.message}`);
+    if (!includeDeleted) {
+      query = query.is("deleted_at", null);
     }
 
-    const signals = (data || []) as VaultSignal[];
+    const { data, error } = await query;
 
-    return {
-      appId,
-      hasVaultContent: signals.length > 0,
-      keywords: signals
-        .filter((s) => s.signal_type === "keyword")
-        .map((s) => ({
-          content: s.content,
-          language: s.language,
-          isRtl: s.is_rtl,
-          source: s.source,
-          sourceContext: s.source_context,
-        })),
-      reviewIssues: signals
-        .filter((s) => s.signal_type === "review_issue")
-        .map((s) => ({
-          content: s.content,
-          language: s.language,
-          isRtl: s.is_rtl,
-          metadata: s.metadata,
-        })),
-      competitorWeaknesses: signals
-        .filter((s) => s.signal_type === "competitor_weakness")
-        .map((s) => ({
-          content: s.content,
-          language: s.language,
-          isRtl: s.is_rtl,
-          competitorId: s.source_context_id,
-        })),
-      optimizerSelections: signals
-        .filter((s) => s.signal_type === "optimizer_selection")
-        .map((s) => ({
-          content: s.content,
-          language: s.language,
-          isRtl: s.is_rtl,
-          metadata: s.metadata,
-        })),
-      totalSignals: signals.length,
-    };
-  } catch (err) {
-    console.error("[StagingVault] Get app context failed:", err);
-    // Return empty context on error (graceful degradation)
-    return {
-      appId,
-      hasVaultContent: false,
-      keywords: [],
-      reviewIssues: [],
-      competitorWeaknesses: [],
-      optimizerSelections: [],
-      totalSignals: 0,
-    };
+    if (error) {
+      console.error("[StagingVaultService] ❌ FETCH FAILED:", {
+        errorCode: error.code,
+        errorMessage: error.message,
+        workspaceId,
+      });
+      throw new Error(
+        `Failed to fetch staging items: ${error.message} (${error.code})`
+      );
+    }
+
+    console.log("[StagingVaultService] ✅ ITEMS FETCHED:", {
+      itemCount: data?.length || 0,
+      workspaceId,
+    });
+
+    return data || [];
+  } catch (error) {
+    console.error(
+      "[StagingVaultService] ❌ UNEXPECTED ERROR:",
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
   }
 }
 
-/**
- * Clear all signals for an app (admin use)
- */
-export async function clearAppVault(
+export async function archiveStagingItem(
   supabase: SupabaseClient,
   workspaceId: string,
-  appId: string
-): Promise<number> {
+  itemId: string
+) {
+  console.log("[StagingVaultService] 🗑️ ARCHIVING ITEM:", {
+    itemId,
+    workspaceId,
+  });
+
   try {
     const { data, error } = await supabase
       .from("workspace_staging_vault")
       .update({
         deleted_at: new Date().toISOString(),
-        deleted_by_user_id: (await supabase.auth.getUser()).data.user?.id,
       })
+      .eq("id", itemId)
       .eq("workspace_id", workspaceId)
-      .eq("source_app_id", appId)
-      .is("deleted_at", null)
       .select("id");
 
     if (error) {
-      throw new Error(`Failed to clear vault: ${error.message}`);
+      throw new Error(
+        `Failed to archive item: ${error.message} (${error.code})`
+      );
     }
 
-    return (data || []).length;
-  } catch (err) {
-    console.error("[StagingVault] Clear vault failed:", err);
-    throw err;
+    if (!data || data.length === 0) {
+      throw new Error("Item not found or already archived");
+    }
+
+    console.log("[StagingVaultService] ✅ ITEM ARCHIVED:", {
+      itemId,
+      workspaceId,
+    });
+
+    return { success: true, itemId };
+  } catch (error) {
+    console.error(
+      "[StagingVaultService] ❌ ARCHIVE FAILED:",
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
   }
 }
 
-/**
- * Type definitions
- */
-export interface VaultSignal {
-  id: string;
-  workspace_id: string;
-  signal_type: SignalType;
-  source: SignalSource;
-  content: string;
-  language: string;
-  is_rtl: boolean;
-  source_app_id?: string;
-  source_context?: string;
-  source_context_id?: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  created_by_user_id?: string;
-  expires_at?: string;
-  deleted_at?: string;
-}
+export async function restoreStagingItem(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  itemId: string
+) {
+  console.log("[StagingVaultService] 🔄 RESTORING ITEM:", {
+    itemId,
+    workspaceId,
+  });
 
-export interface AppVaultContext {
-  appId: string;
-  hasVaultContent: boolean;
-  keywords: Array<{
-    content: string;
-    language: string;
-    isRtl: boolean;
-    source: SignalSource;
-    sourceContext?: string;
-  }>;
-  reviewIssues: Array<{
-    content: string;
-    language: string;
-    isRtl: boolean;
-    metadata: Record<string, unknown>;
-  }>;
-  competitorWeaknesses: Array<{
-    content: string;
-    language: string;
-    isRtl: boolean;
-    competitorId?: string;
-  }>;
-  optimizerSelections: Array<{
-    content: string;
-    language: string;
-    isRtl: boolean;
-    metadata: Record<string, unknown>;
-  }>;
-  totalSignals: number;
+  try {
+    const { data, error } = await supabase
+      .from("workspace_staging_vault")
+      .update({
+        deleted_at: null,
+      })
+      .eq("id", itemId)
+      .eq("workspace_id", workspaceId)
+      .select("id");
+
+    if (error) {
+      throw new Error(
+        `Failed to restore item: ${error.message} (${error.code})`
+      );
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error("Item not found");
+    }
+
+    console.log("[StagingVaultService] ✅ ITEM RESTORED:", {
+      itemId,
+      workspaceId,
+    });
+
+    return { success: true, itemId };
+  } catch (error) {
+    console.error(
+      "[StagingVaultService] ❌ RESTORE FAILED:",
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
+  }
 }

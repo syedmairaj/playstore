@@ -37,7 +37,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { VertexAI } from "@google-cloud/aiplatform";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 
@@ -47,41 +47,8 @@ const MODEL_NAME = "gemini-2.0-flash"; // Vertex AI model
 const REQUEST_TIMEOUT_MS = 30000; // 30 second timeout
 
 // ── GCP Configuration ──────────────────────────────────────────────────
-const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT_ID;
-const REGION = process.env.GOOGLE_CLOUD_REGION || "us-central1";
-
-if (!PROJECT_ID) {
-  console.error(
-    `[${ROUTE}] Missing GOOGLE_CLOUD_PROJECT_ID environment variable`
-  );
-}
-
-// ── Vertex AI Client (Singleton) ───────────────────────────────────────
-let vertexAIClient: VertexAI | null = null;
-
-function getVertexAIClient(): VertexAI {
-  if (!vertexAIClient) {
-    if (!PROJECT_ID) {
-      throw new Error("GOOGLE_CLOUD_PROJECT_ID not configured");
-    }
-
-    // ✅ Uses Google Cloud Application Default Credentials (ADC)
-    // ADC automatically detects credentials from:
-    // 1. GOOGLE_APPLICATION_CREDENTIALS environment variable
-    // 2. Service account attached to compute resource (Cloud Run, Cloud Functions, etc.)
-    // 3. gcloud CLI credentials
-    vertexAIClient = new VertexAI({
-      project: PROJECT_ID,
-      location: REGION,
-    });
-
-    console.info(
-      `[${ROUTE}] Initialized Vertex AI client: project=${PROJECT_ID}, region=${REGION}`
-    );
-  }
-
-  return vertexAIClient;
-}
+// ✅ REFACTORED: Use centralized Vertex AI gateway
+// Provides singleton client, model caching, and ADC-based authentication
 
 interface GenerateResponseRequest {
   prompt: string;
@@ -204,13 +171,11 @@ export async function POST(request: Request, context: Ctx) {
       `[${ROUTE}] Generating response for item ${itemId} (tone: ${tone}, language: ${language})`
     );
 
-    // ── Initialize Vertex AI Client ────────────────────────────────────
-    const vertexAI = getVertexAIClient();
-
-    // ── Call Vertex AI Generative Model ────────────────────────────────
-    // ✅ Using generativeModels which supports streaming and non-streaming
-    const generativeModel = vertexAI.preview.getGenerativeModel({
-      model: MODEL_NAME,
+    // ── Get Vertex AI Model from Centralized Gateway ────────────────────
+    // ✅ REFACTORED: Uses centralized gateway with model caching
+    const generativeModel = getGenerativeModel({
+      maxOutputTokens: 300,
+      temperature: 0.7,
     });
 
     // Set request timeout

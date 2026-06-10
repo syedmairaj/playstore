@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@/lib/supabase/server";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import {
   AI_CREDIT_COSTS,
   buildInsufficientAiCreditsPayload,
@@ -9,7 +9,6 @@ import {
   refundWorkspaceAiCredits,
 } from "@/lib/features";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
-import { assertGeminiApiKey, resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
 import { getCategoryLabel } from "@/lib/market/category-labels";
 
@@ -145,22 +144,19 @@ Return only valid JSON. No markdown, no explanation outside the JSON object.`;
 
   let result: KeywordSpotlightResult;
   try {
-    const apiKey = assertGeminiApiKey();
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: resolveGeminiModel() });
+    // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
+    const model = getGenerativeModel({
+      temperature: 0.4,
+      topP: 0.9,
+      maxOutputTokens: 512,
+    });
     const response = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.4,
         topP: 0.9,
-        // 512 is sufficient for the small JSON payload we need.
-        // thinkingBudget: 0 disables gemini-2.5-flash's internal reasoning —
-        // without this, thinking tokens consume the maxOutputTokens budget and
-        // truncate the actual JSON output, causing "Unexpected end of JSON input".
-        // This is the same fix used in localize-listing-schema.ts.
         maxOutputTokens: 512,
         // @ts-expect-error — thinkingConfig is a valid Gemini 2.5 Flash param
-        // not yet typed in the @google/generative-ai SDK types.
         thinkingConfig: { thinkingBudget: 0 },
       },
     });

@@ -1,0 +1,421 @@
+/**
+ * Staging Vault Service
+ *
+ * Manages persistence of staging signals from various sources (Competitor Spy, etc.)
+ * into the workspace_staging_vault table. This enables state synchronization across
+ * the application without navigation.
+ *
+ * Features:
+ * - UTF-8 support for multilingual content (EN/AR)
+ * - Bilingual metadata storage
+ * - JSONB support for flexible signal payloads
+ * - Automatic timestamp tracking
+ * - Duplicate constraint handling for competitor_weakness signals
+ */
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { KeywordPayload } from "@/hooks/useKeywordSelection";
+
+export interface AddSignalPayload {
+  signalType: string; // e.g., "optimizer_selection", "review_issue", "market_opportunity"
+  content: string; // Main content (EN or AR, UTF-8)
+  source: string; // Source system: "competitor_spy", "review_analysis", etc.
+  sourceAppId?: string; // Optional: linked app ID
+  sourceContext?: string; // Optional: context reference (e.g., competitor ID)
+  sourceContextId?: string; // Optional: full context ID
+  language: "en" | "ar"; // Content language
+  metadata: Record<string, unknown>; // Flexible metadata (JSONB)
+  keywords?: KeywordPayload[]; // Optional: keyword payloads for optimizer_selection signals
+}
+
+export interface StagingVaultResult {
+  id: string;
+  workspaceId: string;
+  signalType: string;
+  message: string;
+  createdAt: string;
+}
+
+/**
+ * Add a signal to the workspace staging vault
+ *
+ * This persists a single staging signal (keywords, review issues, market opportunities, etc.)
+ * to workspace_staging_vault, enabling the Optimizer to see newly staged content without
+ * page navigation.
+ *
+ * For competitor_weakness signals, automatically deletes the previous signal to avoid
+ * unique constraint violations (idx_competitor_signal_isolation).
+ *
+ * @param supabase - Supabase client
+ * @param workspaceId - Workspace ID
+ * @param payload - Signal payload with all metadata
+ * @returns Result with signal ID and timestamp
+ * @throws Error if insertion fails
+ */
+export async function addSignalToVault(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  payload: AddSignalPayload
+): Promise<StagingVaultResult> {
+  const {
+    signalType,
+    content,
+    source,
+    sourceAppId,
+    sourceContext,
+    sourceContextId,
+    language,
+    metadata,
+    keywords,
+  } = payload;
+
+  const now = new Date().toISOString();
+
+  console.log("[StagingVaultService] 📝 ADDING SIGNAL:", {
+    signalType,
+    source,
+    language,
+    workspaceId,
+  });
+
+  try {
+    // CRITICAL: For competitor_weakness signals, handle the unique constraint
+    // by deleting any existing signal for this competitor/language combination
+    if (
+      signalType === "competitor_weakness" &&
+      metadata &&
+      typeof metadata === "object" &&
+      "competitor_id" in metadata
+    ) {
+      const competitorId = (metadata as any).competitor_id;
+
+      console.log("[StagingVaultService] 🧹 CLEANING UP OLD COMPETITOR SIGNAL:", {
+        workspaceId,
+        competitorId,
+        language,
+        signalType,
+      });
+
+      try {
+        // Delete old signal using raw SQL to handle JSONB filtering properly
+        // This avoids the unique constraint violation (idx_competitor_signal_isolation)
+        const { error: deleteError } = await supabase.rpc(
+          "delete_competitor_signal",
+          {
+            p_workspace_id: workspaceId,
+            p_signal_type: signalType,
+            p_language: language,
+            p_competitor_id: competitorId,
+          }
+        );
+
+        if (deleteError) {
+          // If RPC doesn't exist, try direct query with proper JSONB cast
+          console.warn(
+            "[StagingVaultService] ⚠️ RPC call failed, trying direct delete:",
+            deleteError.message
+          );
+
+          // Fallback: Try deleting by fetching first then deleting
+          const { data: existingItems, error: fetchError } = await supabase
+            .from("workspace_staging_vault")
+            .select("id")
+            .eq("workspace_id", workspaceId)
+            .eq("signal_type", signalType)
+            .eq("language", language);
+
+          if (!fetchError && existingItems && existingItems.length > 0) {
+            for (const item of existingItems) {
+              // Check if this is the right competitor by fetching full record
+              const { data: fullItem } = await supabase
+                .from("workspace_staging_vault")
+                .select("metadata")
+                .eq("id", item.id)
+                .single();
+
+              if (
+                fullItem &&
+                fullItem.metadata &&
+                typeof fullItem.metadata === "object" &&
+                (fullItem.metadata as any).competitor_id === competitorId
+              ) {
+                await supabase
+                  .from("workspace_staging_vault")
+                  .delete()
+                  .eq("id", item.id);
+
+                console.log("[StagingVaultService] ✅ CLEANUP SUCCESSFUL:", {
+                  deletedId: item.id,
+                  competitorId,
+                });
+              }
+            }
+          }
+        } else {
+          console.log("[StagingVaultService] ✅ CLEANUP SUCCESSFUL (via RPC):", {
+            competitorId,
+          });
+        }
+      } catch (cleanupErr) {
+        console.warn("[StagingVaultService] ⚠️ CLEANUP EXCEPTION:", {
+          errorMessage: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          note: "Proceeding with insertion despite cleanup exception",
+        });
+        // Don't fail - proceed with insertion anyway
+      }
+    }
+
+    // Insert the signal into workspace_staging_vault
+    const { data, error } = await supabase
+      .from("workspace_staging_vault")
+      .insert([
+        {
+          workspace_id: workspaceId,
+          signal_type: signalType,
+          content, // UTF-8 preserved: EN or AR strings stored natively
+          source,
+          source_app_id: sourceAppId || null,
+          source_context: sourceContext || null,
+          source_context_id: sourceContextId || null,
+          language,
+          metadata: {
+            ...metadata,
+            keywords: keywords || [], // Include keywords in metadata for full context
+            signal_created_at: now,
+          },
+          created_at: now,
+        },
+      ])
+      .select("id, created_at");
+
+    if (error) {
+      console.error("[StagingVaultService] ❌ INSERTION FAILED:", {
+        errorCode: error.code,
+        errorMessage: error.message,
+        errorDetails: error.details,
+        signalType,
+        workspaceId,
+      });
+      throw new Error(
+        `Failed to add signal to vault: ${error.message} (${error.code})`
+      );
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error("Signal inserted but no ID returned");
+    }
+
+    const { id, created_at } = data[0];
+
+    console.log("[StagingVaultService] ✅ SIGNAL ADDED:", {
+      signalId: id,
+      signalType,
+      source,
+      createdAt: created_at,
+      keywordCount: keywords?.length || 0,
+    });
+
+    return {
+      id,
+      workspaceId,
+      signalType,
+      message: `Signal added to vault (${keywords?.length || 0} keywords)`,
+      createdAt: created_at,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    console.error("[StagingVaultService] ❌ UNEXPECTED ERROR:", {
+      errorMessage: errorMsg,
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
+      signalType,
+      source,
+      workspaceId,
+    });
+
+    throw error;
+  }
+}
+
+/**
+ * Get all staging vault items for a workspace
+ *
+ * Used by the Optimizer to fetch active context. This function is primarily called
+ * via the GET /api/workspaces/[workspaceId]/optimizer/context endpoint.
+ *
+ * @param supabase - Supabase client
+ * @param workspaceId - Workspace ID
+ * @param options - Query options
+ * @returns List of active (non-deleted) staging vault items
+ */
+export async function getStagingVaultItems(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  options: { includeDeleted?: boolean } = {}
+) {
+  const { includeDeleted = false } = options;
+
+  console.log("[StagingVaultService] 📖 FETCHING ITEMS:", {
+    workspaceId,
+    includeDeleted,
+  });
+
+  try {
+    let query = supabase
+      .from("workspace_staging_vault")
+      .select(
+        `
+        id,
+        workspace_id,
+        signal_type,
+        content,
+        source,
+        source_app_id,
+        source_context,
+        source_context_id,
+        language,
+        metadata,
+        created_at,
+        deleted_at
+      `
+      )
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: false });
+
+    if (!includeDeleted) {
+      query = query.is("deleted_at", null);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("[StagingVaultService] ❌ FETCH FAILED:", {
+        errorCode: error.code,
+        errorMessage: error.message,
+        workspaceId,
+      });
+      throw new Error(
+        `Failed to fetch staging items: ${error.message} (${error.code})`
+      );
+    }
+
+    console.log("[StagingVaultService] ✅ ITEMS FETCHED:", {
+      itemCount: data?.length || 0,
+      workspaceId,
+    });
+
+    return data || [];
+  } catch (error) {
+    console.error(
+      "[StagingVaultService] ❌ UNEXPECTED ERROR:",
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
+  }
+}
+
+/**
+ * Archive (soft delete) a staging vault item
+ *
+ * @param supabase - Supabase client
+ * @param workspaceId - Workspace ID
+ * @param itemId - Item ID to archive
+ * @returns Success/failure result
+ */
+export async function archiveStagingItem(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  itemId: string
+) {
+  console.log("[StagingVaultService] 🗑️ ARCHIVING ITEM:", {
+    itemId,
+    workspaceId,
+  });
+
+  try {
+    const { data, error } = await supabase
+      .from("workspace_staging_vault")
+      .update({
+        deleted_at: new Date().toISOString(),
+      })
+      .eq("id", itemId)
+      .eq("workspace_id", workspaceId)
+      .select("id");
+
+    if (error) {
+      throw new Error(
+        `Failed to archive item: ${error.message} (${error.code})`
+      );
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error("Item not found or already archived");
+    }
+
+    console.log("[StagingVaultService] ✅ ITEM ARCHIVED:", {
+      itemId,
+      workspaceId,
+    });
+
+    return { success: true, itemId };
+  } catch (error) {
+    console.error(
+      "[StagingVaultService] ❌ ARCHIVE FAILED:",
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
+  }
+}
+
+/**
+ * Restore an archived staging vault item
+ *
+ * @param supabase - Supabase client
+ * @param workspaceId - Workspace ID
+ * @param itemId - Item ID to restore
+ * @returns Success/failure result
+ */
+export async function restoreStagingItem(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  itemId: string
+) {
+  console.log("[StagingVaultService] 🔄 RESTORING ITEM:", {
+    itemId,
+    workspaceId,
+  });
+
+  try {
+    const { data, error } = await supabase
+      .from("workspace_staging_vault")
+      .update({
+        deleted_at: null,
+      })
+      .eq("id", itemId)
+      .eq("workspace_id", workspaceId)
+      .select("id");
+
+    if (error) {
+      throw new Error(
+        `Failed to restore item: ${error.message} (${error.code})`
+      );
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error("Item not found");
+    }
+
+    console.log("[StagingVaultService] ✅ ITEM RESTORED:", {
+      itemId,
+      workspaceId,
+    });
+
+    return { success: true, itemId };
+  } catch (error) {
+    console.error(
+      "[StagingVaultService] ❌ RESTORE FAILED:",
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
+  }
+}
