@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Loader2, ScanLine, Sparkles, TrendingUp } from "lucide-react";
+import { AlertTriangle, Loader2, ScanLine, Sparkles, TrendingUp, Activity } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
@@ -26,6 +26,7 @@ import {
 } from "@/lib/keywords/flatten-keyword-rows";
 import { KeywordWatchlistTable } from "@/components/keyword-tracker/keyword-watchlist-table";
 import { KeywordWatchlistToolbar } from "@/components/keyword-tracker/keyword-watchlist-toolbar";
+import { KeywordValidatorCard } from "@/components/keyword-tracker/KeywordValidatorCard";
 import { Input } from "@/components/ui/input";
 import { CountrySelector } from "@/components/country-selector";
 import {
@@ -127,6 +128,9 @@ export function KeywordTrackerClient({
     termNorm: string;
     appId: string;
   } | null>(null);
+
+  /** ✨ NEW: Keyword validator drawer state */
+  const [isValidatorDrawerOpen, setIsValidatorDrawerOpen] = useState(false);
 
   const initialKeywordsSyncKey = useMemo(
     () =>
@@ -1068,6 +1072,62 @@ export function KeywordTrackerClient({
 
   return (
     <div className={cn("space-y-8", isRtl && "font-arabic")} dir={isRtl ? "rtl" : "ltr"}>
+
+      {/* ── Page-level header: title + Validate Keyword trigger ─────────────
+          Button lives here so it never bleeds into the Add Keyword card.     */}
+      <div className={cn(
+        "flex items-start justify-between gap-4",
+        isRtl ? "flex-row-reverse" : "flex-row",
+      )}>
+        <div className="space-y-1 min-w-0">
+          <div className={cn(
+            "flex items-center gap-2",
+            isRtl && "flex-row-reverse",
+          )}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+              {isRtl ? "متتبع الكلمات الرئيسية" : "Keyword Tracker"}
+            </p>
+            {/* Live engine badge */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/[0.07] px-2 py-0.5 text-[10px] font-medium text-emerald-300/90 ring-1 ring-emerald-500/10">
+              <span className="relative flex size-1.5" aria-hidden>
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400/50" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" />
+              </span>
+              {isRtl ? "محرك رتب مباشر" : "Live rank engine"}
+            </span>
+          </div>
+          <h1 className={cn(
+            "text-2xl font-semibold tracking-tight text-white",
+            isRtl && "font-arabic leading-relaxed tracking-normal",
+          )}>
+            {isRtl ? t("title") : t("title")}
+          </h1>
+          <p className={cn(
+            "max-w-xl text-sm leading-relaxed text-zinc-400",
+            isRtl && "font-arabic leading-loose",
+          )}>
+            {t("subheadline")}
+          </p>
+        </div>
+
+        {/* Validate Keyword — top-right trigger, max 400px panel slides from inline-end */}
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => setIsValidatorDrawerOpen(true)}
+          className={cn(
+            "shrink-0 flex items-center gap-2 h-9 px-4",
+            "bg-[#0c1018] border border-zinc-700 text-zinc-200",
+            "hover:border-emerald-500/40 hover:bg-emerald-500/[0.07] hover:text-emerald-200",
+            "shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
+            "transition-all duration-150",
+          )}
+        >
+          <Activity className="w-3.5 h-3.5 text-emerald-400" />
+          {isRtl ? "التحقق من كلمة رئيسية" : "Validate Keyword"}
+        </Button>
+      </div>
+
       {blockingError ? (
         <div
           className={cn(
@@ -1087,9 +1147,11 @@ export function KeywordTrackerClient({
       ) : null}
 
       <Card className="border-white/[0.08] bg-[#0c1018] text-zinc-100 shadow-[0_0_0_1px_rgba(16,185,129,0.12)]">
-        <CardHeader className="space-y-1 pb-4">
-          <CardTitle className="text-lg font-semibold text-white">{t("add.title")}</CardTitle>
-          <CardDescription className="text-zinc-400">{t("add.description")}</CardDescription>
+        <CardHeader className="pb-4">
+          <div className="space-y-1">
+            <CardTitle className="text-lg font-semibold text-white">{t("add.title")}</CardTitle>
+            <CardDescription className="text-zinc-400">{t("add.description")}</CardDescription>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           {apps.length > 0 ? (
@@ -1545,6 +1607,16 @@ export function KeywordTrackerClient({
           </div>
         </div>
       )}
+
+      {/* Keyword Validator — contextual slide-over, no separate route */}
+      <KeywordValidatorCard
+        workspaceId={workspaceId}
+        appId={scopeAppId || undefined}
+        selectedCountries={selectedCountries}
+        isOpen={isValidatorDrawerOpen}
+        onClose={() => setIsValidatorDrawerOpen(false)}
+        onKeywordStaged={() => refresh()}
+      />
     </div>
   );
 }

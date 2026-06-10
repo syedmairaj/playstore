@@ -53,6 +53,7 @@ export default async function WorkspaceLayout({
     { href: appBase, label: t("home"), show: true },
     { href: `${appBase}/keywords`, label: t("keywords"), show: flags.keyword_tracker },
     { href: `${appBase}/listing-optimizer`, label: t("listingAi"), show: flags.listing_optimizer },
+    // ✨ Snapshots now integrated as tabbed panel in Listing Optimizer page
     { href: `${appBase}/brand-assets`, label: t("brandAssets"), show: true },
     { href: `${appBase}/competitors`, label: t("competitorSpy"), show: flags.competitor_spy },
     { href: `${appBase}/reviews`, label: t("reviews"), show: flags.review_insights },

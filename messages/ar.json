@@ -1,4 +1,61 @@
 {
+  "keywordValidator": {
+    "analysisToolLabel": "أداة التحليل",
+    "panelTitle": "مدقق الكلمات الرئيسية",
+    "panelSubtitle": "الجدوى · الصعوبة · حجم البحث",
+    "closeLabel": "إغلاق",
+    "inputPlaceholder": "مثال: محرر الصور",
+    "analyzeButton": "تحليل",
+    "enterHint": "اضغط Enter للتحليل",
+    "resultsCount": "{count, plural, one {نتيجة واحدة} other {# نتائج}}",
+    "clearAll": "مسح الكل",
+    "estimatedBadge": "تقديري",
+    "estimatedTooltip": "تقدير مبني على نموذج تاريخي. البيانات الحية متاحة في متتبع الكلمات.",
+    "metricConf": "ثقة",
+    "metricComp": "منافسة",
+    "metricInstalls": "تثبيت",
+    "searchVolLabel": "حجم البحث · {volume}/شهر",
+    "tierHighOpportunity": "فرصة عالية",
+    "tierMediumOpportunity": "فرصة متوسطة",
+    "tierLowPriority": "أولوية منخفضة",
+    "difficultyEasy": "سهل",
+    "difficultyMedium": "متوسط",
+    "difficultyHard": "صعب",
+    "stageButton": "إضافة إلى متتبع الكلمات",
+    "stagingButton": "جارٍ الحفظ...",
+    "stagedButton": "تمت الإضافة إلى المتتبع",
+    "stageCreditNotice": "الإضافة مجانية · تحديثات الترتيب: رصيد واحد/دولة",
+    "toastValidated": "تم التحقق من الكلمة الرئيسية",
+    "toastValidationFailed": "فشل التحقق",
+    "toastStaged": "تمت إضافة \"{keyword}\" إلى المتتبع",
+    "toastStagingFailed": "فشل الحفظ",
+    "emptyHowItWorks": "طريقة الاستخدام",
+    "emptyStep1": "أدخل كلمة رئيسية في الحقل أعلاه",
+    "emptyStep2": "اضغط تحليل للحصول على درجة الجدوى",
+    "emptyStep3": "اضغط إضافة لإرسالها إلى المتتبع",
+
+    "liveRankEducationTitle": "ماذا يعني الترتيب الحي؟",
+    "liveRankEducationBody": "هذا هو ترتيب تطبيقك الطبيعي في نتائج بحث Google Play لهذه الكلمة المفتاحية الآن. الترتيبات لقطات آنية — تتغير بناءً على إشارات الخوارزمية والتثبيتات والتقييمات وملاءمة القائمة. كل سوق مستقل.",
+
+    "liveRankResultTitle": "تم جلب الترتيب الحي",
+    "liveRankResultBodyRanked": "تطبيقك في المرتبة #{rank} في {market} لكلمة \"{keyword}\". هذه لقطة آنية — قد تتغير الترتيبات خلال ساعات.",
+    "liveRankResultBodyNotInTop": "تطبيقك غير موجود في أفضل 100 نتيجة في {market} لكلمة \"{keyword}\" الآن. حسّن قائمتك أو استهدف كلمة بمنافسة أقل.",
+    "liveRankResultBodyMulti": "تم الترتيب في {count} أسواق لكلمة \"{keyword}\". كل نتيجة لقطة آنية مستقلة.",
+
+    "liveRankPartialTitle": "نتائج جزئية",
+    "liveRankPartialBody": "{succeeded} من أصل {total} أسواق أعادت نتائج. الأسواق الفاشلة لم تُخصم منها رصيد.",
+
+    "liveRankNoPackageTitle": "اسم الحزمة مطلوب",
+    "liveRankNoPackageBody": "أضف اسم حزمة تطبيقك الأندرويد (مثال: com.yourapp.id) في إعدادات مساحة العمل ← التطبيق لتفعيل فحص الترتيب الحي.",
+
+    "liveRankInsufficientCreditsTitle": "رصيد غير كافٍ",
+    "liveRankInsufficientCreditsBody": "الترتيب الحي يستخدم {cost} رصيد لكل سوق. لديك {remaining} رصيد. أضف رصيداً من إعدادات مساحة العمل.",
+
+    "toastLiveRankSingle": "المرتبة #{rank} في {market} لـ \"{keyword}\"",
+    "toastLiveRankNotInTop": "غير موجود في أفضل 100 في {market} لـ \"{keyword}\"",
+    "toastLiveRankMulti": "\"{keyword}\" مُرتَّب في {count} أسواق",
+    "toastLiveRankAllFailed": "فشل جلب الترتيب — لم تُعَد أي نتائج"
+  },
   "meta": {
     "title": "PlayStore — تحسين ظهور تطبيقك في Google Play بلا تعقيد المؤسسات",
     "description": "اكتشف الكلمات المفتاحية، أنشئ قوائم تطبيق عالية التحويل، وحدد فجوات المنافسين. مبني للمطورين المستقلين وفرق MENA."
