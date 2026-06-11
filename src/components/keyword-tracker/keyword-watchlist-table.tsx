@@ -9,9 +9,17 @@ import {
   COUNTRY_FLAG_EMOJI,
   type SupportedCountryCode,
 } from "@/lib/countries";
-import { formatRankForDisplay } from "@/lib/keywords/format-rank-display";
+import {
+  CompetitorBadge,
+  CompetitorBadgeSpacer,
+  type CompetitorBadgeRankState,
+} from "@/components/keyword-tracker/competitor-badge";
+import {
+  resolveRankDisplay,
+  type RankDisplayLabels,
+} from "@/lib/keywords/format-rank-display";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
-import { competitorInitialForDisplay } from "@/lib/keywords/serper-snapshot-rank-resolve";
+import type { SerperRankMatchKind } from "@/lib/keywords/serper-snapshot-rank-resolve";
 import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import type { FlatKeywordRow } from "@/lib/keywords/flatten-keyword-rows";
@@ -27,6 +35,8 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
 export type CompetitorSlot = {
   name: string;
   packageId: string;
+  /** Monogram from DB display name — stable even when icon.horse fails. */
+  initial?: string;
   /** App icon URL from workspace_competitor_analyses.icon_url — may be null. */
   iconUrl?: string | null;
   rankByTerm: ReadonlyMap<string, number>;
@@ -48,27 +58,43 @@ function resolveTrackedCompetitorRank(
   return rankByTerm.get(termKey) ?? null;
 }
 
+function resolveCompetitorBadgeRankState(
+  ranked: boolean,
+  isSearchInProgress: boolean,
+  searchComplete: boolean,
+  hasSnapshotRanks: boolean,
+): CompetitorBadgeRankState {
+  if (ranked) return "ranked";
+  if (isSearchInProgress) return "pending";
+  if (searchComplete && hasSnapshotRanks) return "not_ranked";
+  return "empty";
+}
+
 function TrackedCompetitorsCell({
   slots,
   termKey,
   snapshotRanks,
-  rankFmt,
   tooltipTemplate,
   notRankedTooltip,
+  pendingTooltip,
   emptyHint,
+  isSearchInProgress,
+  searchComplete,
   isRtl,
 }: {
   slots: [CompetitorSlot | null, CompetitorSlot | null];
   termKey: string;
   snapshotRanks: TrackedCompetitorRankSnapshot[];
-  rankFmt: { notInTop: string };
-  tooltipTemplate: (name: string, rank: number | null, packageId: string) => string;
+  tooltipTemplate: (name: string, rank: number | null) => string;
   notRankedTooltip: string;
+  pendingTooltip: string;
   emptyHint: string;
+  isSearchInProgress: boolean;
+  searchComplete: boolean;
   isRtl?: boolean;
 }) {
-  const active = slots.filter((s): s is CompetitorSlot => s != null);
-  if (active.length === 0) {
+  const hasAnySlot = slots.some((s) => s != null);
+  if (!hasAnySlot) {
     return (
       <span
         className={cn(
@@ -81,14 +107,20 @@ function TrackedCompetitorsCell({
     );
   }
 
+  const hasSnapshotRanks = snapshotRanks.length > 0;
+
   return (
     <div
       className={cn(
-        "flex items-end justify-center gap-3",
+        "mx-auto flex w-[6.5rem] items-start justify-center gap-4",
         isRtl && "flex-row-reverse font-arabic",
       )}
     >
-      {active.map((slot) => {
+      {slots.map((slot, index) => {
+        if (!slot) {
+          return <CompetitorBadgeSpacer key={`spacer-${index}`} />;
+        }
+
         const rank = resolveTrackedCompetitorRank(
           slot.packageId,
           termKey,
@@ -96,70 +128,37 @@ function TrackedCompetitorsCell({
           slot.rankByTerm,
         );
         const ranked = rank != null && rank < SERPER_RANK_NOT_IN_FIRST_PAGE;
+        const snapshotMeta = snapshotRanks.find(
+          (r) => r.package_name === slot.packageId.trim().toLowerCase(),
+        );
+        const rankState = resolveCompetitorBadgeRankState(
+          ranked,
+          isSearchInProgress,
+          searchComplete,
+          hasSnapshotRanks,
+        );
         const displayName =
-          slot.name.trim() || slot.packageId;
-        const initial = competitorInitialForDisplay(displayName, slot.packageId);
-        const iconUrl =
-          slot.iconUrl?.trim() ||
-          `https://icon.horse/icon/${encodeURIComponent(slot.packageId)}`;
+          snapshotMeta?.name?.trim() ||
+          slot.name.trim() ||
+          slot.packageId;
+        const tooltip =
+          rankState === "pending"
+            ? pendingTooltip
+            : rankState === "not_ranked"
+              ? notRankedTooltip
+              : tooltipTemplate(displayName, rank);
+
         return (
-          <div key={slot.packageId} className="flex min-w-[2rem] flex-col items-center gap-1">
-            <Tooltip
-              content={
-                <span className="block max-w-[240px] leading-snug text-zinc-200">
-                  {tooltipTemplate(slot.name, rank, slot.packageId)}
-                </span>
-              }
-              side="top"
-              className="max-w-[280px] border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
-              asChild
-            >
-              <div
-                className={cn(
-                  "relative size-7 shrink-0 cursor-default overflow-hidden rounded-md",
-                  "border border-zinc-700/80 bg-zinc-800/60 ring-1 ring-white/[0.04]",
-                )}
-                tabIndex={0}
-                aria-label={tooltipTemplate(slot.name, rank, slot.packageId)}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={iconUrl}
-                  alt={slot.name}
-                  className="size-full object-cover"
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                    const fb = (e.currentTarget as HTMLImageElement)
-                      .nextElementSibling as HTMLElement | null;
-                    if (fb) fb.style.display = "flex";
-                  }}
-                />
-                <span
-                  className="absolute inset-0 hidden items-center justify-center text-[9px] font-bold uppercase text-zinc-400"
-                  aria-hidden
-                >
-                  {initial}
-                </span>
-              </div>
-            </Tooltip>
-            {ranked ? (
-              <span className="font-mono text-[10px] font-semibold tabular-nums text-amber-300/95">
-                {formatRankForDisplay(rank, rankFmt, { column: "theirs" })}
-              </span>
-            ) : (
-              <Tooltip
-                content={<span className="text-zinc-400">{notRankedTooltip}</span>}
-                side="bottom"
-                className="border border-white/[0.12] bg-[#0a0d12] px-2 py-1 text-xs shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
-                asChild
-              >
-                <span className="cursor-default font-mono text-[10px] font-medium text-zinc-600">
-                  {rankFmt.notInTop}
-                </span>
-              </Tooltip>
-            )}
-          </div>
+          <CompetitorBadge
+            key={slot.packageId}
+            displayName={displayName}
+            packageId={slot.packageId}
+            serpDisplayName={snapshotMeta?.serp_display_name}
+            iconUrl={slot.iconUrl}
+            rank={ranked ? rank : null}
+            rankState={rankState}
+            tooltip={tooltip}
+          />
         );
       })}
     </div>
@@ -170,22 +169,91 @@ function NotInTopRankWithHint({
   rank,
   rankFmt,
   detailTooltip,
+  matchKind,
+  pendingTooltip,
+  isSearchInProgress,
+  searchComplete,
 }: {
   rank: number | null;
-  rankFmt: { notInTop: string };
+  rankFmt: RankDisplayLabels;
   detailTooltip: string;
+  matchKind?: SerperRankMatchKind | null;
+  pendingTooltip: string;
+  isSearchInProgress: boolean;
+  searchComplete: boolean;
 }) {
-  const notInTop = rank != null && rank >= SERPER_RANK_NOT_IN_FIRST_PAGE;
+  const resolved = resolveRankDisplay(rank, rankFmt, {
+    column: "yours",
+    matchKind,
+    isSearchInProgress,
+    searchComplete,
+  });
+  const isPending = resolved.variant === "pending";
+  const isOutsideTop = resolved.variant === "outsideTop";
+  const statusTooltip = isPending
+    ? pendingTooltip
+    : isOutsideTop
+      ? rankFmt.outsideTopTooltip
+      : undefined;
+
+  const statusLabel = (
+    <span
+      className={cn(
+        isPending && "text-amber-200/90",
+        isOutsideTop && "text-zinc-300",
+      )}
+    >
+      {resolved.text}
+    </span>
+  );
+
   return (
     <span className="inline-flex items-center gap-1">
-      <span>{formatRankForDisplay(rank, rankFmt)}</span>
-      {notInTop ? (
+      {statusTooltip ? (
         <Tooltip
           content={
-            <span className="block leading-snug text-zinc-200">{detailTooltip}</span>
+            <span className="block max-w-[280px] leading-snug text-zinc-200">
+              {statusTooltip}
+            </span>
           }
           side="top"
-          className="max-w-[280px] border border-white/[0.12] bg-[#0a0d12] px-3 py-2 text-xs leading-relaxed text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.04]"
+          className="max-w-[300px] border border-white/[0.12] bg-[#0a0d12] px-3 py-2 text-xs leading-relaxed text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.04]"
+          asChild
+        >
+          <span className="cursor-default">{statusLabel}</span>
+        </Tooltip>
+      ) : (
+        statusLabel
+      )}
+      {isPending ? (
+        <Tooltip
+          content={
+            <span className="block max-w-[280px] leading-snug text-zinc-200">
+              {pendingTooltip}
+            </span>
+          }
+          side="top"
+          className="max-w-[300px] border border-white/[0.12] bg-[#0a0d12] px-3 py-2 text-xs leading-relaxed text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.04]"
+          asChild
+        >
+          <button
+            type="button"
+            className="inline-flex shrink-0 rounded p-0.5 text-zinc-500 transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+            aria-label={pendingTooltip}
+          >
+            <Info className="size-3.5" aria-hidden />
+          </button>
+        </Tooltip>
+      ) : null}
+      {isOutsideTop ? (
+        <Tooltip
+          content={
+            <span className="block max-w-[280px] leading-snug text-zinc-200">
+              {detailTooltip}
+            </span>
+          }
+          side="top"
+          className="max-w-[300px] border border-white/[0.12] bg-[#0a0d12] px-3 py-2 text-xs leading-relaxed text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.04]"
           asChild
         >
           <button
@@ -290,16 +358,22 @@ export function KeywordWatchlistTable({
             <tbody>
               {rows.map((row) => {
                 const src = row.source;
-                const rankFmt = { notInTop: t("table.rankNotInTop") };
-                const rankDetailHint = t("table.rankNotInTopDetailTooltip", {
-                  appName: appNameById.get(src.app_id) ?? src.app_id,
-                });
+                const rankFmt: RankDisplayLabels = {
+                  notInTop: t("table.rankNotInTop"),
+                  pending: t("table.rankPending"),
+                  pendingTooltip: t("table.rankPendingTooltip"),
+                  outsideTopTooltip: t("table.rankNotInTopTooltip"),
+                };
+                const rankDetailHint = t("table.rankNotInTopDetailTooltip");
 
                 // Your Rank: flat row holds per-country rank value + capturedAt timestamp.
                 const yourRank = row.yourRank;
+                const rankMatchKind = row.rankMatchKind;
                 const freshness = getRankFreshness(row.capturedAt);
                 const isStale = freshness === "stale";
                 const isBrandNew = freshness === "new";
+                const isRowSearchInProgress = serperRowRefreshId === src.id;
+                const isSearchComplete = row.capturedAt != null;
 
                 return (
                   <tr
@@ -347,12 +421,16 @@ export function KeywordWatchlistTable({
 
                     {/* 3 — Your Rank (per-country value; faded when stale) */}
                     <td className="px-4 py-4 text-center align-middle font-mono text-zinc-100">
-                      {yourRank != null ? (
-                        <span className={cn(isStale && "opacity-60")}>
+                      {isRowSearchInProgress || yourRank != null || isSearchComplete ? (
+                        <span className={cn(isStale && !isRowSearchInProgress && "opacity-60")}>
                           <NotInTopRankWithHint
                             rank={yourRank}
                             rankFmt={rankFmt}
                             detailTooltip={rankDetailHint}
+                            matchKind={rankMatchKind}
+                            pendingTooltip={t("table.rankPendingTooltip")}
+                            isSearchInProgress={isRowSearchInProgress}
+                            searchComplete={isSearchComplete}
                           />
                         </span>
                       ) : (
@@ -366,19 +444,16 @@ export function KeywordWatchlistTable({
                         slots={competitorSlots ?? [null, null]}
                         termKey={src.term.trim().toLowerCase()}
                         snapshotRanks={row.trackedCompetitors}
-                        rankFmt={rankFmt}
-                        tooltipTemplate={(name, rank, packageId) =>
-                          t("table.trackedCompetitorTooltip", {
-                            name,
-                            rank:
-                              rank != null
-                                ? formatRankForDisplay(rank, rankFmt, { column: "theirs" })
-                                : rankFmt.notInTop,
-                            package: packageId,
-                          })
+                        tooltipTemplate={(name, rank) =>
+                          rank != null && rank < SERPER_RANK_NOT_IN_FIRST_PAGE
+                            ? t("table.trackedCompetitorRankedTooltip", { name, rank: `#${rank}` })
+                            : t("table.trackedCompetitorNotRankedTooltip", { name })
                         }
                         notRankedTooltip={t("table.competitorNotRankedTooltip")}
+                        pendingTooltip={t("table.competitorRankPendingTooltip")}
                         emptyHint={t("table.addCompetitorsHint")}
+                        isSearchInProgress={isRowSearchInProgress}
+                        searchComplete={isSearchComplete}
                         isRtl={isRtl}
                       />
                     </td>
@@ -406,7 +481,9 @@ export function KeywordWatchlistTable({
                                 <Tooltip
                                   content={
                                     <span className="leading-snug text-zinc-200">
-                                      Fetch Live Rank ({AI_CREDIT_COSTS.serper_preview_per_country} AI credit)
+                                      {t("table.fetchEstimatedRankAction", {
+                                        credits: AI_CREDIT_COSTS.serper_preview_per_country,
+                                      })}
                                     </span>
                                   }
                                   side="top"
@@ -424,7 +501,7 @@ export function KeywordWatchlistTable({
                                     )}
                                     disabled={blockingError || mutationPending || serperRowRefreshId != null}
                                     onClick={() => onSerperRefresh(src.id)}
-                                    aria-label="Fetch Live Rank"
+                                    aria-label={t("table.fetchEstimatedRankAria")}
                                   >
                                     <Zap className="size-3.5 text-yellow-400" aria-hidden />
                                   </button>
@@ -535,7 +612,9 @@ export function KeywordWatchlistTable({
                         {/* Timestamp — always below the button row, never inside it */}
                         {row.capturedAt && (freshness === "fresh" || isStale) ? (
                           <span className="mt-1 block w-full text-center text-[10px] text-zinc-500">
-                            {formatCapturedAgo(row.capturedAt)}
+                            {t("table.lastChecked", {
+                              time: formatCapturedAgo(row.capturedAt),
+                            })}
                           </span>
                         ) : null}
 

@@ -14,7 +14,21 @@ export {
   rankForSnapshotInsert,
   applyLiveRankClientPolicy,
   formatSerperTopResultsForLog,
+  formatSerperTopResultsWithMatchScores,
   findBestRankInSerpItems,
+  buildSerpRankDebugPayload,
+  logPoorSerpRankDebug,
+  resolveRankMatchInCountryForSerperSnapshot,
+  scoreTitleMatchAgainstTarget,
+  TITLE_SIMILARITY_THRESHOLD,
+  serpLookupForPackage,
+  logSerpTargetMatchResult,
+  warnWhenMissingCanonicalPackageId,
+  isLikelyNonProductionPackageId,
+  isRankMatchEstablished,
+  BEST_EFFORT_TITLE_SIMILARITY_THRESHOLD,
+  type SerpPackageLookup,
+  type SerpLookupSource,
 } from "@/lib/keywords/serper-snapshot-rank-resolve";
 
 /**

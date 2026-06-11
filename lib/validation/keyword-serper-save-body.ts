@@ -32,10 +32,13 @@ const serperPreviewCountryBlockSchema = z.object({
 /** Shared by serper-save and POST create-keyword (`initialRanks`). */
 export const snapshotRankEntrySchema = z.object({
   country: countryCodeSchema,
-  rank: z.union([
-    z.number().int().min(1).max(200),
-    z.literal(SERPER_RANK_NOT_IN_FIRST_PAGE),
-  ]),
+  rank: z.preprocess(
+    (v) => (v == null ? SERPER_RANK_NOT_IN_FIRST_PAGE : v),
+    z.union([
+      z.number().int().min(1).max(200),
+      z.literal(SERPER_RANK_NOT_IN_FIRST_PAGE),
+    ]),
+  ),
 });
 
 /**

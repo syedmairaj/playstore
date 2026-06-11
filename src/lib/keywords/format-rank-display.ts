@@ -1,26 +1,37 @@
 import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
+import {
+  LIVE_RANK_VISIBILITY_CEILING,
+  type SerperRankMatchKind,
+} from "@/lib/keywords/serper-snapshot-rank-resolve";
 
 export type RankDisplayLabels = {
   notInTop: string;
   notPublished?: string;
   outsideTopTooltip?: string;
+  /** Shown while a Serper / Play search refresh is in flight. */
+  pending?: string;
+  pendingTooltip?: string;
 };
 
 export type RankDisplayContext = {
-  /** When false, missing / sentinel ranks for *your* app show notPublished (not "20+"). */
   workspaceAppLive?: boolean;
-  /** `yours` applies unpublished handling; `theirs` uses standard rank rules. */
   column?: "yours" | "theirs";
+  /** From snapshot `rank_match_kind` — retained for callers; not used for Pending vs 50+. */
+  matchKind?: SerperRankMatchKind | null;
+  /** True while serper-refresh is running for this keyword row. */
+  isSearchInProgress?: boolean;
+  /** True when at least one rank snapshot exists for this keyword × market. */
+  searchComplete?: boolean;
 };
 
 export type ResolvedRankDisplay = {
   text: string;
   tooltip?: string;
-  variant: "empty" | "rank" | "outsideTop" | "notPublished";
+  variant: "empty" | "rank" | "outsideTop" | "notPublished" | "pending";
 };
 
 function isOutsideTopRank(rank: number): boolean {
-  return rank > 20 || rank >= SERPER_RANK_NOT_IN_FIRST_PAGE;
+  return rank > LIVE_RANK_VISIBILITY_CEILING || rank >= SERPER_RANK_NOT_IN_FIRST_PAGE;
 }
 
 export function resolveRankDisplay(
@@ -31,6 +42,14 @@ export function resolveRankDisplay(
   const column = ctx?.column ?? "theirs";
   const live = ctx?.workspaceAppLive !== false;
 
+  if (ctx?.isSearchInProgress) {
+    return {
+      text: labels.pending ?? "Pending",
+      tooltip: labels.pendingTooltip,
+      variant: "pending",
+    };
+  }
+
   if (column === "yours" && !live) {
     return {
       text: labels.notPublished ?? "N/A",
@@ -39,7 +58,7 @@ export function resolveRankDisplay(
   }
 
   if (rank == null) {
-    if (column === "yours" && live) {
+    if (column === "yours" && live && ctx?.searchComplete) {
       return {
         text: labels.notInTop,
         tooltip: labels.outsideTopTooltip,
@@ -70,6 +89,9 @@ export function formatRankForDisplay(
     notPublished: "notPublished" in labels ? (labels as RankDisplayLabels).notPublished : undefined,
     outsideTopTooltip:
       "outsideTopTooltip" in labels ? (labels as RankDisplayLabels).outsideTopTooltip : undefined,
+    pending: "pending" in labels ? (labels as RankDisplayLabels).pending : undefined,
+    pendingTooltip:
+      "pendingTooltip" in labels ? (labels as RankDisplayLabels).pendingTooltip : undefined,
   };
   return resolveRankDisplay(rank, extended, ctx).text;
 }

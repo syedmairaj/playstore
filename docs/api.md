@@ -49,7 +49,7 @@ Returns keywords plus `ranks` (chronological, capped) and `latest` snapshot (pri
 
 ### POST /api/workspaces/:workspaceId/keywords/:keywordId/serper-refresh
 
-Re-runs Serper for the keyword’s term (**`num: 100`** per country for a deep organic slice; preview remains **`num: 20`**). **Countries:** distinct **`country_code`** values on existing **`keyword_rank_snapshots`** for that keyword (when any exist); otherwise supported codes from **`apps.target_countries`**, or **`keywords.market`** when none match. Debits **`serper_preview_per_country` × country count** (wallet pattern; same per-country rate as other Serper-backed refresh flows; depth does not multiply credits), refunds on hard failure before snapshots are stored. Inserts **`keyword_rank_snapshots`** with `source = serper`. Ranks resolve by matching **`apps.package_name`** to Play details URLs / extracted package ids (not app titles). **503** when `SERPER_API_KEY` is missing; **400** `no_package_name` when the app has no Android id.
+Re-runs Serper for the keyword’s term (**`num: 100`** per country for a deep organic slice; preview remains **`num: 20`**). Uses **`deepRankSearch`** (mobile Serper, 50 results × 2 pages). When Serper returns fewer than **15** Play apps for a country, the server supplements with native **Google Play Store search** (`google-play-scraper`) so broad keywords (e.g. `run`) still resolve ranks from the real Play listing order. **Countries:** distinct **`country_code`** values on existing **`keyword_rank_snapshots`** for that keyword (when any exist); otherwise supported codes from **`apps.target_countries`**, or **`keywords.market`** when none match. Debits **`serper_preview_per_country` × country count** (wallet pattern; same per-country rate as other Serper-backed refresh flows; depth does not multiply credits), refunds on hard failure before snapshots are stored. Inserts **`keyword_rank_snapshots`** with `source = serper`. Ranks resolve by matching **`apps.package_name`** to Play details URLs / extracted package ids (not app titles). **503** when `SERPER_API_KEY` is missing; **400** `no_package_name` when the app has no Android id.
 
 ### POST /api/workspaces/:workspaceId/keywords/bulk
 
@@ -245,7 +245,7 @@ Fetches public Play Store reviews via `google-play-scraper` for a workspace app�
 
 ### PATCH /api/workspaces/:workspaceId/apps/:appId
 
-**Body:** fields from `patchAppSchema` — updates `name`, `package_name`, `play_store_url`, `target_countries`, and optional **`icon_url`**. When `icon_url` is sent, the server writes **`apps.icon_url`** (nullable) and mirrors the same value into **`apps.metadata.icon_url`** for backward compatibility. Clearing `icon_url` removes it from both places when supported by the payload.
+**Body:** fields from `patchAppSchema` — updates `name`, `package_name`, optional **`canonical_package_id`** (production Play Store id for live Serper rank lookups), `play_store_url`, `target_countries`, and optional **`icon_url`**. When `icon_url` is sent, the server writes **`apps.icon_url`** (nullable) and mirrors the same value into **`apps.metadata.icon_url`** for backward compatibility. Clearing `icon_url` removes it from both places when supported by the payload.
 
 ### POST /api/workspaces/:workspaceId/onboarding/complete
 
