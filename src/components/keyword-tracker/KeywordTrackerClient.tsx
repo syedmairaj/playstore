@@ -37,6 +37,9 @@ import { type SupportedCountryCode } from "@/lib/countries";
 import { formatRelativePastSince } from "@/lib/intl/format-relative-past";
 import type { LatestAiListingKeywordsRow } from "@/lib/keywords/latest-ai-listing-by-app";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
+import { normalizeCompetitorDisplayNameForRank } from "@/lib/keywords/serper-snapshot-rank-resolve";
+import { parseTrackedCompetitorRankText } from "@/lib/keywords/tracked-competitor-ranks";
+import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
 import { resolveRankInCountryForSerperSnapshot } from "@/lib/keywords/serper-snapshot-rank-resolve";
 import type { WorkspaceAppListRow } from "@/lib/workspace/workspace-apps-list";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
@@ -344,9 +347,9 @@ export function KeywordTrackerClient({
         const slots: [CompetitorSlot | null, CompetitorSlot | null] = [null, null];
         for (let i = 0; i < 2; i++) {
           const comp = json.competitors[i];
-          if (!comp?.shared || !comp.packageId) continue;
+          if (!comp?.packageId) continue;
           const map = new Map<string, number>();
-          for (const row of comp.shared) {
+          for (const row of comp.shared ?? []) {
             if (typeof row.keyword === "string" && typeof row.theirRank === "number") {
               const key = row.keyword.trim().toLowerCase();
               const existing = map.get(key);
@@ -354,7 +357,10 @@ export function KeywordTrackerClient({
             }
           }
           slots[i as 0 | 1] = {
-            name: comp.displayName ?? comp.packageId,
+            name:
+              normalizeCompetitorDisplayNameForRank(comp.displayName) ??
+              comp.displayName ??
+              comp.packageId,
             packageId: comp.packageId,
             iconUrl: typeof comp.iconUrl === "string" && comp.iconUrl.length > 0 ? comp.iconUrl : null,
             rankByTerm: map,
@@ -982,8 +988,12 @@ export function KeywordTrackerClient({
           setRows((prev) =>
             prev.map((row) => {
               if (row.id !== keywordId) return row;
+              const storedRank =
+                typeof freshRank === "number"
+                  ? freshRank
+                  : SERPER_RANK_NOT_IN_FIRST_PAGE;
               const snapshotRow = {
-                rank: typeof freshRank === "number" ? freshRank : null,
+                rank: storedRank,
                 captured_at: freshAt,
               };
               // Build a minimal latestPerCountry entry for the primary market so
@@ -991,20 +1001,46 @@ export function KeywordTrackerClient({
               const market = String(row.market ?? "us").trim().toLowerCase();
               const patchedPerCountry: typeof row.latestPerCountry = [
                 ...(row.latestPerCountry?.filter((e) => e.country !== market) ?? []),
-                ...(typeof freshRank === "number"
-                  ? [{ country: market as import("@/lib/countries").SupportedCountryCode, rank: freshRank, captured_at: freshAt }]
-                  : []),
+                {
+                  country: market as import("@/lib/countries").SupportedCountryCode,
+                  rank: storedRank,
+                  captured_at: freshAt,
+                },
               ];
+              const trackedFromRefresh: NonNullable<
+                KeywordWithRanks["trackedCompetitorsByCountry"]
+              >[string] = [];
+              const { competitor1, competitor2 } = json;
+              if (competitor1?.packageId) {
+                trackedFromRefresh.push({
+                  package_name: competitor1.packageId.trim().toLowerCase(),
+                  rank: parseTrackedCompetitorRankText(competitor1.rank),
+                });
+              }
+              if (competitor2?.packageId) {
+                trackedFromRefresh.push({
+                  package_name: competitor2.packageId.trim().toLowerCase(),
+                  rank: parseTrackedCompetitorRankText(competitor2.rank),
+                });
+              }
+              const patchedTrackedByCountry =
+                trackedFromRefresh.length > 0
+                  ? {
+                      ...(row.trackedCompetitorsByCountry ?? {}),
+                      [market]: trackedFromRefresh,
+                    }
+                  : row.trackedCompetitorsByCountry;
               return {
                 ...row,
                 latest: snapshotRow,
                 latestPerCountry: patchedPerCountry.length > 0 ? patchedPerCountry : row.latestPerCountry,
+                trackedCompetitorsByCountry: patchedTrackedByCountry,
                 lastSyncedAt: freshAt,
                 // Inject a minimal synthetic rank history entry so ranks[] is
                 // non-empty, which also clears isKeywordRankSyncPending.
                 ranks: [
                   ...row.ranks,
-                  { rank: typeof freshRank === "number" ? freshRank : null, captured_at: freshAt },
+                  { rank: storedRank, captured_at: freshAt },
                 ],
               };
             }),
@@ -1495,6 +1531,7 @@ export function KeywordTrackerClient({
                   mutationPending={mutationPending}
                   serperRowRefreshId={serperRowRefreshId}
                   countryLabel={countryLabel}
+                  isRtl={isRtl}
                   onHistory={setHistoryFor}
                   onDelete={(id) => void onDelete(id)}
                   onSerperRefresh={(id) => {
@@ -1612,6 +1649,7 @@ export function KeywordTrackerClient({
       <KeywordValidatorCard
         workspaceId={workspaceId}
         appId={scopeAppId || undefined}
+        vaultLocale={locale === "ar" ? "ar" : "en"}
         selectedCountries={selectedCountries}
         isOpen={isValidatorDrawerOpen}
         onClose={() => setIsValidatorDrawerOpen(false)}

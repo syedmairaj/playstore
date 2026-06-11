@@ -120,13 +120,15 @@ export interface SynthesisContext {
     locale: "en" | "ar";
   };
 
-  // Priority 1: Keywords
+  // Priority 1: Keywords (validator / Keyword Tracker first)
   stagedKeywords: Array<{
     term: string;
     difficulty: number;
     volume: number;
     confidence?: number;
     rank_position?: number;
+    source?: "validator" | "tracker";
+    tier?: "high" | "medium" | "low";
   }>;
 
   // Priority 2: Competitors

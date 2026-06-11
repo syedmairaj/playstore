@@ -318,8 +318,11 @@ function buildSystemMessage(targetArabic: boolean): string {
       "(1) BRIEF ANALYSIS: Identify the single strongest USP, the primary user transformation, " +
       "the market gap, all staged review issues, all market spotlight keywords, and all competitor weaknesses. " +
       "(2) SYNTHESIS HIERARCHY — apply in this exact priority order: " +
+      "PRIORITY 0 KEYWORD TRACKER: If Keyword Tracker signals are provided, they are the PRIMARY foundation for title, shortDescription, fullDescription, and ASO score. " +
+      "High-confidence terms (≥75%) MUST appear naturally in title and shortDescription. Medium-confidence (50–74%) weave into fullDescription. " +
+      "Explain keyword impact in ctaSuggestions[0] (WHY THIS RANKS) and strategySummary. " +
       "PRIORITY 1 FIX: Address ALL provided review issues directly in fullDescription + whatsNew. Reassure users these specific issues are resolved. " +
-      "PRIORITY 2 CAPTURE: Use provided market spotlight keywords as the foundation for title and shortDescription. " +
+      "PRIORITY 2 CAPTURE: Use provided market spotlight keywords as the foundation for title and shortDescription (after Keyword Tracker terms). " +
       "PRIORITY 3 CONVERT: Use competitor weaknesses to position this app as the superior alternative in fullDescription. " +
       "PRIORITY 4 TONE: Apply the requested tone consistently across ALL fields. " +
       "(3) SEMANTIC MAPPING: Map all keywords to natural language INTENT — never insert keyword strings verbatim if awkward. " +
@@ -343,7 +346,8 @@ function buildSystemMessage(targetArabic: boolean): string {
     "Return a single JSON object with EXACTLY these camelCase keys:",
 
     "  title: string ≤30 chars. " +
-      "SYNTHESIS: If market spotlight keywords are present, the title MUST include the most relevant one. " +
+      "SYNTHESIS: If Keyword Tracker signals are present, the title MUST include the highest-confidence term. " +
+      "Else if market spotlight keywords are present, the title MUST include the most relevant one. " +
       "Format: primary market keyword + transformation hook. Signals relevance (search) AND outcome (conversion). " +
       "Tone-consistent. Complete-word boundary.",
 
@@ -468,6 +472,17 @@ function buildSystemMessage(targetArabic: boolean): string {
 //   - strategySummary replaces strategicNote — richer consultant-grade one-liner.
 //   - Competitor weaknesses (CONVERT BETTER block) now explicitly addressed.
 
+function formatTrackedKeywordLine(
+  s: NonNullable<ListingOptimizerInput["trackedKeywordSignals"]>[number],
+): string {
+  const parts = [`"${s.keyword}" (${s.confidence}% conf.)`];
+  if (typeof s.searchVolume === "number" && s.searchVolume > 0) {
+    parts.push(`~${s.searchVolume.toLocaleString()}/mo`);
+  }
+  if (s.liveRankSummary) parts.push(s.liveRankSummary);
+  return parts.join(" · ");
+}
+
 function buildUserMessage(
   input: ListingOptimizerInput,
   keywords: string[],
@@ -475,6 +490,13 @@ function buildUserMessage(
   targetArabic: boolean,
 ): string {
   const toneBrief = TONE_BRIEF[input.toneStyle];
+  const trackedSignals = input.trackedKeywordSignals ?? [];
+  const highConfTracked = trackedSignals
+    .filter((s) => s.confidence >= 75)
+    .sort((a, b) => b.confidence - a.confidence);
+  const mediumConfTracked = trackedSignals
+    .filter((s) => s.confidence >= 50 && s.confidence < 75)
+    .sort((a, b) => b.confidence - a.confidence);
 
   // ── Classify signals from exploitTargets ─────────────────────────────────
   // market_spotlight: prefix → market demand keywords (CAPTURE DEMAND)
@@ -516,7 +538,8 @@ function buildUserMessage(
 
   // ── Active Optimization Inputs section ──────────────────────────────────
   // Only rendered when at least one signal type is present.
-  const hasAnySignals = reviewIssues.length > 0 || spotlightKeywords.length > 0;
+  const hasAnySignals =
+    trackedSignals.length > 0 || reviewIssues.length > 0 || spotlightKeywords.length > 0;
 
   const optimizationInputsBlock = hasAnySignals
     ? [
@@ -524,6 +547,28 @@ function buildUserMessage(
         "═══════════════════════════════════════════",
         "ACTIVE OPTIMIZATION INPUTS (Integrate ALL of these into the listing)",
         "═══════════════════════════════════════════",
+
+        // Signal 0: Keyword Tracker (highest priority)
+        trackedSignals.length > 0
+          ? [
+              "",
+              "0. KEYWORD TRACKER (Primary ASO Foundation — Highest Priority):",
+              "   These validated keywords drive 70–80% of organic visibility. Prioritize in title, shortDescription, and fullDescription.",
+              highConfTracked.length > 0
+                ? `   High confidence (≥75%): ${highConfTracked.map(formatTrackedKeywordLine).join("; ")}`
+                : null,
+              mediumConfTracked.length > 0
+                ? `   Medium opportunity (50–74%): ${mediumConfTracked.map(formatTrackedKeywordLine).join("; ")}`
+                : null,
+              "   • Title + shortDescription: lead with highest-confidence term(s) — semantic weaving only, never awkward stuffing.",
+              "   • fullDescription: distribute medium-confidence terms in benefit bullets and bridge sentences.",
+              "   • ASO score: reward natural inclusion of high-confidence terms in title (+title breakdown) and shortDescription.",
+              "   • ctaSuggestions[0] (WHY THIS RANKS): cite which Keyword Tracker terms were placed and expected visibility impact.",
+              "   • strategySummary: mention Keyword Tracker terms woven and ranking potential.",
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : null,
 
         // Signal 1: Review Issues
         reviewIssues.length > 0
@@ -568,12 +613,15 @@ function buildUserMessage(
     "═══════════════════════════════════════════",
     "SYNTHESIS LOGIC (Hierarchy of Operations — follow in this exact order)",
     "═══════════════════════════════════════════",
+    trackedSignals.length > 0
+      ? `0. KEYWORD TRACKER FIRST: Weave [${trackedSignals.map((s) => s.keyword).join(", ")}] as the primary search foundation. High-confidence in title + shortDescription; medium in fullDescription. Boost ASO score when placed naturally.`
+      : "0. KEYWORD TRACKER: No tracked keywords staged — use seed keywords as primary search foundation.",
     reviewIssues.length > 0
-      ? `1. FIX FIRST: Address [${reviewIssues.join(", ")}] directly in fullDescription (hook must open with resolution promise) AND whatsNew (must be first thing the user reads). Reassure users these specific issues are resolved.`
-      : "1. FIX FIRST: No review issues staged this session — skip this step.",
+      ? `1. FIX: Address [${reviewIssues.join(", ")}] directly in fullDescription (hook must open with resolution promise) AND whatsNew (must be first thing the user reads). Reassure users these specific issues are resolved.`
+      : "1. FIX: No review issues staged this session — skip this step.",
     spotlightKeywords.length > 0
-      ? `2. CAPTURE DEMAND: Use [${spotlightKeywords.join(", ")}] as the foundation for title and shortDescription to maximize search visibility.`
-      : "2. CAPTURE DEMAND: No market spotlight keywords staged — use seed keywords to maximise search visibility.",
+      ? `2. CAPTURE DEMAND: Use [${spotlightKeywords.join(", ")}] in title and shortDescription after Keyword Tracker terms to maximize search visibility.`
+      : "2. CAPTURE DEMAND: No market spotlight keywords staged — supplement with seed keywords.",
     typeof input.userInstruction === "string" && input.userInstruction.trim().startsWith("Tracked competitor analysis")
       ? "3. CONVERT BETTER: Competitor weaknesses are described in PRODUCT OWNER DIRECTION below. Write the fullDescription to position this app as the superior alternative to those rival failures."
       : "3. CONVERT BETTER: No competitor weaknesses staged — focus on app's own differentiation in fullDescription.",

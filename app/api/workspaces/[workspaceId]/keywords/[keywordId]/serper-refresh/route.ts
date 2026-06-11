@@ -13,14 +13,18 @@ import { captureKeywordAsoBaselineIfUnset } from "@/lib/keywords/capture-aso-bas
 import { maybeCreateAsoRankImprovementAlert } from "@/lib/keywords/evaluate-aso-improvement-alert";
 import { maybeCreateRankAlerts } from "@/lib/keywords/evaluate-alerts";
 import {
+  formatTrackedCompetitorRankForDb,
+  resolveTrackedCompetitorRankInSerp,
+  summarizeTrackedCompetitorResolution,
+  type TrackedCompetitorRef,
+} from "@/lib/keywords/tracked-competitor-ranks";
+import {
   resolveRankInCountryForSerperSnapshot,
+  rankForClientDisplay,
+  rankForSnapshotInsert,
   serperCountriesForKeywordRefresh,
 } from "@/lib/keywords/serper-snapshot-rank";
-import {
-  normPkgForSerperSnapshot,
-  effectiveSerperPreviewItemPackage,
-} from "@/lib/keywords/serper-snapshot-rank-resolve";
-import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
+import { normPkgForSerperSnapshot } from "@/lib/keywords/serper-snapshot-rank-resolve";
 import {
   SerperNotConfiguredError,
   isSerperConfigured,
@@ -55,48 +59,13 @@ import { getWorkspaceRole } from "@/lib/workspace/membership";
 function resolveCompetitorRankString(
   results: SerperPlayStoreCountryResult[],
   competitorPkg: string | null | undefined,
+  competitorName: string | null | undefined,
   cc: string,
 ): string | null {
-  // normPkgForSerperSnapshot: trims raw input, decodes percent-encoding, trims again,
-  // lowercases. Returns null when slot is empty — callers write NULL to the DB column.
-  const want = normPkgForSerperSnapshot(competitorPkg);
-  if (!want) return null; // slot empty → sparse NULL
-
-  const country = String(cc ?? "").trim().toLowerCase();
-  const block = results.find(
-    (r) => String(r.country ?? "").trim().toLowerCase() === country,
+  if (!normPkgForSerperSnapshot(competitorPkg)) return null;
+  return formatTrackedCompetitorRankForDb(
+    resolveTrackedCompetitorRankInSerp(results, competitorPkg, cc, competitorName),
   );
-  if (!block || block.error) return "100+";
-
-  let best: number | undefined;
-
-  // Iterate ALL items — no break, no early return. We want the minimum position
-  // across every alias match (e.g. com.foo and com.foo.debug are treated as the same app).
-  for (const item of block.items) {
-    // effectiveSerperPreviewItemPackage resolves packageId or ?id= from link, then
-    // normalises through normPkgForSerperSnapshot → always trimmed + lowercased.
-    const ep = effectiveSerperPreviewItemPackage({
-      packageId: item.packageId,
-      link: item.link,
-    });
-    if (!ep) continue;
-
-    // Strict or suffix/prefix family match (e.g. com.foo vs com.foo.debug).
-    const isMatch =
-      ep === want ||
-      ep.startsWith(`${want}.`) ||
-      want.startsWith(`${ep}.`);
-    if (!isMatch) continue;
-
-    // Serper position is 1-indexed numeric. Guard against non-finite / zero values.
-    const pos = Math.round(item.position);
-    if (!Number.isFinite(pos) || pos < 1) continue;
-
-    if (best === undefined || pos < best) best = pos;
-  }
-
-  if (best === undefined) return "100+";
-  return best >= SERPER_RANK_NOT_IN_FIRST_PAGE ? "100+" : String(best);
 }
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/keywords/[keywordId]/serper-refresh";
@@ -165,7 +134,7 @@ export async function POST(_request: Request, context: Ctx) {
 
   const { data: appRow, error: appErr } = await supabase
     .from("apps")
-    .select("id,package_name,target_countries")
+    .select("id,package_name,name,target_countries")
     .eq("id", appId)
     .eq("workspace_id", workspaceId)
     .maybeSingle();
@@ -178,6 +147,8 @@ export async function POST(_request: Request, context: Ctx) {
   }
 
   const pkg = String(appRow.package_name ?? "").trim();
+  const appDisplayName =
+    typeof appRow.name === "string" && appRow.name.trim() ? appRow.name.trim() : null;
   if (!pkg) {
     return NextResponse.json(
       {
@@ -280,15 +251,27 @@ export async function POST(_request: Request, context: Ctx) {
 
   const comp1Pkg: string | null =
     (competitorRows?.[0]?.competitor_package_id as string | undefined) ?? null;
+  const comp1Name: string | null =
+    (competitorRows?.[0]?.competitor_name as string | undefined) ?? null;
   const comp2Pkg: string | null =
     (competitorRows?.[1]?.competitor_package_id as string | undefined) ?? null;
+  const comp2Name: string | null =
+    (competitorRows?.[1]?.competitor_name as string | undefined) ?? null;
 
   try {
     const snapshotAt = new Date().toISOString();
     // Live Serper only (searchPlayStore uses cache: "no-store"). Deep organic slice for refresh;
     // billing remains serper_preview_per_country × countries (see keyword-track-ai-pricing).
+    const trackedCompetitorRefs: TrackedCompetitorRef[] = [
+      ...(comp1Pkg ? [{ package_name: comp1Pkg, name: comp1Name }] : []),
+      ...(comp2Pkg ? [{ package_name: comp2Pkg, name: comp2Name }] : []),
+    ];
+
+    // Play-focused query (same as Competitor Spy) — generic Google SERP often
+    // returns only 1–2 play.google.com links and misses tracked competitors.
     const results = await searchPlayStore(String(keyword.term ?? "").trim(), countries, {
       num: 100,
+      restrictToPlayStore: true,
     });
     const mkt = String(keyword.market ?? "us").trim().toLowerCase() || "us";
 
@@ -306,26 +289,48 @@ export async function POST(_request: Request, context: Ctx) {
     // Build one snapshot row per country.
     // competitor_1_rank / competitor_2_rank: numeric string ("7") or "100+" when not
     // found; null when the competitor slot is empty (keeps the column sparse / NULL).
-    const rows = countries.map((cc) => ({
-      keyword_id: keywordId,
-      rank: resolveRankInCountryForSerperSnapshot(results, pkg, cc),
-      source: "serper" as const,
-      country_code: cc,
-      snapshot_at: snapshotAt,
-      // Competitor slot 1
-      competitor_1_package: comp1Pkg ?? null,
-      competitor_1_rank: resolveCompetitorRankString(results, comp1Pkg, cc),
-      // Competitor slot 2
-      competitor_2_package: comp2Pkg ?? null,
-      competitor_2_rank: resolveCompetitorRankString(results, comp2Pkg, cc),
-    }));
+    for (const cc of countries) {
+      const trackedLog = summarizeTrackedCompetitorResolution(
+        trackedCompetitorRefs,
+        results,
+        cc,
+      );
+      console.log(`[${ROUTE}] tracked competitors (user-selected only)`, {
+        keyword: keyword.term,
+        country: cc,
+        yourPackage: pkg,
+        serpPlayAppCount: trackedLog.serp_play_app_count,
+        competitors: trackedLog.competitors,
+      });
+    }
 
-    const primaryRank = resolveRankInCountryForSerperSnapshot(results, pkg, mkt);
+    const rankOptions = { displayName: appDisplayName };
+    const rows = countries.map((cc) => {
+      const rawRank = resolveRankInCountryForSerperSnapshot(results, pkg, cc, rankOptions);
+      return {
+        keyword_id: keywordId,
+        rank: rankForSnapshotInsert(rawRank),
+        source: "serper" as const,
+        country_code: cc,
+        snapshot_at: snapshotAt,
+        competitor_1_package: comp1Pkg ?? null,
+        competitor_1_rank: resolveCompetitorRankString(results, comp1Pkg, comp1Name, cc),
+        competitor_2_package: comp2Pkg ?? null,
+        competitor_2_rank: resolveCompetitorRankString(results, comp2Pkg, comp2Name, cc),
+      };
+    });
+
+    const primaryRankRaw = resolveRankInCountryForSerperSnapshot(results, pkg, mkt, rankOptions);
+    const primaryRankDb = rankForSnapshotInsert(primaryRankRaw);
+    const primaryRankClient = rankForClientDisplay(primaryRankRaw);
+
+    const snapSelect =
+      "id,rank,snapshot_at,best_rank,source,country_code,competitor_1_package,competitor_1_rank,competitor_2_package,competitor_2_rank";
 
     const { data: snaps, error: snapErr } = await supabase
       .from("keyword_rank_snapshots")
       .insert(rows)
-      .select("id,rank,snapshot_at,best_rank,source,country_code,competitor_1_package,competitor_1_rank,competitor_2_package,competitor_2_rank");
+      .select(snapSelect);
 
     if (snapErr || !snaps?.length) {
       throw new Error(snapErr?.message ?? "snapshot_insert_failed");
@@ -340,13 +345,13 @@ export async function POST(_request: Request, context: Ctx) {
       workspaceId,
       keywordId,
       keywordTerm: String(keyword.term ?? ""),
-      prevRank,
-      newRank: primaryRank,
+      prevRank: rankForClientDisplay(prevRank),
+      newRank: primaryRankClient,
     });
 
     await captureKeywordAsoBaselineIfUnset(supabase, {
       keywordId,
-      candidateRank: primaryRank,
+      candidateRank: primaryRankDb,
       source: "initial_save",
     });
 
@@ -355,7 +360,7 @@ export async function POST(_request: Request, context: Ctx) {
       workspaceId,
       keywordId,
       keywordTerm: String(keyword.term ?? ""),
-      newPrimaryRank: primaryRank,
+      newPrimaryRank: primaryRankClient,
     });
 
     void logAdminAiTransaction({
@@ -369,7 +374,7 @@ export async function POST(_request: Request, context: Ctx) {
 
     return NextResponse.json({
       ok: true,
-      rank: primarySnap.rank,
+      rank: rankForClientDisplay(primarySnap.rank as number),
       snapshotAt: primarySnap.snapshot_at,
       creditsCharged: creditCost,
       countries,

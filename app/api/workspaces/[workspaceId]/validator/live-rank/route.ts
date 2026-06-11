@@ -4,50 +4,27 @@
  * Multi-market, credit-scaled live rank fetch for KeywordValidatorCard.
  *
  * ─── Credit model ────────────────────────────────────────────────────────────
- * Cost = countries.length × 1 credit  (same rate as Keyword Tracker refresh)
- * Single atomic debit for the full batch before any Serper calls.
- * If ALL markets fail → full refund (net 0).
- * Partial success → no refund (user receives results for succeeded markets).
+ * Cost = countries.length × 1 credit (same rate as Keyword Tracker refresh)
+ * Single atomic debit before Serper calls. Full refund if ALL markets fail.
  *
- * ─── Vault schema ────────────────────────────────────────────────────────────
- * Writes to state_{locale}.features.keyword_validator.signals.[keyword].live_ranks.[market_code]
+ * ─── Rank resolution ─────────────────────────────────────────────────────────
+ * `resolveRankInCountryForSerperSnapshot` returns `number | null`:
+ *   - integer position when the app is in the organic SERP slice
+ *   - `null` when not found or Serper block errored
  *
- * Example (locale="en", keyword="calorie", markets=["us","in"]):
- * state_en.features.keyword_validator.signals = {
- *   "calorie": {
- *     live_ranks: {
- *       "us": { rank: 1,    fetched_at: "2026-06-10T..." },
- *       "in": { rank: null, fetched_at: "2026-06-10T..." }
- *     }
- *   }
- * }
+ * API / vault responses expose that `null` as-is (UI maps to "20+" via i18n).
+ * `keyword_rank_snapshots.rank` is NOT NULL — we persist
+ * {@link SERPER_RANK_NOT_IN_FIRST_PAGE} when resolution is `null`.
+ *
+ * ─── Competitors ─────────────────────────────────────────────────────────────
+ * Only workspace Competitor Spy slots (up to 2) from
+ * `workspace_competitor_analyses` — never generic SERP leaders.
+ * Vault: `live_ranks.[market].tracked_competitor_ranks`
+ * Snapshots: `competitor_1_rank` / `competitor_2_rank`
  *
  * ─── Dual-Env Parity ─────────────────────────────────────────────────────────
- * locale="en" writes to state_en exclusively.
- * locale="ar" writes to state_ar exclusively.
- * locale × market is a valid matrix: an AR listing can rank in US and IN.
- *
- * ─── Security ────────────────────────────────────────────────────────────────
- * All credit logic is server-side. Client never touches billing.
- * consume_workspace_ai_credits RPC uses SELECT FOR UPDATE — tamper-proof.
- *
- * Request body:
- * {
- *   keyword:   string,
- *   countries: string[],   // e.g. ["us", "in"]  — 1 credit each
- *   appId:     string,     // UUID
- *   locale:    "en" | "ar"
- * }
- *
- * Response:
- * {
- *   ok: true,
- *   keyword: string,
- *   results: Array<{ country: string, rank: number | null, error?: string }>,
- *   creditsCharged: number,
- *   balanceAfter: number,
- *   rankedAt: string
- * }
+ * locale="en" → state_en exclusively
+ * locale="ar" → state_ar exclusively
  */
 
 import { NextResponse } from "next/server";
@@ -66,39 +43,128 @@ import {
   searchPlayStore,
   isSerperConfigured,
   SerperNotConfiguredError,
+  type SerperPlayStoreCountryResult,
 } from "@/lib/serper";
 import { serperAiCreditsForCountryCount } from "@/lib/keywords/keyword-track-ai-pricing";
 import {
+  buildTrackedCompetitorRanksMap,
+  formatTrackedCompetitorRankForDb,
+  summarizeTrackedCompetitorResolution,
+  type TrackedCompetitorRef,
+} from "@/lib/keywords/tracked-competitor-ranks";
+import {
   resolveRankInCountryForSerperSnapshot,
+  rankForSnapshotInsert,
   normPkgForSerperSnapshot,
+  applyLiveRankClientPolicy,
+  findBestRankInSerpItems,
+  type LiveRankNotRankedReason,
 } from "@/lib/keywords/serper-snapshot-rank-resolve";
-// vaultRouter NOT imported — pulls producer-registry → missing producer files →
-// webpack bundle crash on keywords page. Direct supabase JSONB patch used instead.
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/validator/live-rank";
-const MAX_MARKETS = 4; // mirrors Keyword Tracker CountrySelector limit
+const MAX_MARKETS = 4;
 
 const bodySchema = z.object({
-  keyword:   z.string().min(1).max(100).trim(),
+  keyword: z.string().min(1).max(100).trim(),
   countries: z
     .array(z.string().min(2).max(4).toLowerCase().trim())
     .min(1)
     .max(MAX_MARKETS),
-  appId:  z.string().uuid(),
+  appId: z.string().uuid(),
   locale: z.enum(["en", "ar"]).default("en"),
 });
 
 type Ctx = { params: Promise<{ workspaceId: string }> };
 
-// ─── SERP_NOT_IN_TOP constant ─────────────────────────────────────────────────
-const NOT_IN_TOP = 100; // mirrors SERPER_RANK_NOT_IN_FIRST_PAGE
+type MarketResult = {
+  country: string;
+  /** Organic position within visibility window; `null` = not ranked for UI. */
+  rank: number | null;
+  not_ranked_reason?: LiveRankNotRankedReason;
+  /** How the app was matched in the SERP slice (debug). */
+  match_kind?: "package" | "title" | "none";
+  tracked_competitor_ranks?: Record<string, number | null>;
+  error?: string;
+};
+
+function resolveMarketResult(
+  serperResults: readonly SerperPlayStoreCountryResult[],
+  market: string,
+  packageName: string,
+  appDisplayName: string | null,
+  trackedCompetitors: readonly TrackedCompetitorRef[],
+): MarketResult {
+  const block = serperResults.find(
+    (r) => String(r.country ?? "").trim().toLowerCase() === market,
+  );
+
+  if (!block || block.error) {
+    console.log(`[${ROUTE}] serper block error`, {
+      market,
+      error: block?.error ?? "No results",
+    });
+    return {
+      country: market,
+      rank: null,
+      not_ranked_reason: "serper_error",
+      error: block?.error ?? "No results",
+    };
+  }
+
+  const trackedLog = summarizeTrackedCompetitorResolution(
+    trackedCompetitors,
+    serperResults,
+    market,
+  );
+  console.log(`[${ROUTE}] tracked competitors (user-selected only)`, {
+    keyword_market: market,
+    yourPackage: packageName,
+    serpPlayAppCount: trackedLog.serp_play_app_count,
+    competitors: trackedLog.competitors,
+  });
+
+  const { rank: rawRank, matchKind } = findBestRankInSerpItems(block.items, packageName, {
+    displayName: appDisplayName,
+  });
+  const { rank: clientRank, not_ranked_reason } = applyLiveRankClientPolicy(rawRank);
+
+  const tracked_competitor_ranks =
+    trackedCompetitors.length > 0
+      ? buildTrackedCompetitorRanksMap(trackedCompetitors, serperResults, market)
+      : undefined;
+
+  console.log(`[${ROUTE}] rank resolved`, {
+    market,
+    packageName,
+    appDisplayName,
+    rawRank,
+    clientRank,
+    matchKind,
+    not_ranked_reason,
+    itemCount: block.items.length,
+    trackedCompetitors: tracked_competitor_ranks
+      ? Object.keys(tracked_competitor_ranks).length
+      : 0,
+  });
+
+  return {
+    country: market,
+    rank: clientRank,
+    ...(not_ranked_reason ? { not_ranked_reason } : {}),
+    match_kind: matchKind,
+    ...(tracked_competitor_ranks && Object.keys(tracked_competitor_ranks).length > 0
+      ? { tracked_competitor_ranks }
+      : {}),
+  };
+}
 
 export async function POST(request: Request, context: Ctx) {
   const { workspaceId } = await context.params;
   const supabase = await createClient();
 
-  // ── 1. Auth ──────────────────────────────────────────────────────────────
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json(
       { ok: false, error: { code: "unauthorized", message: "Sign in required" } },
@@ -106,7 +172,6 @@ export async function POST(request: Request, context: Ctx) {
     );
   }
 
-  // ── 2. Membership ────────────────────────────────────────────────────────
   const role = await getWorkspaceRole(supabase, workspaceId, user.id);
   if (!role) {
     return NextResponse.json(
@@ -115,14 +180,16 @@ export async function POST(request: Request, context: Ctx) {
     );
   }
 
-  // ── 3. Parse + validate body ─────────────────────────────────────────────
   let body: z.infer<typeof bodySchema>;
   try {
     body = bodySchema.parse(await request.json());
   } catch (err) {
     if (err instanceof ZodError) {
       return NextResponse.json(
-        { ok: false, error: { code: "validation", message: err.errors[0]?.message ?? "Invalid request" } },
+        {
+          ok: false,
+          error: { code: "validation", message: err.errors[0]?.message ?? "Invalid request" },
+        },
         { status: 422 },
       );
     }
@@ -133,51 +200,50 @@ export async function POST(request: Request, context: Ctx) {
   }
 
   const { keyword, countries, appId, locale } = body;
-  const markets    = [...new Set(countries)];
+  const markets = [...new Set(countries)];
   const creditCost = serperAiCreditsForCountryCount(markets.length);
 
-  // ── 4. Fetch app's package_name (needed for rank resolution) ─────────────
-  // Live rank = position of THIS APP in the SERP for the keyword query.
-  // We look up the app's Android package_name, then use the same
-  // resolveRankInCountryForSerperSnapshot function the Keyword Tracker uses.
-  // Without this, rank resolution is meaningless — we'd be finding the first
-  // app whose name happens to contain the keyword word, not the user's app.
   const { data: appRow } = await supabase
     .from("apps")
-    .select("package_name")
+    .select("package_name,name")
     .eq("id", appId)
     .eq("workspace_id", workspaceId)
     .maybeSingle();
 
   const packageName = String(appRow?.package_name ?? "").trim();
-  const normPkg     = normPkgForSerperSnapshot(packageName);
-
-  if (!normPkg) {
+  const appDisplayName =
+    typeof appRow?.name === "string" && appRow.name.trim() ? appRow.name.trim() : null;
+  if (!normPkgForSerperSnapshot(packageName)) {
     return NextResponse.json(
       {
         ok: false,
         error: {
           code: "no_package_name",
-          message: "Add your app's Android package name in workspace settings before fetching live ranks.",
+          message:
+            "Add your app's Android package name in workspace settings before fetching live ranks.",
         },
       },
       { status: 422 },
     );
   }
 
-  // ── 5. Serper configured? ────────────────────────────────────────────────
   if (!isSerperConfigured()) {
     return NextResponse.json(
-      { ok: false, error: { code: "serper_not_configured", message: "Live rank service is not configured." } },
+      {
+        ok: false,
+        error: { code: "serper_not_configured", message: "Live rank service is not configured." },
+      },
       { status: 503 },
     );
   }
 
-  // ── 6. Non-locking balance pre-check ────────────────────────────────────
   const balance = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
   if (!balance.ok) {
     return NextResponse.json(
-      { ok: false, error: { code: "wallet_error", message: "Could not read credit balance. Try again shortly." } },
+      {
+        ok: false,
+        error: { code: "wallet_error", message: "Could not read credit balance. Try again shortly." },
+      },
       { status: 503 },
     );
   }
@@ -188,9 +254,6 @@ export async function POST(request: Request, context: Ctx) {
     );
   }
 
-  // ── 7. Atomic credit debit (SELECT FOR UPDATE RPC) ───────────────────────
-  // Single debit for ALL markets upfront — prevents partial charges on
-  // concurrent requests and matches Keyword Tracker's debit pattern.
   const debit = await consumeWorkspaceAiCredits(supabase, {
     workspaceId,
     userId: user.id,
@@ -208,43 +271,52 @@ export async function POST(request: Request, context: Ctx) {
       );
     }
     return NextResponse.json(
-      { ok: false, error: { code: "wallet_error", message: "Could not reserve credits. Try again shortly." } },
+      {
+        ok: false,
+        error: { code: "wallet_error", message: "Could not reserve credits. Try again shortly." },
+      },
       { status: 503 },
     );
   }
 
-  const ledgerId  = debit.ledgerId;
-  const rankedAt  = new Date().toISOString();
+  const ledgerId = debit.ledgerId;
+  const rankedAt = new Date().toISOString();
 
-  // ── 8. Parallel Serper fetches — resolve rank by package_name ────────────
-  // We search Play Store for the keyword query, then find where the user's APP
-  // (identified by package_name) ranks in those results. This is identical to
-  // the approach used by the Keyword Tracker serper-refresh route.
-  type MarketResult = { country: string; rank: number | null; error?: string };
+  const { data: competitorRows } = await supabase
+    .from("workspace_competitor_analyses")
+    .select("competitor_package_id,competitor_name")
+    .eq("workspace_id", workspaceId)
+    .order("analyzed_at", { ascending: false })
+    .limit(2);
 
+  const trackedCompetitors: TrackedCompetitorRef[] = (competitorRows ?? [])
+    .map((row) => ({
+      package_name: String(row.competitor_package_id ?? "").trim(),
+      name: typeof row.competitor_name === "string" ? row.competitor_name : null,
+    }))
+    .filter((c) => c.package_name.length > 0);
+
+  const comp1Pkg = trackedCompetitors[0]?.package_name ?? null;
+  const comp2Pkg = trackedCompetitors[1]?.package_name ?? null;
+
+  let serperResults: SerperPlayStoreCountryResult[] = [];
   let marketResults: MarketResult[];
-  try {
-    const serperResults = await searchPlayStore(keyword, markets);
 
-    marketResults = markets.map((market) => {
-      const block = serperResults.find(
-        (r) => String(r.country ?? "").trim().toLowerCase() === market,
-      );
-      if (!block || block.error) {
-        return { country: market, rank: null, error: block?.error ?? "No results" };
-      }
-      // resolveRankInCountryForSerperSnapshot returns SERPER_RANK_NOT_IN_FIRST_PAGE (100)
-      // when the app is not in the top results — we map that to null for the UI.
-      const rawRank = resolveRankInCountryForSerperSnapshot(
-        serperResults,
-        packageName,
-        market,
-      );
-      const rank = rawRank >= NOT_IN_TOP ? null : rawRank;
-      return { country: market, rank };
+  try {
+    serperResults = await searchPlayStore(keyword, markets, {
+      num: 100,
+      restrictToPlayStore: true,
     });
+    marketResults = markets.map((market) =>
+      resolveMarketResult(
+        serperResults,
+        market,
+        packageName,
+        appDisplayName,
+        trackedCompetitors,
+      ),
+    );
   } catch (err) {
-    // All markets failed — full refund
     await refundWorkspaceAiCredits(supabase, {
       workspaceId,
       userId: user.id,
@@ -254,7 +326,10 @@ export async function POST(request: Request, context: Ctx) {
 
     if (err instanceof SerperNotConfiguredError) {
       return NextResponse.json(
-        { ok: false, error: { code: "serper_not_configured", message: "Live rank service is not configured." } },
+        {
+          ok: false,
+          error: { code: "serper_not_configured", message: "Live rank service is not configured." },
+        },
         { status: 503 },
       );
     }
@@ -265,8 +340,6 @@ export async function POST(request: Request, context: Ctx) {
     );
   }
 
-  // Partial failure: if every market errored, refund and surface the error.
-  // If some succeeded, we keep the charge (user got partial data).
   const allFailed = marketResults.every((r) => r.error);
   if (allFailed) {
     await refundWorkspaceAiCredits(supabase, {
@@ -276,21 +349,18 @@ export async function POST(request: Request, context: Ctx) {
       reason: "serper_live_rank_all_markets_failed",
     });
     return NextResponse.json(
-      { ok: false, error: { code: "rank_fetch_failed", message: "Could not fetch ranks for any requested market." } },
+      {
+        ok: false,
+        error: {
+          code: "rank_fetch_failed",
+          message: "Could not fetch ranks for any requested market.",
+        },
+      },
       { status: 502 },
     );
   }
 
-  // ── 9. Vault write — market-indexed JSONB (locale-correct branch) ────────
-  //
-  // Schema written (additive — Safety Rule compliant):
-  // state_{locale}.features.keyword_validator.signals.[keyword].live_ranks.[market_code]
-  //
-  // This structure allows:
-  //   - Multiple keywords per feature
-  //   - Multiple markets per keyword
-  //   - Full locale × market matrix
-  //   - Non-destructive updates (each market is a separate key)
+  // ── Vault write (locale-correct branch, additive per market) ─────────────
   try {
     const stateKey = locale === "ar" ? "state_ar" : "state_en";
 
@@ -303,20 +373,32 @@ export async function POST(request: Request, context: Ctx) {
       .maybeSingle();
 
     if (vaultRow) {
-      const currentState  = (vaultRow[stateKey as keyof typeof vaultRow] ?? {}) as Record<string, unknown>;
-      const features      = (currentState.features  ?? {}) as Record<string, unknown>;
-      const kvFeature     = (features.keyword_validator ?? {}) as Record<string, unknown>;
-      const signals       = (kvFeature.signals ?? {}) as Record<string, unknown>;
-      const kwSignal      = (signals[keyword] ?? {}) as Record<string, unknown>;
+      const currentState = (vaultRow[stateKey as keyof typeof vaultRow] ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const features = (currentState.features ?? {}) as Record<string, unknown>;
+      const kvFeature = (features.keyword_validator ?? {}) as Record<string, unknown>;
+      const signals = (kvFeature.signals ?? {}) as Record<string, unknown>;
+      const kwSignal = (signals[keyword] ?? {}) as Record<string, unknown>;
       const existingRanks = (kwSignal.live_ranks ?? {}) as Record<string, unknown>;
 
-      // Build new market entries (additive — never removes existing market data)
       const newRanks: Record<string, unknown> = { ...existingRanks };
-      for (const { country, rank, error } of marketResults) {
+      for (const {
+        country,
+        rank,
+        not_ranked_reason,
+        tracked_competitor_ranks,
+        error,
+      } of marketResults) {
+        if (error) continue;
         newRanks[country] = {
           rank,
           fetched_at: rankedAt,
-          ...(error ? { error } : {}),
+          ...(not_ranked_reason ? { not_ranked_reason } : {}),
+          ...(tracked_competitor_ranks && Object.keys(tracked_competitor_ranks).length > 0
+            ? { tracked_competitor_ranks }
+            : {}),
         };
       }
 
@@ -341,29 +423,109 @@ export async function POST(request: Request, context: Ctx) {
       await supabase
         .from("workspace_staging_vault")
         .update({
-          [stateKey]:       updatedState,
-          updated_at:       rankedAt,
-          change_count:     ((vaultRow.change_count as number) ?? 0) + 1,
+          [stateKey]: updatedState,
+          updated_at: rankedAt,
+          change_count: ((vaultRow.change_count as number) ?? 0) + 1,
           last_modified_by: user.id,
         })
         .eq("workspace_id", workspaceId)
         .eq("app_id", appId);
     }
   } catch (vaultErr) {
-    // Non-fatal — ranks were fetched, credits were spent
-    console.warn(`[${ROUTE}] ⚠️ Vault write failed (non-fatal):`,
+    console.warn(
+      `[${ROUTE}] vault write failed (non-fatal):`,
       vaultErr instanceof Error ? vaultErr.message : String(vaultErr),
     );
   }
 
-  // ── 10. Optimizer sync (fire-and-forget) ─────────────────────────────────
+  // ── Sync tracked keyword snapshots (NOT NULL rank column) ─────────────────
+  try {
+    const { data: trackedKeywords } = await supabase
+      .from("keywords")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("app_id", appId)
+      .ilike("term", keyword.trim());
+
+    const keywordIds = (trackedKeywords ?? []).map((k) => k.id as string);
+
+    if (keywordIds.length > 0) {
+      const snapshotRows = keywordIds.flatMap((keywordId) =>
+        marketResults
+          .filter((r) => !r.error)
+          .map((r) => {
+            const rawRank = resolveRankInCountryForSerperSnapshot(
+              serperResults,
+              packageName,
+              r.country,
+              { displayName: appDisplayName },
+            );
+            const dbRank = rankForSnapshotInsert(rawRank);
+            const ranksMap = r.tracked_competitor_ranks ?? {};
+            const pkg1Norm = comp1Pkg ? normPkgForSerperSnapshot(comp1Pkg) : null;
+            const pkg2Norm = comp2Pkg ? normPkgForSerperSnapshot(comp2Pkg) : null;
+            const rank1 = pkg1Norm ? (ranksMap[pkg1Norm] ?? null) : null;
+            const rank2 = pkg2Norm ? (ranksMap[pkg2Norm] ?? null) : null;
+
+            return {
+              keyword_id: keywordId,
+              rank: dbRank,
+              source: "serper" as const,
+              country_code: r.country,
+              snapshot_at: rankedAt,
+              competitor_1_package: comp1Pkg,
+              competitor_1_rank: comp1Pkg
+                ? formatTrackedCompetitorRankForDb(rank1)
+                : null,
+              competitor_2_package: comp2Pkg,
+              competitor_2_rank: comp2Pkg
+                ? formatTrackedCompetitorRankForDb(rank2)
+                : null,
+            };
+          }),
+      );
+
+      if (snapshotRows.length > 0) {
+        const { error: insertErr } = await supabase
+          .from("keyword_rank_snapshots")
+          .insert(snapshotRows);
+
+        if (insertErr) {
+          console.warn(`[${ROUTE}] snapshot insert failed (non-fatal):`, insertErr.message, {
+            sampleRank: snapshotRows[0]?.rank,
+          });
+        }
+      }
+    }
+  } catch (snapErr) {
+    console.warn(
+      `[${ROUTE}] snapshot sync failed (non-fatal):`,
+      snapErr instanceof Error ? snapErr.message : String(snapErr),
+    );
+  }
+
   void fetch(
     `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/workspaces/${workspaceId}/optimizer/sync`,
     { method: "POST", headers: { "Content-Type": "application/json" } },
-  ).catch(() => { /* non-critical */ });
+  ).catch(() => {
+    /* non-critical */
+  });
 
-  console.log(`[${ROUTE}] ✅ Multi-market rank fetch complete:`, {
-    keyword, packageName, markets, locale, results: marketResults, workspaceId, userId: user.id,
+  console.log(`[${ROUTE}] complete`, {
+    keyword,
+    packageName,
+    markets,
+    locale,
+    results: marketResults.map((r) => ({
+      country: r.country,
+      rank: r.rank,
+      error: r.error,
+      competitors: r.tracked_competitor_ranks
+        ? Object.keys(r.tracked_competitor_ranks).length
+        : 0,
+    })),
+    workspaceId,
+    userId: user.id,
   });
 
   return NextResponse.json({
@@ -371,7 +533,7 @@ export async function POST(request: Request, context: Ctx) {
     keyword,
     results: marketResults,
     creditsCharged: creditCost,
-    balanceAfter:   debit.balanceAfter,
+    balanceAfter: debit.balanceAfter,
     rankedAt,
   });
 }

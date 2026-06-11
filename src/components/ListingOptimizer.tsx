@@ -86,6 +86,9 @@ import {
   type ListingImprovementItem,
 } from "@/components/reviews/review-improvements-queue";
 import StagingWorkspace from "@/components/staging-workspace/StagingWorkspace";
+import KeywordTrackerPanel from "@/components/listing-optimizer/KeywordTrackerPanel";
+import { formatLiveRankIndicators } from "@/lib/staging/keyword-signals";
+import { KeywordValidatorCard } from "@/components/keyword-tracker/KeywordValidatorCard";
 import { useStagingWorkspace } from "@/hooks/useStagingWorkspace";
 import {
   buildStagingWorkspaceState,
@@ -324,6 +327,8 @@ function hasValidHttpsPreviewIcon(raw: string): boolean {
  * Converts existing pill/keyword arrays into properly typed signals and manages removal callbacks.
  */
 interface StagingWorkspaceSectionProps {
+  workspaceId: string;
+  appId: string;
   reviewQueuePills: import("@/components/reviews/review-improvements-queue").ListingImprovementItem[];
   spotlightQueuePills: import("@/components/reviews/review-improvements-queue").ListingImprovementItem[];
   stagedKeywords: KeywordDisplayItem[];
@@ -335,9 +340,15 @@ interface StagingWorkspaceSectionProps {
   onRemoveMarketOpportunity: (id: string) => void;
   onRemoveCompetitorKeyword: (keywordId: string, signalId: string) => void;
   onRemoveCompetitorWeakness: (idx: number) => void;
+  onOpenKeywordValidator: (keyword: string) => void;
+  keywordSignalsLoading?: boolean;
+  keywordTrackerCount?: number;
+  vaultLocale: "en" | "ar";
 }
 
 function StagingWorkspaceSection({
+  workspaceId,
+  appId,
   reviewQueuePills,
   spotlightQueuePills,
   stagedKeywords,
@@ -349,6 +360,10 @@ function StagingWorkspaceSection({
   onRemoveMarketOpportunity,
   onRemoveCompetitorKeyword,
   onRemoveCompetitorWeakness,
+  onOpenKeywordValidator,
+  keywordSignalsLoading,
+  keywordTrackerCount = 0,
+  vaultLocale,
 }: StagingWorkspaceSectionProps) {
   // Convert review queue pills to ReviewIssueSignal format
   const reviewIssues: ReviewIssueSignal[] = reviewQueuePills.map((pill) => ({
@@ -415,6 +430,19 @@ function StagingWorkspaceSection({
         state={workspaceState}
         config={workspaceConfig}
         onRemoveSignal={wrappedRemoveHandler}
+        keywordTrackerCount={keywordTrackerCount}
+        topSection={
+          appId ? (
+            <KeywordTrackerPanel
+              workspaceId={workspaceId}
+              appId={appId}
+              vaultLocale={vaultLocale}
+              isRtl={isRtl}
+              onOpenValidator={(keyword) => onOpenKeywordValidator(keyword)}
+              isLoading={keywordSignalsLoading}
+            />
+          ) : null
+        }
       />
 
       {/* Competitor Weaknesses - kept separate as it's a different data model */}
@@ -570,7 +598,24 @@ export function ListingOptimizer({
   );
 
   // ── Staging Vault Context ────────────────────────────────────────────────
-  const { data: optimizerContext, mutate: refreshOptimizerContext } = useOptimizerSync(workspaceId);
+  const {
+    data: optimizerContext,
+    mutate: refreshOptimizerContext,
+    keywordSignalsLoading,
+    keywordSignals,
+    keywordSignalsTotal,
+  } = useOptimizerSync(workspaceId, {
+    appId: selectedAppId.trim() || undefined,
+    vaultLocale: locale,
+  });
+
+  const [validatorOpen, setValidatorOpen] = useState(false);
+  const [validatorPrefillKeyword, setValidatorPrefillKeyword] = useState("");
+
+  const handleOpenKeywordValidator = useCallback((keyword: string) => {
+    setValidatorPrefillKeyword(keyword);
+    setValidatorOpen(true);
+  }, []);
 
   // ── Localization expansion state ──────────────────────────────────────────
   type LocalizeMarket = LocalizeMarketCode;
@@ -2332,6 +2377,26 @@ export function ListingOptimizer({
         .filter(Boolean)
         .join("\n\n");
 
+      const trackedKeywordSignals = keywordSignals.map((s) => ({
+        keyword: s.keyword,
+        confidence: s.confidence,
+        difficulty: s.difficulty,
+        searchVolume: s.searchVolume,
+        liveRankSummary:
+          formatLiveRankIndicators(s.liveRanks).join(", ") || undefined,
+      }));
+
+      const seedKwList = keywords
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const trackedTerms = [...keywordSignals]
+        .sort((a, b) => b.confidence - a.confidence)
+        .map((s) => s.keyword);
+      const mergedKeywords = [
+        ...new Set([...trackedTerms, ...seedKwList]),
+      ].slice(0, 40);
+
       const res = await fetch("/api/listings/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2340,7 +2405,8 @@ export function ListingOptimizer({
           ...(selectedAppId.trim() ? { appId: selectedAppId.trim() } : {}),
           appName: displayAppName,
           category: category.trim(),
-          targetKeywords: keywords.trim(),
+          targetKeywords:
+            mergedKeywords.length > 0 ? mergedKeywords : keywords.trim(),
           appFeatures: features.trim(),
           toneStyle,
           targetArabic: opts.targetArabicOverride ?? locale === "ar",
@@ -2349,9 +2415,12 @@ export function ListingOptimizer({
             : {}),
           // Market spotlight keywords from Market Intelligence → SYNTHESIS PRIORITY 2
           ...(exploitTargets.length > 0 ? { exploitTargets } : {}),
+          ...(trackedKeywordSignals.length > 0
+            ? { trackedKeywordSignals }
+            : {}),
           // Active signal types — used server-side to compute quality_status / quality_warning meta.
-          // A signal channel counts as active if it has at least one item staged.
           activeSignalTypes: [
+            ...(keywordSignals.length > 0 ? (["keywords"] as const) : []),
             ...(reviewQueueItems.length > 0 ? (["reviews"] as const) : []),
             ...(spotlightQueueItems.length > 0 ? (["market"] as const) : []),
             ...(vulns.length > 0 ? (["competitors"] as const) : []),
@@ -3055,6 +3124,21 @@ export function ListingOptimizer({
         workspaceId={workspaceId}
         onSubscriptionSuccess={() => router.refresh()}
       />
+
+      {workspaceId ? (
+        <KeywordValidatorCard
+          workspaceId={workspaceId}
+          appId={selectedAppId.trim() || undefined}
+          vaultLocale={locale}
+          isOpen={validatorOpen}
+          onClose={() => {
+            setValidatorOpen(false);
+            setValidatorPrefillKeyword("");
+          }}
+          initialKeyword={validatorPrefillKeyword}
+          onKeywordStaged={() => void refreshOptimizerContext()}
+        />
+      ) : null}
       {result ? (
         <PlayConsoleExportDialog
           open={exportPlayOpen}
@@ -3534,6 +3618,8 @@ export function ListingOptimizer({
 
                     {/* ── Staging Workspace (Transparent Three-Pillar Control Center) ────────── */}
                     <StagingWorkspaceSection
+                      workspaceId={workspaceId}
+                      appId={selectedAppId.trim()}
                       reviewQueuePills={reviewQueuePills}
                       spotlightQueuePills={spotlightQueuePills}
                       stagedKeywords={stagedKeywords}
@@ -3541,6 +3627,9 @@ export function ListingOptimizer({
                       locale={locale}
                       isRtl={isRtl}
                       loading={loading}
+                      keywordSignalsLoading={keywordSignalsLoading}
+                      keywordTrackerCount={keywordSignalsTotal}
+                      vaultLocale={locale}
                       onRemoveReviewIssue={handleRemoveQueueItem}
                       onRemoveMarketOpportunity={handleRemoveFromStagingVault}
                       onRemoveCompetitorKeyword={handleRemoveKeyword}
@@ -3549,6 +3638,7 @@ export function ListingOptimizer({
                         setCompetitorWeaknesses(updated);
                         competitorVulnerabilitiesRef.current = updated;
                       }}
+                      onOpenKeywordValidator={handleOpenKeywordValidator}
                     />
                     {/* ─────────────────────────────────────────────────────────── */}
 
@@ -3556,6 +3646,14 @@ export function ListingOptimizer({
                       {t("form.sectionVoiceHelper", {
                         credits: AI_CREDIT_COSTS.listing_generation,
                       })}
+                    </p>
+                    <p
+                      className={cn(
+                        "text-[11px] leading-relaxed text-white/40",
+                        isRtl && "font-arabic text-end",
+                      )}
+                    >
+                      {t("form.keywordTrackerSynthesisHelper")}
                     </p>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-white/80" htmlFor="lo-tone">

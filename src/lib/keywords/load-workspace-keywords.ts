@@ -15,6 +15,10 @@ import {
   KEYWORDS_SELECT_WITHOUT_ASO_ROI,
   keywordsSelectFallbackForError,
 } from "@/lib/keywords/keywords-select-columns";
+import {
+  parseTrackedCompetitorRankText,
+  type TrackedCompetitorRankSnapshot,
+} from "@/lib/keywords/tracked-competitor-ranks";
 
 const RECENT_RANK_GAIN_BADGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -52,6 +56,8 @@ export type KeywordWithRanks = {
    * Drives accurate multi-market current ranks in the table.
    */
   latestPerCountry?: { country: SupportedCountryCode; rank: number; captured_at: string }[];
+  /** Tracked Competitor Spy ranks per country from latest `keyword_rank_snapshots`. */
+  trackedCompetitorsByCountry?: Record<string, TrackedCompetitorRankSnapshot[]>;
   /** All tagged snapshots by country (not filtered to keyword `market`). From GET single-keyword only. */
   regionalRanks?: KeywordRegionalRankRow[];
   /** Distinct snapshot country codes for this keyword (for table flag chips). */
@@ -92,7 +98,50 @@ type CountryTaggedRankRow = {
   rank: number | null;
   snapshot_at: string;
   country_code: string | null | undefined;
+  competitor_1_package?: string | null;
+  competitor_1_rank?: string | null;
+  competitor_2_package?: string | null;
+  competitor_2_rank?: string | null;
 };
+
+function trackedCompetitorsFromSnapshotRow(
+  row: CountryTaggedRankRow,
+): TrackedCompetitorRankSnapshot[] {
+  const out: TrackedCompetitorRankSnapshot[] = [];
+  const pkg1 = String(row.competitor_1_package ?? "").trim().toLowerCase();
+  if (pkg1) {
+    out.push({ package_name: pkg1, rank: parseTrackedCompetitorRankText(row.competitor_1_rank) });
+  }
+  const pkg2 = String(row.competitor_2_package ?? "").trim().toLowerCase();
+  if (pkg2) {
+    out.push({ package_name: pkg2, rank: parseTrackedCompetitorRankText(row.competitor_2_rank) });
+  }
+  return out;
+}
+
+export function computeTrackedCompetitorsByCountryFromSnapshotRows(
+  rows: CountryTaggedRankRow[],
+): Record<string, TrackedCompetitorRankSnapshot[]> {
+  const by = new Map<string, { competitors: TrackedCompetitorRankSnapshot[]; t: number }>();
+  for (const r of rows) {
+    const competitors = trackedCompetitorsFromSnapshotRow(r);
+    if (competitors.length === 0) continue;
+    const ccRaw = r.country_code;
+    const cc =
+      ccRaw != null && String(ccRaw).trim() !== ""
+        ? String(ccRaw).trim().toLowerCase()
+        : "";
+    if (!cc || !isSupportedCountry(cc)) continue;
+    const iso = String(r.snapshot_at ?? "");
+    const t = new Date(iso).getTime();
+    if (!Number.isFinite(t)) continue;
+    const prev = by.get(cc);
+    if (!prev || t > prev.t) by.set(cc, { competitors, t });
+  }
+  const out: Record<string, TrackedCompetitorRankSnapshot[]> = {};
+  for (const [cc, v] of by) out[cc] = v.competitors;
+  return out;
+}
 
 export function computeLatestPerCountryFromSnapshotRows(rows: CountryTaggedRankRow[]): {
   country: SupportedCountryCode;
@@ -154,6 +203,7 @@ async function fetchRanksGrouped(
     string,
     { country: SupportedCountryCode; rank: number; captured_at: string }[]
   >;
+  trackedCompetitorsByKid: Record<string, Record<string, TrackedCompetitorRankSnapshot[]>>;
 }> {
   const ranksByKeyword: Record<string, KeywordRankHistoryRow[]> = {};
   const aggByKeyword: Record<string, SnapshotAgg> = {};
@@ -161,16 +211,37 @@ async function fetchRanksGrouped(
     string,
     { country: SupportedCountryCode; rank: number; captured_at: string }[]
   > = {};
+  const trackedCompetitorsByKid: Record<
+    string,
+    Record<string, TrackedCompetitorRankSnapshot[]>
+  > = {};
   if (keywordIds.length === 0)
-    return { ranksByKeyword, aggByKeyword, latestPerCountryByKid };
+    return { ranksByKeyword, aggByKeyword, latestPerCountryByKid, trackedCompetitorsByKid };
 
-  const { data: rankRows, error } = await supabase
+  const selectWithCompetitors =
+    "keyword_id,rank,snapshot_at,country_code,source,competitor_1_package,competitor_1_rank,competitor_2_package,competitor_2_rank";
+  const selectBase = "keyword_id,rank,snapshot_at,country_code,source";
+
+  let rankRows: Record<string, unknown>[] | null = null;
+  let withCompetitors = true;
+
+  const first = await supabase
     .from("keyword_rank_snapshots")
-    .select("keyword_id,rank,snapshot_at,country_code,source")
+    .select(selectWithCompetitors)
     .in("keyword_id", keywordIds);
 
-  if (error) {
-    throw new Error(error.message);
+  if (first.error && /competitor_1_package/i.test(first.error.message)) {
+    withCompetitors = false;
+    const fallback = await supabase
+      .from("keyword_rank_snapshots")
+      .select(selectBase)
+      .in("keyword_id", keywordIds);
+    if (fallback.error) throw new Error(fallback.error.message);
+    rankRows = (fallback.data ?? []) as Record<string, unknown>[];
+  } else if (first.error) {
+    throw new Error(first.error.message);
+  } else {
+    rankRows = (first.data ?? []) as Record<string, unknown>[];
   }
 
   const byKidRaw = new Map<string, CountryTaggedRankRow[]>();
@@ -181,11 +252,24 @@ async function fetchRanksGrouped(
       rank: row.rank as number | null,
       snapshot_at: String(row.snapshot_at ?? ""),
       country_code: row.country_code as string | null | undefined,
+      ...(withCompetitors
+        ? {
+            competitor_1_package: row.competitor_1_package as string | null | undefined,
+            competitor_1_rank: row.competitor_1_rank as string | null | undefined,
+            competitor_2_package: row.competitor_2_package as string | null | undefined,
+            competitor_2_rank: row.competitor_2_rank as string | null | undefined,
+          }
+        : {}),
     });
   }
 
   for (const kid of keywordIds) {
-    latestPerCountryByKid[kid] = computeLatestPerCountryFromSnapshotRows(byKidRaw.get(kid) ?? []);
+    const kidRows = byKidRaw.get(kid) ?? [];
+    latestPerCountryByKid[kid] = computeLatestPerCountryFromSnapshotRows(kidRows);
+    const trackedByCountry = computeTrackedCompetitorsByCountryFromSnapshotRows(kidRows);
+    if (Object.keys(trackedByCountry).length > 0) {
+      trackedCompetitorsByKid[kid] = trackedByCountry;
+    }
   }
 
   for (const row of rankRows ?? []) {
@@ -232,7 +316,7 @@ async function fetchRanksGrouped(
     }));
   }
 
-  return { ranksByKeyword, aggByKeyword, latestPerCountryByKid };
+  return { ranksByKeyword, aggByKeyword, latestPerCountryByKid, trackedCompetitorsByKid };
 }
 
 export async function loadWorkspaceKeywords(
@@ -287,11 +371,8 @@ export async function loadWorkspaceKeywords(
   const marketByKeywordId = Object.fromEntries(list.map((k) => [k.id, String(k.market ?? "")]));
 
   try {
-    let { ranksByKeyword, aggByKeyword, latestPerCountryByKid } = await fetchRanksGrouped(
-      supabase,
-      ids,
-      marketByKeywordId,
-    );
+    let { ranksByKeyword, aggByKeyword, latestPerCountryByKid, trackedCompetitorsByKid } =
+      await fetchRanksGrouped(supabase, ids, marketByKeywordId);
 
     if (ensureDemo) {
       const missing = list.filter((k) => (ranksByKeyword[k.id]?.length ?? 0) === 0);
@@ -305,6 +386,7 @@ export async function loadWorkspaceKeywords(
         ranksByKeyword = next.ranksByKeyword;
         aggByKeyword = next.aggByKeyword;
         latestPerCountryByKid = next.latestPerCountryByKid;
+        trackedCompetitorsByKid = next.trackedCompetitorsByKid;
       }
     }
 
@@ -312,6 +394,7 @@ export async function loadWorkspaceKeywords(
       const chronological = ranksByKeyword[k.id] ?? [];
       const agg = aggByKeyword[k.id];
       const perCountry = latestPerCountryByKid[k.id] ?? [];
+      const trackedCompetitorsByCountry = trackedCompetitorsByKid[k.id];
       const headline = headlineLatestFromPerCountry(String(k.market ?? ""), perCountry);
       const latestCollapsed =
         chronological.length === 0
@@ -369,6 +452,10 @@ export async function loadWorkspaceKeywords(
         ranks: chronological,
         latest,
         latestPerCountry: perCountry.length > 0 ? perCountry : undefined,
+        trackedCompetitorsByCountry:
+          trackedCompetitorsByCountry && Object.keys(trackedCompetitorsByCountry).length > 0
+            ? trackedCompetitorsByCountry
+            : undefined,
         trackedCountryCodes: trackedCountryCodes.length > 0 ? trackedCountryCodes : undefined,
         lastSyncedAt: agg?.lastIso ?? null,
         recentRankGainBadge,

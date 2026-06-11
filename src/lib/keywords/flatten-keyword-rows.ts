@@ -1,5 +1,6 @@
 import { isSupportedCountry, primaryMarketCode, type SupportedCountryCode } from "@/lib/countries";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
+import type { TrackedCompetitorRankSnapshot } from "@/lib/keywords/tracked-competitor-ranks";
 
 /**
  * A single-market view of a tracked keyword row.
@@ -25,6 +26,8 @@ export type FlatKeywordRow = {
    * Used to derive freshness: stale when > RANK_STALE_DAYS old.
    */
   capturedAt: string | null;
+  /** Tracked Competitor Spy ranks for this keyword × country (from latest snapshot). */
+  trackedCompetitors: TrackedCompetitorRankSnapshot[];
 };
 
 /**
@@ -55,6 +58,7 @@ export function flattenKeywordsToRows(
           country: entry.country,
           yourRank: typeof entry.rank === "number" ? entry.rank : null,
           capturedAt: entry.captured_at ?? null,
+          trackedCompetitors: kw.trackedCompetitorsByCountry?.[entry.country] ?? [],
         });
       }
     } else {
@@ -70,6 +74,7 @@ export function flattenKeywordsToRows(
         country: fallbackCountry,
         yourRank: kw.latest?.rank ?? null,
         capturedAt: kw.latest?.captured_at ?? null,
+        trackedCompetitors: kw.trackedCompetitorsByCountry?.[fallbackCountry] ?? [],
       });
     }
   }

@@ -51,10 +51,10 @@ export class SynthesisContextBuilder {
         locale,
       },
 
-      // Priority 1: Keywords (highest impact on ASO)
+      // Priority 1: Keywords (highest impact on ASO) — validator signals first
       stagedKeywords: this.extractKeywords(
+        features.keyword_validator,
         features.keyword_tracker?.keywords || [],
-        features.keyword_validator?.validated_keywords || [],
         maxKeywords,
         prioritizeHighDifficulty
       ),
@@ -68,8 +68,8 @@ export class SynthesisContextBuilder {
       // Priority 3: Review sentiments & themes
       reviewInsights: this.extractReviewThemes(features.review_analysis || {}, maxThemes),
 
-      // Priority 4: Validator score
-      validatorScore: features.keyword_validator?.validated_keywords?.[0],
+      // Priority 4: Validator score (highest-confidence validator signal)
+      validatorScore: this.extractValidatorScore(features.keyword_validator),
 
       // Priority 5: Baseline snapshot
       baselineSnapshot: features.experiment_snapshots?.baselines?.[0]?.listing,
@@ -123,16 +123,59 @@ export class SynthesisContextBuilder {
   }
 
   /**
-   * Extract and prioritize keywords from tracker and validator
+   * Extract validator score from signals map or legacy validated_keywords array.
+   */
+  private extractValidatorScore(
+    validatorFeature: any
+  ): SynthesisContext["validatorScore"] | undefined {
+    if (!validatorFeature) return undefined;
+
+    const signals = validatorFeature.signals;
+    if (signals && typeof signals === "object") {
+      const entries = Object.values(signals) as any[];
+      const best = entries.sort(
+        (a, b) => (b.confidence ?? 0) - (a.confidence ?? 0)
+      )[0];
+      if (best) {
+        return {
+          confidence: best.confidence ?? 0,
+          recommendation: best.recommendation ?? "",
+        };
+      }
+    }
+
+    const legacy = validatorFeature.validated_keywords?.[0];
+    if (legacy) {
+      return {
+        confidence: legacy.confidence ?? 0,
+        recommendation: legacy.recommendation ?? "",
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Extract and prioritize keywords — validator signals FIRST, then tracker.
    */
   private extractKeywords(
+    validatorFeature: any,
     trackerKeywords: any[],
-    validatedKeywords: any[],
     maxCount: number,
     prioritizeHighDifficulty: boolean
   ): SynthesisContext["stagedKeywords"] {
-    // Combine both sources
+    const validatorKeywords = this.extractValidatorKeywordEntries(validatorFeature);
+
+    // Validator first (priority), then tracker
     const combined = [
+      ...validatorKeywords.map((k) => ({
+        term: k.term,
+        difficulty: k.difficulty || 5,
+        volume: k.volume || 0,
+        rank_position: k.rank_position,
+        confidence: k.confidence ?? 0,
+        source: "validator" as const,
+      })),
       ...trackerKeywords.map((k) => ({
         term: k.term,
         difficulty: k.difficulty || 5,
@@ -141,17 +184,9 @@ export class SynthesisContextBuilder {
         confidence: undefined,
         source: "tracker" as const,
       })),
-      ...validatedKeywords.map((k) => ({
-        term: k.term,
-        difficulty: k.difficulty || 5,
-        volume: k.search_volume || 0,
-        rank_position: undefined,
-        confidence: k.confidence || 0,
-        source: "validator" as const,
-      })),
     ];
 
-    // Deduplicate by term (prefer validator)
+    // Deduplicate by term (prefer validator — already ordered first)
     const deduped = new Map<string, any>();
     for (const kw of combined) {
       if (!deduped.has(kw.term) || kw.source === "validator") {
@@ -159,13 +194,28 @@ export class SynthesisContextBuilder {
       }
     }
 
-    // Sort by priority
+    // Sort: validator source first, then confidence (Keyword Tracker drives ASO)
     let sorted = Array.from(deduped.values());
     if (prioritizeHighDifficulty) {
-      sorted = sorted.sort((a, b) => b.difficulty - a.difficulty);
+      sorted = sorted.sort((a, b) => {
+        if (a.source === "validator" && b.source !== "validator") return -1;
+        if (b.source === "validator" && a.source !== "validator") return 1;
+        return b.difficulty - a.difficulty;
+      });
     } else {
-      sorted = sorted.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+      sorted = sorted.sort((a, b) => {
+        if (a.source === "validator" && b.source !== "validator") return -1;
+        if (b.source === "validator" && a.source !== "validator") return 1;
+        return (b.confidence || 0) - (a.confidence || 0);
+      });
     }
+
+    const tierFor = (confidence: number | undefined): "high" | "medium" | "low" => {
+      const c = confidence ?? 0;
+      if (c >= 75) return "high";
+      if (c >= 50) return "medium";
+      return "low";
+    };
 
     // Truncate to max
     return sorted.slice(0, maxCount).map((k) => ({
@@ -174,7 +224,68 @@ export class SynthesisContextBuilder {
       volume: k.volume,
       confidence: k.confidence,
       rank_position: k.rank_position,
+      source: k.source,
+      tier: tierFor(k.confidence),
     }));
+  }
+
+  /**
+   * Read keyword_validator.signals map (+ legacy validated_keywords array).
+   */
+  private extractValidatorKeywordEntries(validatorFeature: any): Array<{
+    term: string;
+    difficulty: number;
+    volume: number;
+    confidence: number;
+    rank_position?: number;
+  }> {
+    if (!validatorFeature) return [];
+
+    const fromSignals: Array<{
+      term: string;
+      difficulty: number;
+      volume: number;
+      confidence: number;
+      rank_position?: number;
+    }> = [];
+
+    const signals = validatorFeature.signals;
+    if (signals && typeof signals === "object") {
+      for (const [key, raw] of Object.entries(signals)) {
+        const entry = raw as Record<string, unknown>;
+        const term =
+          typeof entry.keyword === "string" ? entry.keyword : key;
+        const liveRanks = entry.live_ranks as Record<string, { rank: number | null }> | undefined;
+        let rank_position: number | undefined;
+        if (liveRanks) {
+          const firstRank = Object.values(liveRanks).find((r) => r.rank != null);
+          rank_position = firstRank?.rank ?? undefined;
+        }
+        fromSignals.push({
+          term,
+          difficulty: (entry.difficulty as number) ?? 5,
+          volume: (entry.search_volume as number) ?? (entry.searchVolume as number) ?? 0,
+          confidence: (entry.confidence as number) ?? 0,
+          rank_position,
+        });
+      }
+    }
+
+    if (fromSignals.length > 0) {
+      return fromSignals.sort((a, b) => b.confidence - a.confidence);
+    }
+
+    const legacy = validatorFeature.validated_keywords;
+    if (Array.isArray(legacy)) {
+      return legacy.map((k: any) => ({
+        term: k.term ?? k.keyword,
+        difficulty: k.difficulty ?? 5,
+        volume: k.search_volume ?? k.searchVolume ?? 0,
+        confidence: k.confidence ?? 0,
+      }));
+    }
+
+    return [];
   }
 
   /**
