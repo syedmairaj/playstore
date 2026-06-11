@@ -3,6 +3,9 @@ import "server-only";
 import { SERPER_PLAY_REGION_DEFAULTS } from "@/constants/regions";
 import { LIVE_RANKS_PREVIEW_UNAVAILABLE } from "@/lib/keywords/live-ranks-preview-tokens";
 import { extractPackageIdFromPlayStoreDetailsUrl } from "@/lib/keywords/play-store-details-url";
+import { supplementDeepRankSerperWithPlaySearch } from "@/lib/keywords/serper-deep-rank-supplement";
+import { fetchPlayKeywordSearch } from "@/lib/play-store/fetch-play-keyword-search";
+import { reindexSerpItemsByMergedOrder } from "@/lib/keywords/serper-snapshot-rank-resolve";
 import {
   SERPER_MAX_COUNTRIES as _SERPER_MAX_COUNTRIES,
   SUPPORTED_COUNTRY_CODES as _SUPPORTED_COUNTRY_CODES,
@@ -35,13 +38,18 @@ const SERPER_ENDPOINT = "https://google.serper.dev/search";
 
 /** Per-country request timeout (Serper p95 ~1.2s). */
 const SERPER_TIMEOUT_MS = 12_000;
+const SERPER_DEEP_RANK_TIMEOUT_MS = 20_000;
 
 /**
  * `site:play.google.com/store/apps …` often returns only a handful of indexed
  * detail pages for broad keywords (e.g. "run"). Keep trying fallback queries
  * until we reach this depth or exhaust the cascade.
  */
+/** Minimum Play apps before stopping the query cascade (restrict mode). */
 const PLAY_STORE_QUERY_MIN_ITEMS = 8;
+const DEEP_RANK_QUERY_MIN_ITEMS = 15;
+const DEEP_RANK_NUM_PER_PAGE = 50;
+const DEEP_RANK_PAGES: readonly number[] = [1, 2];
 
 /** Hard cap on countries per call — keeps fan-out + key usage predictable. */
 export const SERPER_MAX_COUNTRIES = _SERPER_MAX_COUNTRIES;
@@ -128,9 +136,18 @@ export type SerperSearchOptions = {
   /**
    * Serper `num` (organic results depth). Default **20** for preview / Competitor Spy to
    * limit API payload and align with billing (**1 AI credit per country**, unchanged by depth).
-   * Keyword **refresh** passes **100** for a deeper slice; credits stay per-country, not per-result.
+   * Keyword **refresh** / live-rank use {@link deepRankSearch} (50 × 2 pages).
    */
   num?: number;
+  /** Serper pagination pages to fetch and merge (1-indexed). */
+  pages?: readonly number[];
+  /** Prefer mobile-indexed Google results (Play Store search skew). */
+  device?: "mobile" | "desktop";
+  /**
+   * Rank tracker preset: `restrictToPlayStore` + mobile + paginated `num: 50` on pages 1–2.
+   * Billing stays per country, not per Serper HTTP call.
+   */
+  deepRankSearch?: boolean;
 };
 
 type SerperOrganic = {
@@ -187,11 +204,49 @@ export function normalizeCountries(input: readonly string[]): SerperCountryCode[
   return [...seen];
 }
 
-const PLAY_DETAILS_LINK_RE = /^https?:\/\/play\.google\.com\/store\/apps\/details/i;
+const PLAY_STORE_APP_LINK_RE =
+  /^https?:\/\/play\.google\.com\/store\/apps(?:\/details)?/i;
 
 function isPlayStoreAppLink(link: string | undefined | null): boolean {
   if (!link) return false;
-  return PLAY_DETAILS_LINK_RE.test(link);
+  if (!PLAY_STORE_APP_LINK_RE.test(link)) return false;
+  return /[?&]id=[^&]+/i.test(link);
+}
+
+function resolveSerperNum(options: SerperSearchOptions): number {
+  if (options.deepRankSearch) return DEEP_RANK_NUM_PER_PAGE;
+  if (
+    typeof options.num === "number" &&
+    Number.isFinite(options.num) &&
+    options.num >= 1 &&
+    options.num <= 100
+  ) {
+    return Math.floor(options.num);
+  }
+  return 20;
+}
+
+function resolveSerperPages(options: SerperSearchOptions): number[] {
+  if (options.pages?.length) {
+    return [...new Set(options.pages.filter((p) => Number.isFinite(p) && p >= 1 && p <= 10))];
+  }
+  if (options.deepRankSearch) return [...DEEP_RANK_PAGES];
+  return [1];
+}
+
+function resolveSerperDevice(options: SerperSearchOptions): "mobile" | undefined {
+  if (options.device === "mobile" || options.deepRankSearch) return "mobile";
+  return undefined;
+}
+
+function offsetItemsForSerperPage(
+  items: SerperPlayStoreItem[],
+  page: number,
+  numPerPage: number,
+): SerperPlayStoreItem[] {
+  if (page <= 1) return items;
+  const offset = (page - 1) * numPerPage;
+  return items.map((item) => ({ ...item, position: item.position + offset }));
 }
 
 function mergePlayStoreItems(
@@ -217,7 +272,14 @@ function pickPlayStoreItems(organic: SerperOrganic[] | undefined): SerperPlaySto
   for (const row of organic) {
     const link = row?.link?.trim();
     if (!isPlayStoreAppLink(link)) continue;
-    const pkg = extractPackageIdFromPlayStoreDetailsUrl(link!);
+    const pkg =
+      extractPackageIdFromPlayStoreDetailsUrl(link!) ??
+      (() => {
+        const m = String(row.title ?? row.snippet ?? "").match(
+          /\b((?:com|org|net|io|app)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\b/i,
+        );
+        return m?.[1] ?? null;
+      })();
     const dedupeKey = pkg ?? link!;
     if (seenPkg.has(dedupeKey)) continue;
     seenPkg.add(dedupeKey);
@@ -242,6 +304,44 @@ function pickPlayStoreItems(organic: SerperOrganic[] | undefined): SerperPlaySto
   return out;
 }
 
+async function finalizeDeepRankItems(
+  bestItems: SerperPlayStoreItem[],
+  keyword: string,
+  country: SerperCountryCode,
+  gl: string,
+  hl: string,
+  options: SerperSearchOptions,
+): Promise<SerperPlayStoreItem[]> {
+  let items = bestItems;
+  let reindexed = false;
+  if (options.deepRankSearch && items.length < DEEP_RANK_QUERY_MIN_ITEMS) {
+    const serperCount = items.length;
+    const playItems = await fetchPlayKeywordSearch(
+      keyword,
+      gl,
+      hl,
+      DEEP_RANK_NUM_PER_PAGE,
+    );
+    if (playItems.length > 0) {
+      items = supplementDeepRankSerperWithPlaySearch(items, playItems);
+      reindexed = true;
+    }
+    if (process.env.NODE_ENV !== "production") {
+      console.debug("[serper:deep-rank-supplement]", {
+        keyword,
+        country,
+        serperCount,
+        playSearchCount: playItems.length,
+        mergedCount: items.length,
+      });
+    }
+  }
+  if (!reindexed) {
+    items = reindexSerpItemsByMergedOrder(items);
+  }
+  return items;
+}
+
 async function fetchOneCountry(
   apiKey: string,
   keyword: string,
@@ -250,118 +350,111 @@ async function fetchOneCountry(
 ): Promise<SerperPlayStoreCountryResult> {
   const defaults = COUNTRY_LOCALE_MAP[country];
   const hl = options.localeOverrides?.[country]?.trim() || defaults.hl;
-  const restrict = Boolean(options.restrictToPlayStore);
+  const restrict = Boolean(options.restrictToPlayStore || options.deepRankSearch);
   const queries = playStoreSearchQueries(keyword, restrict);
-  const timeoutMs = options.timeoutMs ?? SERPER_TIMEOUT_MS;
-  const num =
-    typeof options.num === "number" &&
-    Number.isFinite(options.num) &&
-    options.num >= 1 &&
-    options.num <= 100
-      ? Math.floor(options.num)
-      : 20;
+  const timeoutMs =
+    options.timeoutMs ??
+    (options.deepRankSearch ? SERPER_DEEP_RANK_TIMEOUT_MS : SERPER_TIMEOUT_MS);
+  const num = resolveSerperNum(options);
+  const pages = resolveSerperPages(options);
+  const device = resolveSerperDevice(options);
 
   let bestItems: SerperPlayStoreItem[] = [];
-  const minItemsForExit = restrict
-    ? Math.min(PLAY_STORE_QUERY_MIN_ITEMS, num)
-    : 1;
+  const minTarget = options.deepRankSearch
+    ? DEEP_RANK_QUERY_MIN_ITEMS
+    : PLAY_STORE_QUERY_MIN_ITEMS;
+  const minItemsForExit = restrict ? Math.min(minTarget, num * pages.length) : 1;
 
   for (let i = 0; i < queries.length; i++) {
     const q = queries[i]!;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    let queryHadPlaySignal = false;
 
-    try {
-      const res = await fetch(SERPER_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-KEY": apiKey,
-        },
-        body: JSON.stringify({ q, gl: defaults.gl, hl, num }),
-        signal: ctrl.signal,
-        cache: "no-store",
-      });
+    for (const page of pages) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
-      const raw = await res.text();
-      let json: SerperResponseBody;
       try {
-        json = (raw ? JSON.parse(raw) : {}) as SerperResponseBody;
-      } catch {
-        if (i < queries.length - 1) continue;
-        return {
-          country,
+        const body: Record<string, unknown> = {
+          q,
           gl: defaults.gl,
           hl,
-          items: [],
-          error: LIVE_RANKS_PREVIEW_UNAVAILABLE,
+          num,
+          page,
         };
-      }
+        if (device) body.device = device;
 
-      if (!res.ok) {
-        if (i < queries.length - 1) continue;
-        return {
-          country,
-          gl: defaults.gl,
-          hl,
-          items: [],
-          error: LIVE_RANKS_PREVIEW_UNAVAILABLE,
-        };
-      }
-
-      const items = pickPlayStoreItems(json.organic);
-      bestItems = mergePlayStoreItems(bestItems, items);
-
-      const organic = json.organic;
-      const organicEmpty = !Array.isArray(organic) || organic.length === 0;
-      const anyPlayUrlInOrganic =
-        Array.isArray(organic) &&
-        organic.some((row) => {
-          const link = row?.link?.trim();
-          return Boolean(link && /play\.google\.com/i.test(link));
+        const res = await fetch(SERPER_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-KEY": apiKey,
+          },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+          cache: "no-store",
         });
-      /** Poor: nothing usable after filtering, and SERP is empty or has no play.google.com links. */
-      const poor =
-        items.length === 0 && (organicEmpty || !anyPlayUrlInOrganic);
-      const deepEnough = bestItems.length >= minItemsForExit;
-      const shouldReturn =
-        i === queries.length - 1 || (restrict ? deepEnough : !poor);
 
-      if (shouldReturn) {
-        return {
-          country,
-          gl: defaults.gl,
-          hl,
-          items: bestItems,
-          error: bestItems.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
-        };
+        const raw = await res.text();
+        let json: SerperResponseBody;
+        try {
+          json = (raw ? JSON.parse(raw) : {}) as SerperResponseBody;
+        } catch {
+          continue;
+        }
+
+        if (!res.ok) continue;
+
+        const pageItems = offsetItemsForSerperPage(
+          pickPlayStoreItems(json.organic),
+          page,
+          num,
+        );
+        if (pageItems.length > 0) queryHadPlaySignal = true;
+        bestItems = mergePlayStoreItems(bestItems, pageItems);
+      } catch {
+        /* try next page / query */
+      } finally {
+        clearTimeout(timer);
       }
-    } catch (e) {
-      const isAbort = e instanceof Error && e.name === "AbortError";
-      if (isAbort && i < queries.length - 1) {
-        /* try next query */
-      } else if (!isAbort && i < queries.length - 1) {
-        /* network glitch — try next query */
-      } else {
-        return {
-          country,
-          gl: defaults.gl,
-          hl,
-          items: [],
-          error: LIVE_RANKS_PREVIEW_UNAVAILABLE,
-        };
-      }
-    } finally {
-      clearTimeout(timer);
+    }
+
+    const deepEnough = bestItems.length >= minItemsForExit;
+    const shouldReturn =
+      i === queries.length - 1 || (restrict ? deepEnough : queryHadPlaySignal);
+
+    if (shouldReturn) {
+      const items = await finalizeDeepRankItems(
+        bestItems,
+        keyword,
+        country,
+        defaults.gl,
+        hl,
+        options,
+      );
+      return {
+        country,
+        gl: defaults.gl,
+        hl,
+        items,
+        error: items.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
+      };
     }
   }
 
+  const items = await finalizeDeepRankItems(
+    bestItems,
+    keyword,
+    country,
+    defaults.gl,
+    hl,
+    options,
+  );
   return {
     country,
     gl: defaults.gl,
     hl,
-    items: bestItems,
-    error: bestItems.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
+    items,
+    error: items.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
   };
 }
 

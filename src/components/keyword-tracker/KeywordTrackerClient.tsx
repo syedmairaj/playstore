@@ -28,6 +28,7 @@ import { KeywordWatchlistTable } from "@/components/keyword-tracker/keyword-watc
 import { KeywordWatchlistToolbar } from "@/components/keyword-tracker/keyword-watchlist-toolbar";
 import { KeywordValidatorCard } from "@/components/keyword-tracker/KeywordValidatorCard";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { CountrySelector } from "@/components/country-selector";
 import {
   SerperPreviewResults,
@@ -37,10 +38,16 @@ import { type SupportedCountryCode } from "@/lib/countries";
 import { formatRelativePastSince } from "@/lib/intl/format-relative-past";
 import type { LatestAiListingKeywordsRow } from "@/lib/keywords/latest-ai-listing-by-app";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
-import { normalizeCompetitorDisplayNameForRank } from "@/lib/keywords/serper-snapshot-rank-resolve";
+import {
+  competitorInitialForDisplay,
+  normalizeCompetitorDisplayNameForRank,
+} from "@/lib/keywords/serper-snapshot-rank-resolve";
 import { parseTrackedCompetitorRankText } from "@/lib/keywords/tracked-competitor-ranks";
 import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
-import { resolveRankInCountryForSerperSnapshot } from "@/lib/keywords/serper-snapshot-rank-resolve";
+import {
+  rankForSnapshotInsert,
+  resolveRankInCountryForSerperSnapshot,
+} from "@/lib/keywords/serper-snapshot-rank-resolve";
 import type { WorkspaceAppListRow } from "@/lib/workspace/workspace-apps-list";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import { serperAiCreditsForCountryCount } from "@/lib/keywords/keyword-track-ai-pricing";
@@ -83,9 +90,9 @@ export function KeywordTrackerClient({
   latestAiByApp = {},
 }: KeywordTrackerClientProps) {
   const t = useTranslations("keywordTracker");
+  const locale = useLocale();
   const tSerper = useTranslations("serperPreview");
   const tCountrySel = useTranslations("countrySelector");
-  const locale = useLocale();
   const router = useRouter();
   const [isRefreshing, startTransition] = useTransition();
   const [mutationPending, setMutationPending] = useState(false);
@@ -111,6 +118,7 @@ export function KeywordTrackerClient({
   type CompetitorSlot = {
     name: string;
     packageId: string;
+    initial?: string;
     iconUrl?: string | null;
     rankByTerm: ReadonlyMap<string, number>;
   };
@@ -356,12 +364,14 @@ export function KeywordTrackerClient({
               if (existing == null || row.theirRank < existing) map.set(key, row.theirRank);
             }
           }
+          const displayName =
+            normalizeCompetitorDisplayNameForRank(comp.displayName) ??
+            comp.displayName ??
+            comp.packageId;
           slots[i as 0 | 1] = {
-            name:
-              normalizeCompetitorDisplayNameForRank(comp.displayName) ??
-              comp.displayName ??
-              comp.packageId,
+            name: displayName,
             packageId: comp.packageId,
+            initial: competitorInitialForDisplay(displayName, comp.packageId),
             iconUrl: typeof comp.iconUrl === "string" && comp.iconUrl.length > 0 ? comp.iconUrl : null,
             rankByTerm: map,
           };
@@ -553,6 +563,9 @@ export function KeywordTrackerClient({
     return p && p.length > 0 ? p : null;
   }, [apps, scopeAppId]);
 
+  const tooltipAppName =
+    (scopeAppId && appNameById.get(scopeAppId)) || t("add.yourAppFallback");
+
   const previewCreditCost = useMemo(
     () => serperAiCreditsForCountryCount(selectedCountries.length),
     [selectedCountries],
@@ -643,10 +656,12 @@ export function KeywordTrackerClient({
             if (!hasBlock) return null;
             return {
               country,
-              rank: resolveRankInCountryForSerperSnapshot(
-                previewResults,
-                scopePackageName,
-                country,
+              rank: rankForSnapshotInsert(
+                resolveRankInCountryForSerperSnapshot(
+                  previewResults,
+                  scopePackageName,
+                  country,
+                ),
               ),
             };
           })
@@ -871,10 +886,12 @@ export function KeywordTrackerClient({
         if (scopePackageName && previewResults.length > 0) {
           body.snapshotRanks = countries.map((country) => ({
             country,
-            rank: resolveRankInCountryForSerperSnapshot(
-              previewResults,
-              scopePackageName,
-              country,
+            rank: rankForSnapshotInsert(
+              resolveRankInCountryForSerperSnapshot(
+                previewResults,
+                scopePackageName,
+                country,
+              ),
             ),
           }));
         }
@@ -937,18 +954,36 @@ export function KeywordTrackerClient({
       try {
         const res = await fetch(
           `/api/workspaces/${workspaceId}/keywords/${keywordId}/serper-refresh`,
-          { method: "POST" },
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ locale }),
+          },
         );
+        type RefreshCompetitorPayload = {
+          slot?: "competitor_1" | "competitor_2";
+          packageId: string;
+          displayName?: string;
+          initial?: string;
+          iconUrl?: string | null;
+          rank?: string | null;
+          rankNumeric?: number | null;
+          matchKind?: string;
+          matchScore?: number | null;
+          matchedSerpTitle?: string | null;
+        };
         const json = (await res.json()) as {
           ok?: boolean;
           rank?: number | null;
           snapshotAt?: string | null;
           creditsCharged?: number;
           countries?: string[];
-          /** Competitor slot 1 resolved at refresh time (primary market). */
-          competitor1?: { packageId: string; rank: string | null } | null;
-          /** Competitor slot 2 resolved at refresh time (primary market). */
-          competitor2?: { packageId: string; rank: string | null } | null;
+          yourApp?: {
+            matchKind?: string;
+            matchScore?: number | null;
+          };
+          competitor1?: RefreshCompetitorPayload | null;
+          competitor2?: RefreshCompetitorPayload | null;
           error?: { code?: string; message?: string; required?: number; remaining?: number };
         };
         if (!res.ok || !json.ok) {
@@ -999,12 +1034,19 @@ export function KeywordTrackerClient({
               // Build a minimal latestPerCountry entry for the primary market so
               // flattenKeywordsToRows picks it up and capturedAt / yourRank are set.
               const market = String(row.market ?? "us").trim().toLowerCase();
+              const yourMatchKind =
+                json.yourApp?.matchKind === "package" ||
+                json.yourApp?.matchKind === "title" ||
+                json.yourApp?.matchKind === "none"
+                  ? json.yourApp.matchKind
+                  : null;
               const patchedPerCountry: typeof row.latestPerCountry = [
                 ...(row.latestPerCountry?.filter((e) => e.country !== market) ?? []),
                 {
                   country: market as import("@/lib/countries").SupportedCountryCode,
                   rank: storedRank,
                   captured_at: freshAt,
+                  rank_match_kind: yourMatchKind,
                 },
               ];
               const trackedFromRefresh: NonNullable<
@@ -1014,13 +1056,47 @@ export function KeywordTrackerClient({
               if (competitor1?.packageId) {
                 trackedFromRefresh.push({
                   package_name: competitor1.packageId.trim().toLowerCase(),
-                  rank: parseTrackedCompetitorRankText(competitor1.rank),
+                  name: competitor1.displayName ?? null,
+                  rank:
+                    competitor1.rankNumeric ??
+                    parseTrackedCompetitorRankText(competitor1.rank),
+                  match_kind:
+                    competitor1.matchKind === "package" ||
+                    competitor1.matchKind === "title" ||
+                    competitor1.matchKind === "none"
+                      ? competitor1.matchKind
+                      : null,
+                  match_score:
+                    typeof competitor1.matchScore === "number"
+                      ? competitor1.matchScore
+                      : null,
+                  serp_display_name:
+                    typeof competitor1.matchedSerpTitle === "string"
+                      ? competitor1.matchedSerpTitle
+                      : null,
                 });
               }
               if (competitor2?.packageId) {
                 trackedFromRefresh.push({
                   package_name: competitor2.packageId.trim().toLowerCase(),
-                  rank: parseTrackedCompetitorRankText(competitor2.rank),
+                  name: competitor2.displayName ?? null,
+                  rank:
+                    competitor2.rankNumeric ??
+                    parseTrackedCompetitorRankText(competitor2.rank),
+                  match_kind:
+                    competitor2.matchKind === "package" ||
+                    competitor2.matchKind === "title" ||
+                    competitor2.matchKind === "none"
+                      ? competitor2.matchKind
+                      : null,
+                  match_score:
+                    typeof competitor2.matchScore === "number"
+                      ? competitor2.matchScore
+                      : null,
+                  serp_display_name:
+                    typeof competitor2.matchedSerpTitle === "string"
+                      ? competitor2.matchedSerpTitle
+                      : null,
                 });
               }
               const patchedTrackedByCountry =
@@ -1061,24 +1137,33 @@ export function KeywordTrackerClient({
             // Helper: patch a slot's rankByTerm for this keyword's term.
             const patchSlot = (
               slot: CompetitorSlot | null,
-              fresh: { packageId: string; rank: string | null } | null | undefined,
+              fresh: RefreshCompetitorPayload | null | undefined,
             ): CompetitorSlot | null => {
-              if (!slot || !fresh) return slot;
-              // Verify package match (guard against stale slot state).
-              if (
-                slot.packageId.trim().toLowerCase() !== fresh.packageId.trim().toLowerCase()
-              ) return slot;
-              // Convert rank string to number for the map, or remove key if "100+"/null.
-              const rankNum = fresh.rank && fresh.rank !== "100+"
-                ? Number.parseInt(fresh.rank, 10)
-                : null;
-              const newMap = new Map(slot.rankByTerm);
+              if (!fresh?.packageId) return slot;
+              const pkgNorm = fresh.packageId.trim().toLowerCase();
+              const rankNum =
+                typeof fresh.rankNumeric === "number"
+                  ? fresh.rankNumeric
+                  : fresh.rank && fresh.rank !== "100+"
+                    ? Number.parseInt(fresh.rank, 10)
+                    : null;
+              const newMap = new Map(slot?.rankByTerm ?? []);
               if (rankNum != null && Number.isFinite(rankNum)) {
                 newMap.set(termKey, rankNum);
               } else {
                 newMap.delete(termKey);
               }
-              return { ...slot, rankByTerm: newMap };
+              const displayName =
+                fresh.displayName ??
+                slot?.name ??
+                fresh.packageId;
+              return {
+                name: displayName,
+                packageId: fresh.packageId,
+                initial: fresh.initial,
+                iconUrl: fresh.iconUrl ?? slot?.iconUrl ?? null,
+                rankByTerm: newMap,
+              };
             };
 
             next[0] = patchSlot(prev[0], competitor1);
@@ -1100,6 +1185,8 @@ export function KeywordTrackerClient({
       serperRowRefreshId,
       blockingError,
       workspaceId,
+      locale,
+      rows,
       t,
       tSerper,
       refresh,
@@ -1280,39 +1367,65 @@ export function KeywordTrackerClient({
               </div>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void onPreviewRanks()}
-                disabled={
-                  previewPending ||
-                  term.trim().length < 2 ||
-                  selectedCountries.length === 0 ||
-                  blockingError
-                }
-                className="h-10 min-h-10 shrink-0 gap-2 border-emerald-500/30 bg-emerald-500/[0.07] px-4 text-emerald-100 hover:bg-emerald-500/15 hover:text-white disabled:opacity-40"
-              >
-                {previewPending ? (
-                  <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-                ) : (
-                  <Sparkles className="size-4 shrink-0" aria-hidden />
-                )}
-                {previewPending ? tSerper("previewPending") : tSerper("previewButton")}
-              </Button>
-              <Button
-                type="submit"
-                disabled={
-                  mutationPending ||
-                  term.trim().length < 2 ||
-                  apps.length === 0 ||
-                  blockingError
-                }
-                className="h-10 min-h-10 shrink-0 bg-emerald-600 px-4 text-white hover:bg-emerald-500 disabled:opacity-40"
-              >
-                {mutationPending ? t("add.buttonPending") : t("add.button")}
-              </Button>
-            </div>
+            <TooltipProvider>
+              <div className="flex flex-wrap items-center gap-3">
+                <Tooltip
+                  content={
+                    <span className="block max-w-[280px] leading-snug text-zinc-200">
+                      {tSerper("previewButtonTooltip", { appName: tooltipAppName })}
+                    </span>
+                  }
+                  side="top"
+                  className="max-w-[300px] border border-white/[0.12] bg-[#0a0d12] px-3 py-2.5 text-xs leading-relaxed text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.04]"
+                  asChild
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void onPreviewRanks()}
+                    disabled={
+                      previewPending ||
+                      term.trim().length < 2 ||
+                      selectedCountries.length === 0 ||
+                      blockingError
+                    }
+                    aria-label={tSerper("previewButtonTooltip", { appName: tooltipAppName })}
+                    className="h-10 min-h-10 shrink-0 gap-2 border-emerald-500/30 bg-emerald-500/[0.07] px-4 text-emerald-100 hover:bg-emerald-500/15 hover:text-white disabled:opacity-40"
+                  >
+                    {previewPending ? (
+                      <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <Sparkles className="size-4 shrink-0" aria-hidden />
+                    )}
+                    {previewPending ? tSerper("previewPending") : tSerper("previewButton")}
+                  </Button>
+                </Tooltip>
+                <Tooltip
+                  content={
+                    <span className="block max-w-[280px] leading-snug text-zinc-200">
+                      {t("add.buttonTooltip", { appName: tooltipAppName })}
+                    </span>
+                  }
+                  side="top"
+                  className="max-w-[300px] border border-white/[0.12] bg-[#0a0d12] px-3 py-2.5 text-xs leading-relaxed text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.04]"
+                  asChild
+                >
+                  <Button
+                    type="submit"
+                    disabled={
+                      mutationPending ||
+                      term.trim().length < 2 ||
+                      apps.length === 0 ||
+                      blockingError
+                    }
+                    aria-label={t("add.buttonTooltip", { appName: tooltipAppName })}
+                    className="h-10 min-h-10 shrink-0 bg-emerald-600 px-4 text-white hover:bg-emerald-500 disabled:opacity-40"
+                  >
+                    {mutationPending ? t("add.buttonPending") : t("add.button")}
+                  </Button>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
           </form>
 
           {previewResults && previewResults.length > 0 ? (
@@ -1487,6 +1600,12 @@ export function KeywordTrackerClient({
             {t("table.liveRankingsNote", {
               per: AI_CREDIT_COSTS.serper_preview_per_country,
             })}
+          </p>
+          <p
+            className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-start text-xs leading-relaxed text-zinc-400"
+            role="note"
+          >
+            {t("table.estimatedRanksDisclaimer")}
           </p>
         </CardHeader>
         <CardContent className="p-0">

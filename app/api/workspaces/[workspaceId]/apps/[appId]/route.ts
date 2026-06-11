@@ -87,6 +87,10 @@ export async function PATCH(request: Request, context: Ctx) {
     if (parsed.package_name !== undefined) {
       updates.package_name = parsed.package_name || null;
     }
+    if (parsed.canonical_package_id !== undefined) {
+      const canonical = parsed.canonical_package_id?.trim();
+      updates.canonical_package_id = canonical ? canonical : null;
+    }
     if (parsed.play_store_url !== undefined) {
       const u = parsed.play_store_url?.trim();
       updates.play_store_url = u ? u : null;
@@ -106,7 +110,7 @@ export async function PATCH(request: Request, context: Ctx) {
       .from("apps")
       .update(updates)
       .eq("id", appId)
-      .select("id,name,package_name,play_store_url,target_countries,metadata,icon_url")
+      .select("id,name,package_name,canonical_package_id,play_store_url,target_countries,metadata,icon_url")
       .single();
 
     if (error || !data) {

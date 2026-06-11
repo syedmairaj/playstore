@@ -38,6 +38,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -389,6 +390,7 @@ function ResultRow({
   /** Markets selected in the Keyword Tracker — drives cost display + fetch */
   selectedCountries?: string[];
 }) {
+  const t = useTranslations('keywordValidator');
   const tier    = TIER[score.recommendation];
   const TierIcon = tier.Icon;
 
@@ -596,7 +598,7 @@ function ResultRow({
                 </span>
                 <span className="text-[11px] font-semibold uppercase tracking-[0.12em]"
                   style={{ color: hasFetched ? '#93c5fd' : isLocked ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.7)' }}>
-                  Fetch live rank
+                  {t('fetchEstimatedRankStep')}
                 </span>
                 {/* Credit cost badge — always visible so user knows upfront */}
                 <span
@@ -615,9 +617,11 @@ function ResultRow({
               <p className="text-[11px] leading-relaxed"
                 style={{ color: isLocked ? 'rgba(161,161,170,0.55)' : 'rgba(212,212,216,0.75)' }}>
                 {isLocked
-                  ? <>Stage first (free) to unlock. Then fetch your app&apos;s real-time position in Google Play search results for this keyword — ranked against every other app in the store.</>
-                  : <>Checks where <em>your app</em> ranks in Google Play search results for &ldquo;{score.keyword}&rdquo; in {markets.map(m => m.toUpperCase()).join(', ')}. Results are point-in-time snapshots — ranks shift daily based on installs, ratings &amp; listing relevance.</>
-                }
+                  ? t('fetchEstimatedRankLocked')
+                  : t('fetchEstimatedRankUnlocked', {
+                      keyword: score.keyword,
+                      markets: markets.map((m) => m.toUpperCase()).join(', '),
+                    })}
               </p>
 
               {/* Per-market rank results — shown once fetched */}
@@ -645,11 +649,10 @@ function ResultRow({
                             ? 'Err'
                             : entry.rank
                               ? `#${entry.rank}`
-                              : entry.not_ranked_reason === 'outside_visibility_window'
-                                ? 'Not in top 30'
-                                : entry.not_ranked_reason === 'not_in_serp'
-                                  ? 'Not ranked'
-                                  : '20+'}
+                              : entry.not_ranked_reason === 'outside_visibility_window' ||
+                                  entry.not_ranked_reason === 'not_in_serp'
+                                ? t('notInTop50')
+                                : t('notRanked')}
                         </span>
                       </div>
                     );
@@ -678,9 +681,11 @@ function ResultRow({
                     : { backgroundColor: 'rgba(59,130,246,0.08)', color: '#93c5fd', border: '1px solid rgba(59,130,246,0.25)' }
                 }
                 aria-label={
-                  isLocked ? 'Stage first to unlock live rank'
-                  : !onFetchLiveRank ? 'Select an app to enable live rank'
-                  : `Fetch live rank for "${score.keyword}" — ${cost} credit${cost !== 1 ? 's' : ''}`
+                  isLocked
+                    ? t('fetchEstimatedRankLocked')
+                    : !onFetchLiveRank
+                      ? t('liveRankNoPackageTitle')
+                      : `${hasFetched ? t('refreshEstimatedRankButton') : t('fetchEstimatedRankButton')} — ${cost}`
                 }
               >
                 {liveRankState === 'pending' ? (
@@ -690,9 +695,9 @@ function ResultRow({
                 ) : !onFetchLiveRank ? (
                   <><Radio className="h-3.5 w-3.5" /> Select an app to fetch rank</>
                 ) : hasFetched ? (
-                  <><Radio className="h-3.5 w-3.5" /> Refresh · {markets.length} market{markets.length !== 1 ? 's' : ''} · {cost} credit{cost !== 1 ? 's' : ''}</>
+                  <><Radio className="h-3.5 w-3.5" /> {t('refreshEstimatedRankButton')} · {markets.length} · {cost}</>
                 ) : (
-                  <><Radio className="h-3.5 w-3.5" /> Fetch rank · {markets.length} market{markets.length !== 1 ? 's' : ''} · {cost} credit{cost !== 1 ? 's' : ''}</>
+                  <><Radio className="h-3.5 w-3.5" /> {t('fetchEstimatedRankButton')} · {markets.length} · {cost}</>
                 )}
               </button>
             </div>

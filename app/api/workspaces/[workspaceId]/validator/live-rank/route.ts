@@ -32,6 +32,10 @@ import { z, ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import {
+  loadAppForSerperRank,
+  loadCompetitorsForSerperRank,
+} from "@/lib/workspace/load-app-for-serper-rank";
+import {
   readWorkspaceAiCreditsRemaining,
   buildInsufficientAiCreditsPayload,
 } from "@/lib/features/billing/workspace-ai-credits";
@@ -49,15 +53,19 @@ import { serperAiCreditsForCountryCount } from "@/lib/keywords/keyword-track-ai-
 import {
   buildTrackedCompetitorRanksMap,
   formatTrackedCompetitorRankForDb,
-  summarizeTrackedCompetitorResolution,
   type TrackedCompetitorRef,
 } from "@/lib/keywords/tracked-competitor-ranks";
 import {
   resolveRankInCountryForSerperSnapshot,
+  resolveRankMatchInCountryForSerperSnapshot,
   rankForSnapshotInsert,
   normPkgForSerperSnapshot,
   applyLiveRankClientPolicy,
-  findBestRankInSerpItems,
+  buildSerpRankDebugPayload,
+  logPoorSerpRankDebug,
+  logSerpTargetMatchResult,
+  serpLookupForPackage,
+  warnWhenMissingCanonicalPackageId,
   type LiveRankNotRankedReason,
 } from "@/lib/keywords/serper-snapshot-rank-resolve";
 
@@ -92,7 +100,10 @@ function resolveMarketResult(
   market: string,
   packageName: string,
   appDisplayName: string | null,
+  appCanonicalPackageId: string | null,
+  appSerpMatchedPackageId: string | null,
   trackedCompetitors: readonly TrackedCompetitorRef[],
+  missingCanonicalWarned: Set<string>,
 ): MarketResult {
   const block = serperResults.find(
     (r) => String(r.country ?? "").trim().toLowerCase() === market,
@@ -111,27 +122,84 @@ function resolveMarketResult(
     };
   }
 
-  const trackedLog = summarizeTrackedCompetitorResolution(
-    trackedCompetitors,
-    serperResults,
-    market,
-  );
-  console.log(`[${ROUTE}] tracked competitors (user-selected only)`, {
-    keyword_market: market,
-    yourPackage: packageName,
-    serpPlayAppCount: trackedLog.serp_play_app_count,
-    competitors: trackedLog.competitors,
+  const debugTargets = [
+    {
+      label: "your_app",
+      packageName,
+      canonicalPackageId: appCanonicalPackageId,
+      serpMatchedPackageId: appSerpMatchedPackageId,
+      displayName: appDisplayName,
+    },
+    ...trackedCompetitors.map((c, i) => ({
+      label: `competitor_${i + 1}`,
+      packageName: c.package_name,
+      canonicalPackageId: c.canonical_package_id ?? null,
+      serpMatchedPackageId: c.serp_matched_package_id ?? null,
+      displayName: c.name ?? null,
+    })),
+  ];
+  const matchDebug = buildSerpRankDebugPayload(block.items, debugTargets, {
+    serpLimit: 10,
   });
 
-  const { rank: rawRank, matchKind } = findBestRankInSerpItems(block.items, packageName, {
-    displayName: appDisplayName,
+  console.log(`[${ROUTE}] serp match debug`, {
+    market,
+    serpPlayAppCount: block.items.length,
+    topSerp: matchDebug.topSerp,
+    matches: matchDebug.matches,
   });
+
+  for (const target of debugTargets) {
+    const lookup = serpLookupForPackage(
+      target.packageName,
+      target.canonicalPackageId,
+      target.serpMatchedPackageId,
+    );
+    if (lookup.lookupSource === "internal" && !missingCanonicalWarned.has(target.label)) {
+      missingCanonicalWarned.add(target.label);
+      warnWhenMissingCanonicalPackageId(ROUTE, {
+        label: target.label,
+        internalPackageId: lookup.internalPackageId,
+        displayName: target.displayName,
+      });
+    }
+    const match = resolveRankMatchInCountryForSerperSnapshot(
+      serperResults,
+      target.packageName,
+      market,
+      {
+        displayName: target.displayName,
+        canonicalPackageId: target.canonicalPackageId,
+        serpMatchedPackageId: target.serpMatchedPackageId,
+        bestEffortTitleMatch: true,
+      },
+    );
+    logSerpTargetMatchResult(
+      ROUTE,
+      {
+        country: market,
+        label: target.label,
+        internalPackageId: lookup.internalPackageId,
+        serpLookupPackageId: lookup.serpLookupPackageId,
+        usedCanonical: lookup.lookupSource === "canonical",
+        displayName: target.displayName,
+      },
+      match,
+    );
+  }
+
+  const yourMatch = matchDebug.matches.find((m) => m.label === "your_app");
+  const rawRank = yourMatch?.rank ?? null;
+  const matchKind = yourMatch?.matchKind ?? "none";
+  const matchScore = yourMatch?.matchScore ?? null;
   const { rank: clientRank, not_ranked_reason } = applyLiveRankClientPolicy(rawRank);
 
   const tracked_competitor_ranks =
     trackedCompetitors.length > 0
       ? buildTrackedCompetitorRanksMap(trackedCompetitors, serperResults, market)
       : undefined;
+
+  logPoorSerpRankDebug(ROUTE, { market, keyword_market: market }, block.items, debugTargets);
 
   console.log(`[${ROUTE}] rank resolved`, {
     market,
@@ -140,11 +208,10 @@ function resolveMarketResult(
     rawRank,
     clientRank,
     matchKind,
+    matchScore,
     not_ranked_reason,
     itemCount: block.items.length,
-    trackedCompetitors: tracked_competitor_ranks
-      ? Object.keys(tracked_competitor_ranks).length
-      : 0,
+    competitorMatches: matchDebug.matches.filter((m) => m.label !== "your_app"),
   });
 
   return {
@@ -203,16 +270,37 @@ export async function POST(request: Request, context: Ctx) {
   const markets = [...new Set(countries)];
   const creditCost = serperAiCreditsForCountryCount(markets.length);
 
-  const { data: appRow } = await supabase
-    .from("apps")
-    .select("package_name,name")
-    .eq("id", appId)
-    .eq("workspace_id", workspaceId)
-    .maybeSingle();
+  const { data: appRow, error: appLoadErr } = await loadAppForSerperRank(
+    supabase,
+    workspaceId,
+    appId,
+  );
 
-  const packageName = String(appRow?.package_name ?? "").trim();
-  const appDisplayName =
-    typeof appRow?.name === "string" && appRow.name.trim() ? appRow.name.trim() : null;
+  if (appLoadErr) {
+    console.error(`[${ROUTE}] app_load_failed`, appLoadErr.message);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "app_load_error",
+          message: "Could not load app settings. Try again shortly.",
+        },
+      },
+      { status: 503 },
+    );
+  }
+
+  if (!appRow) {
+    return NextResponse.json(
+      { ok: false, error: { code: "invalid_app", message: "App not found." } },
+      { status: 404 },
+    );
+  }
+
+  const packageName = String(appRow.package_name ?? "").trim();
+  const appCanonicalPackageId = appRow.canonical_package_id;
+  const appSerpMatchedPackageId = appRow.serp_matched_package_id;
+  const appDisplayName = appRow.name;
   if (!normPkgForSerperSnapshot(packageName)) {
     return NextResponse.json(
       {
@@ -282,19 +370,20 @@ export async function POST(request: Request, context: Ctx) {
   const ledgerId = debit.ledgerId;
   const rankedAt = new Date().toISOString();
 
-  const { data: competitorRows } = await supabase
-    .from("workspace_competitor_analyses")
-    .select("competitor_package_id,competitor_name")
-    .eq("workspace_id", workspaceId)
-    .order("analyzed_at", { ascending: false })
-    .limit(2);
+  const { data: competitorRows, error: competitorLoadErr } =
+    await loadCompetitorsForSerperRank(supabase, workspaceId);
+  if (competitorLoadErr) {
+    console.warn(`[${ROUTE}] competitor_load_failed`, competitorLoadErr.message);
+  }
 
-  const trackedCompetitors: TrackedCompetitorRef[] = (competitorRows ?? [])
-    .map((row) => ({
-      package_name: String(row.competitor_package_id ?? "").trim(),
-      name: typeof row.competitor_name === "string" ? row.competitor_name : null,
-    }))
-    .filter((c) => c.package_name.length > 0);
+  const trackedCompetitors: TrackedCompetitorRef[] = competitorRows.map((row) => ({
+    package_name: row.competitor_package_id,
+    canonical_package_id: row.canonical_package_id,
+    serp_matched_package_id: row.serp_matched_package_id,
+    name: row.competitor_name,
+  }));
+
+  const missingCanonicalWarned = new Set<string>();
 
   const comp1Pkg = trackedCompetitors[0]?.package_name ?? null;
   const comp2Pkg = trackedCompetitors[1]?.package_name ?? null;
@@ -304,7 +393,7 @@ export async function POST(request: Request, context: Ctx) {
 
   try {
     serperResults = await searchPlayStore(keyword, markets, {
-      num: 100,
+      deepRankSearch: true,
       restrictToPlayStore: true,
     });
     marketResults = markets.map((market) =>
@@ -313,7 +402,10 @@ export async function POST(request: Request, context: Ctx) {
         market,
         packageName,
         appDisplayName,
+        appCanonicalPackageId,
+        appSerpMatchedPackageId,
         trackedCompetitors,
+        missingCanonicalWarned,
       ),
     );
   } catch (err) {

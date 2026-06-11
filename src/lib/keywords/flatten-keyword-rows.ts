@@ -1,6 +1,7 @@
 import { isSupportedCountry, primaryMarketCode, type SupportedCountryCode } from "@/lib/countries";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
 import type { TrackedCompetitorRankSnapshot } from "@/lib/keywords/tracked-competitor-ranks";
+import type { SerperRankMatchKind } from "@/lib/keywords/serper-snapshot-rank-resolve";
 
 /**
  * A single-market view of a tracked keyword row.
@@ -20,6 +21,8 @@ export type FlatKeywordRow = {
    * null means no snapshot data for this country yet.
    */
   yourRank: number | null;
+  /** How your_app rank was resolved on the latest snapshot for this country. */
+  rankMatchKind?: SerperRankMatchKind | null;
   /**
    * ISO timestamp of the most recent rank snapshot for this keyword × country.
    * null means the keyword has never been fetched (Brand New state).
@@ -57,6 +60,7 @@ export function flattenKeywordsToRows(
           source: kw,
           country: entry.country,
           yourRank: typeof entry.rank === "number" ? entry.rank : null,
+          rankMatchKind: entry.rank_match_kind ?? null,
           capturedAt: entry.captured_at ?? null,
           trackedCompetitors: kw.trackedCompetitorsByCountry?.[entry.country] ?? [],
         });
@@ -73,6 +77,7 @@ export function flattenKeywordsToRows(
         source: kw,
         country: fallbackCountry,
         yourRank: kw.latest?.rank ?? null,
+        rankMatchKind: null,
         capturedAt: kw.latest?.captured_at ?? null,
         trackedCompetitors: kw.trackedCompetitorsByCountry?.[fallbackCountry] ?? [],
       });

@@ -34,7 +34,7 @@ export function extractPackageIdFromPlayStoreDetailsUrl(
   try {
     const url = new URL(trimmed);
     if (!/(^|\.)play\.google\.com$/i.test(url.hostname)) return null;
-    if (!/\/store\/apps\/details/i.test(url.pathname)) return null;
+    if (!/\/store\/apps/i.test(url.pathname)) return null;
     const rawId = url.searchParams.get("id");
     if (!rawId || !rawId.trim()) return null;
     try {

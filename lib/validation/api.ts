@@ -164,6 +164,7 @@ export const logoGeneratorMetadataPayloadSchema = z.object({
 export const patchAppSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   package_name: z.string().trim().max(200).nullable().optional(),
+  canonical_package_id: z.string().trim().max(256).nullable().optional(),
   play_store_url: z.string().trim().max(2000).nullable().optional(),
   target_countries: z.array(z.string().min(2).max(4)).max(40).optional(),
   icon_url: patchAppIconUrlSchema,

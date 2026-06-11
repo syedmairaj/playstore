@@ -15,6 +15,10 @@ import {
 import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
 import { keywordSerperSaveBodySchema } from "@/lib/validation/keyword-serper-save-body";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
+import {
+  loadAppForSerperRank,
+  loadCompetitorsForSerperRank,
+} from "@/lib/workspace/load-app-for-serper-rank";
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/keywords/serper-save";
 
@@ -75,14 +79,27 @@ export async function POST(request: Request, context: Ctx) {
     throw e;
   }
 
-  const { data: appRow, error: appErr } = await supabase
-    .from("apps")
-    .select("id,package_name")
-    .eq("id", parsed.appId)
-    .eq("workspace_id", workspaceId)
-    .maybeSingle();
+  const { data: appRow, error: appLoadErr } = await loadAppForSerperRank(
+    supabase,
+    workspaceId,
+    parsed.appId,
+  );
 
-  if (appErr || !appRow) {
+  if (appLoadErr) {
+    console.error(`[${ROUTE}] app_load_failed`, appLoadErr.message);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "app_load_error",
+          message: "Could not load app settings. Try again shortly.",
+        },
+      },
+      { status: 503 },
+    );
+  }
+
+  if (!appRow) {
     return NextResponse.json(
       { ok: false, error: { code: "invalid_app", message: "App not found in this workspace." } },
       { status: 400 },
@@ -90,6 +107,9 @@ export async function POST(request: Request, context: Ctx) {
   }
 
   const pkg = String(appRow.package_name ?? "").trim();
+  const appCanonicalPkg = appRow.canonical_package_id;
+  const appSerpMatchedPkg = appRow.serp_matched_package_id;
+  const appDisplayName = appRow.name;
   if (!pkg) {
     return NextResponse.json(
       {
@@ -308,7 +328,12 @@ export async function POST(request: Request, context: Ctx) {
 
   const rankForCountry = (cc: string): number => {
     const key = normMarket(cc);
-    const serverRaw = resolveRankInCountryForSerperSnapshot(parsed.results, pkg, cc);
+    const serverRaw = resolveRankInCountryForSerperSnapshot(parsed.results, pkg, cc, {
+      displayName: appDisplayName,
+      canonicalPackageId: appCanonicalPkg,
+      serpMatchedPackageId: appSerpMatchedPkg,
+      bestEffortTitleMatch: true,
+    });
     const serverDb = rankForSnapshotInsert(serverRaw);
     const fromClient = snapshotRankByCountry?.get(key);
     if (fromClient != null && fromClient < SERPER_RANK_NOT_IN_FIRST_PAGE) {
@@ -326,17 +351,20 @@ export async function POST(request: Request, context: Ctx) {
     return serverDb;
   };
 
-  const { data: competitorRows } = await supabase
-    .from("workspace_competitor_analyses")
-    .select("competitor_package_id")
-    .eq("workspace_id", workspaceId)
-    .order("analyzed_at", { ascending: false })
-    .limit(2);
+  const { data: competitorRows, error: competitorLoadErr } =
+    await loadCompetitorsForSerperRank(supabase, workspaceId);
+  if (competitorLoadErr) {
+    console.warn(`[${ROUTE}] competitor_load_failed`, competitorLoadErr.message);
+  }
 
-  const comp1Pkg =
-    (competitorRows?.[0]?.competitor_package_id as string | undefined) ?? null;
-  const comp2Pkg =
-    (competitorRows?.[1]?.competitor_package_id as string | undefined) ?? null;
+  const comp1Pkg = competitorRows[0]?.competitor_package_id ?? null;
+  const comp1Canonical = competitorRows[0]?.canonical_package_id ?? null;
+  const comp1SerpMatched = competitorRows[0]?.serp_matched_package_id ?? null;
+  const comp1Name = competitorRows[0]?.competitor_name ?? null;
+  const comp2Pkg = competitorRows[1]?.competitor_package_id ?? null;
+  const comp2Canonical = competitorRows[1]?.canonical_package_id ?? null;
+  const comp2SerpMatched = competitorRows[1]?.serp_matched_package_id ?? null;
+  const comp2Name = competitorRows[1]?.competitor_name ?? null;
 
   const snapshotAt = new Date().toISOString();
   const rows = saveCountries.map((cc) => ({
@@ -348,13 +376,27 @@ export async function POST(request: Request, context: Ctx) {
     competitor_1_package: comp1Pkg,
     competitor_1_rank: comp1Pkg
       ? formatTrackedCompetitorRankForDb(
-          resolveTrackedCompetitorRankInSerp(parsed.results, comp1Pkg, cc),
+          resolveTrackedCompetitorRankInSerp(
+            parsed.results,
+            comp1Pkg,
+            cc,
+            comp1Name,
+            comp1Canonical,
+            comp1SerpMatched,
+          ),
         )
       : null,
     competitor_2_package: comp2Pkg,
     competitor_2_rank: comp2Pkg
       ? formatTrackedCompetitorRankForDb(
-          resolveTrackedCompetitorRankInSerp(parsed.results, comp2Pkg, cc),
+          resolveTrackedCompetitorRankInSerp(
+            parsed.results,
+            comp2Pkg,
+            cc,
+            comp2Name,
+            comp2Canonical,
+            comp2SerpMatched,
+          ),
         )
       : null,
   }));
