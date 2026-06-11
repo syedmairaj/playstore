@@ -11,9 +11,11 @@ import {
 } from "@/lib/countries";
 import { formatRankForDisplay } from "@/lib/keywords/format-rank-display";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
+import { competitorInitialForDisplay } from "@/lib/keywords/serper-snapshot-rank-resolve";
 import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import type { FlatKeywordRow } from "@/lib/keywords/flatten-keyword-rows";
+import type { TrackedCompetitorRankSnapshot } from "@/lib/keywords/tracked-competitor-ranks";
 import {
   formatCapturedAgo,
   getRankFreshness,
@@ -21,6 +23,148 @@ import {
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+
+export type CompetitorSlot = {
+  name: string;
+  packageId: string;
+  /** App icon URL from workspace_competitor_analyses.icon_url — may be null. */
+  iconUrl?: string | null;
+  rankByTerm: ReadonlyMap<string, number>;
+};
+
+function resolveTrackedCompetitorRank(
+  packageId: string,
+  termKey: string,
+  snapshotRanks: TrackedCompetitorRankSnapshot[],
+  rankByTerm: ReadonlyMap<string, number>,
+): number | null {
+  const pkgNorm = packageId.trim().toLowerCase();
+  const fromSnapshot = snapshotRanks.find((r) => r.package_name === pkgNorm);
+  // When a serper refresh wrote competitor ranks for this row, trust that snapshot
+  // exclusively — do not fall back to unrelated SERP overlap from Competitor Spy.
+  if (snapshotRanks.length > 0) {
+    return fromSnapshot?.rank ?? null;
+  }
+  return rankByTerm.get(termKey) ?? null;
+}
+
+function TrackedCompetitorsCell({
+  slots,
+  termKey,
+  snapshotRanks,
+  rankFmt,
+  tooltipTemplate,
+  notRankedTooltip,
+  emptyHint,
+  isRtl,
+}: {
+  slots: [CompetitorSlot | null, CompetitorSlot | null];
+  termKey: string;
+  snapshotRanks: TrackedCompetitorRankSnapshot[];
+  rankFmt: { notInTop: string };
+  tooltipTemplate: (name: string, rank: number | null, packageId: string) => string;
+  notRankedTooltip: string;
+  emptyHint: string;
+  isRtl?: boolean;
+}) {
+  const active = slots.filter((s): s is CompetitorSlot => s != null);
+  if (active.length === 0) {
+    return (
+      <span
+        className={cn(
+          "mx-auto block max-w-[200px] text-center text-[11px] leading-snug text-zinc-500",
+          isRtl && "font-arabic leading-relaxed",
+        )}
+      >
+        {emptyHint}
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-end justify-center gap-3",
+        isRtl && "flex-row-reverse font-arabic",
+      )}
+    >
+      {active.map((slot) => {
+        const rank = resolveTrackedCompetitorRank(
+          slot.packageId,
+          termKey,
+          snapshotRanks,
+          slot.rankByTerm,
+        );
+        const ranked = rank != null && rank < SERPER_RANK_NOT_IN_FIRST_PAGE;
+        const displayName =
+          slot.name.trim() || slot.packageId;
+        const initial = competitorInitialForDisplay(displayName, slot.packageId);
+        const iconUrl =
+          slot.iconUrl?.trim() ||
+          `https://icon.horse/icon/${encodeURIComponent(slot.packageId)}`;
+        return (
+          <div key={slot.packageId} className="flex min-w-[2rem] flex-col items-center gap-1">
+            <Tooltip
+              content={
+                <span className="block max-w-[240px] leading-snug text-zinc-200">
+                  {tooltipTemplate(slot.name, rank, slot.packageId)}
+                </span>
+              }
+              side="top"
+              className="max-w-[280px] border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+              asChild
+            >
+              <div
+                className={cn(
+                  "relative size-7 shrink-0 cursor-default overflow-hidden rounded-md",
+                  "border border-zinc-700/80 bg-zinc-800/60 ring-1 ring-white/[0.04]",
+                )}
+                tabIndex={0}
+                aria-label={tooltipTemplate(slot.name, rank, slot.packageId)}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={iconUrl}
+                  alt={slot.name}
+                  className="size-full object-cover"
+                  loading="lazy"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                    const fb = (e.currentTarget as HTMLImageElement)
+                      .nextElementSibling as HTMLElement | null;
+                    if (fb) fb.style.display = "flex";
+                  }}
+                />
+                <span
+                  className="absolute inset-0 hidden items-center justify-center text-[9px] font-bold uppercase text-zinc-400"
+                  aria-hidden
+                >
+                  {initial}
+                </span>
+              </div>
+            </Tooltip>
+            {ranked ? (
+              <span className="font-mono text-[10px] font-semibold tabular-nums text-amber-300/95">
+                {formatRankForDisplay(rank, rankFmt, { column: "theirs" })}
+              </span>
+            ) : (
+              <Tooltip
+                content={<span className="text-zinc-400">{notRankedTooltip}</span>}
+                side="bottom"
+                className="border border-white/[0.12] bg-[#0a0d12] px-2 py-1 text-xs shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
+                asChild
+              >
+                <span className="cursor-default font-mono text-[10px] font-medium text-zinc-600">
+                  {rankFmt.notInTop}
+                </span>
+              </Tooltip>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function NotInTopRankWithHint({
   rank,
@@ -57,14 +201,6 @@ function NotInTopRankWithHint({
   );
 }
 
-export type CompetitorSlot = {
-  name: string;
-  packageId: string;
-  /** App icon URL from workspace_competitor_analyses.icon_url — may be null. */
-  iconUrl?: string | null;
-  rankByTerm: ReadonlyMap<string, number>;
-};
-
 export type KeywordWatchlistTableProps = {
   /** One row per (keyword × country) — produced by flattenKeywordsToRows(). */
   rows: FlatKeywordRow[];
@@ -86,6 +222,8 @@ export type KeywordWatchlistTableProps = {
   onSerperRefresh: (id: string) => void;
   /** Dual competitor slots — up to two competitors with their rank maps. */
   competitorSlots?: [CompetitorSlot | null, CompetitorSlot | null];
+  /** Arabic dashboard — RTL layout + typography for competitor column. */
+  isRtl?: boolean;
 };
 
 export function KeywordWatchlistTable({
@@ -107,6 +245,7 @@ export function KeywordWatchlistTable({
   onDelete,
   onSerperRefresh,
   competitorSlots,
+  isRtl = false,
 }: KeywordWatchlistTableProps) {
   const t = useTranslations("keywordTracker");
 
@@ -135,9 +274,9 @@ export function KeywordWatchlistTable({
               >
                 {t("table.bestRank")}
               </th>
-              {/* 4 — Competitors (center-aligned) */}
+              {/* 4 — My competitors (center-aligned) */}
               <th className="sticky top-0 z-10 bg-[#0c1018] px-4 py-3.5 text-center shadow-[0_1px_0_0_rgba(255,255,255,0.06)]">
-                {t("table.competitors")}
+                {t("table.myCompetitors")}
               </th>
               {/* 5 — Actions (right-aligned) */}
               <th className="sticky top-0 z-10 bg-[#0c1018] px-5 py-3.5 text-end shadow-[0_1px_0_0_rgba(255,255,255,0.06)]">
@@ -221,85 +360,27 @@ export function KeywordWatchlistTable({
                       )}
                     </td>
 
-                    {/* 4 — Competitors: icon-first horizontal dual-slot cell */}
+                    {/* 4 — My competitors: Competitor Spy slots only */}
                     <td className="px-4 py-4 text-center align-middle">
-                      {competitorSlots && (competitorSlots[0] || competitorSlots[1]) ? (
-                        <div className="flex items-center justify-center gap-3">
-                          {([0, 1] as const).map((idx) => {
-                            const slot = competitorSlots[idx];
-                            if (!slot) return null;
-                            const termKey = src.term.trim().toLowerCase();
-                            const rank = slot.rankByTerm.get(termKey) ?? null;
-                            const ranked = rank != null && rank < SERPER_RANK_NOT_IN_FIRST_PAGE;
-                            return (
-                              <div key={idx} className="flex flex-col items-center gap-1">
-                                {/* App icon with hover tooltip showing full app name */}
-                                <Tooltip
-                                  content={
-                                    <span className="text-zinc-200">
-                                      {slot.name}
-                                      <span className="ms-1 text-zinc-500">({slot.packageId})</span>
-                                    </span>
-                                  }
-                                  side="top"
-                                  className="max-w-[260px] border border-white/[0.12] bg-[#0a0d12] px-2.5 py-1.5 text-xs text-zinc-200 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
-                                  asChild
-                                >
-                                  <div
-                                    className="relative size-6 cursor-default overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-800/60 ring-1 ring-white/[0.04] shrink-0"
-                                    tabIndex={0}
-                                    aria-label={`${slot.name} rank`}
-                                  >
-                                    {slot.iconUrl ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img
-                                        src={slot.iconUrl}
-                                        alt={slot.name}
-                                        className="size-full object-cover"
-                                        loading="lazy"
-                                        onError={(e) => {
-                                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                                          const fb = (e.currentTarget as HTMLImageElement).nextElementSibling as HTMLElement | null;
-                                          if (fb) fb.style.display = "flex";
-                                        }}
-                                      />
-                                    ) : null}
-                                    {/* Fallback initial badge — shown when no iconUrl or img fails */}
-                                    <span
-                                      className={cn(
-                                        "absolute inset-0 flex items-center justify-center text-[9px] font-bold uppercase text-zinc-400",
-                                        slot.iconUrl ? "hidden" : "flex",
-                                      )}
-                                      aria-hidden
-                                    >
-                                      {(slot.name[0] ?? "?").toUpperCase()}
-                                    </span>
-                                  </div>
-                                </Tooltip>
-                                {/* Rank value */}
-                                {ranked ? (
-                                  <span className="font-mono text-[11px] font-semibold tabular-nums text-amber-300/90">
-                                    {formatRankForDisplay(rank, rankFmt)}
-                                  </span>
-                                ) : (
-                                  <Tooltip
-                                    content={<span className="text-zinc-400">Not ranked in top 100</span>}
-                                    side="bottom"
-                                    className="border border-white/[0.12] bg-[#0a0d12] px-2 py-1 text-xs shadow-[0_4px_24px_-4px_rgba(0,0,0,0.7)]"
-                                    asChild
-                                  >
-                                    <span className="cursor-default text-[11px] font-medium text-zinc-600">
-                                      —
-                                    </span>
-                                  </Tooltip>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <span className="text-zinc-500">—</span>
-                      )}
+                      <TrackedCompetitorsCell
+                        slots={competitorSlots ?? [null, null]}
+                        termKey={src.term.trim().toLowerCase()}
+                        snapshotRanks={row.trackedCompetitors}
+                        rankFmt={rankFmt}
+                        tooltipTemplate={(name, rank, packageId) =>
+                          t("table.trackedCompetitorTooltip", {
+                            name,
+                            rank:
+                              rank != null
+                                ? formatRankForDisplay(rank, rankFmt, { column: "theirs" })
+                                : rankFmt.notInTop,
+                            package: packageId,
+                          })
+                        }
+                        notRankedTooltip={t("table.competitorNotRankedTooltip")}
+                        emptyHint={t("table.addCompetitorsHint")}
+                        isRtl={isRtl}
+                      />
                     </td>
 
                     {/* 5 — Actions: icon-only compact buttons */}

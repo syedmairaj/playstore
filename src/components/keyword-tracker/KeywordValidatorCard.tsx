@@ -40,10 +40,16 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import {
+  OPTIMIZER_CONTEXT_KEY,
+  KEYWORD_SIGNALS_KEY,
+  upsertKeywordSignalCache,
+  patchKeywordSignalsCache,
+  type VaultLocale,
+} from '@/hooks/useOptimizerSync';
+import type { KeywordSignal } from '@/lib/staging/keyword-signals';
 
 // Query key used by useOptimizerSync — must match exactly so invalidation
-// triggers a refetch in the AI Listing Optimizer's Active Context panel.
-const OPTIMIZER_CONTEXT_KEY = (wid: string) => ['optimizer-context', wid];
 
 // ─── Colour tokens (inline — purge-safe) ─────────────────────────────────────
 const C = {
@@ -67,7 +73,13 @@ export interface KeywordScore {
   monthlyInstalls: { low: number; realistic: number; high: number };
   recommendation: 'HIGH_CONFIDENCE' | 'MEDIUM_OPPORTUNITY' | 'SKIP';
   // Multi-market live rank results — keyed by market code, e.g. { us: { rank: 1 }, in: { rank: null } }
-  liveRanks?: Record<string, { rank: number | null; fetched_at: string; error?: string }>;
+  liveRanks?: Record<string, {
+    rank: number | null;
+    fetched_at: string;
+    tracked_competitor_ranks?: Record<string, number | null>;
+    not_ranked_reason?: 'not_in_serp' | 'outside_visibility_window' | 'serper_error';
+    error?: string;
+  }>;
 }
 
 /** Convenience: count how many markets have been fetched for a keyword */
@@ -138,6 +150,8 @@ export interface KeywordValidatorCardProps {
   workspaceId: string;
   /** UUID of the app whose vault receives live rank writes. */
   appId?: string;
+  /** Vault branch for staging — state_en or state_ar (matches listing locale). */
+  vaultLocale?: VaultLocale;
   /**
    * Markets selected in the Keyword Tracker CountrySelector.
    * Drives the multi-market live rank fetch and pre-click credit cost display.
@@ -146,6 +160,8 @@ export interface KeywordValidatorCardProps {
   selectedCountries?: string[];
   isOpen: boolean;
   onClose: () => void;
+  /** Pre-fill the search input when opened from Active Context keyword row. */
+  initialKeyword?: string;
   onKeywordStaged?: (keyword: string, score: KeywordScore) => void;
 }
 
@@ -625,7 +641,15 @@ function ResultRow({
                           {market}
                         </span>
                         <span className="mt-0.5 text-sm font-bold" style={{ color: rankColor }}>
-                          {entry.error ? 'Err' : entry.rank ? `#${entry.rank}` : '100+'}
+                          {entry.error
+                            ? 'Err'
+                            : entry.rank
+                              ? `#${entry.rank}`
+                              : entry.not_ranked_reason === 'outside_visibility_window'
+                                ? 'Not in top 30'
+                                : entry.not_ranked_reason === 'not_in_serp'
+                                  ? 'Not ranked'
+                                  : '20+'}
                         </span>
                       </div>
                     );
@@ -727,7 +751,14 @@ function saveStagingState(workspaceId: string, state: Record<string, 'pending' |
 }
 
 export function KeywordValidatorCard({
-  workspaceId, appId, selectedCountries, isOpen, onClose, onKeywordStaged,
+  workspaceId,
+  appId,
+  vaultLocale = 'en',
+  selectedCountries,
+  isOpen,
+  onClose,
+  initialKeyword,
+  onKeywordStaged,
 }: KeywordValidatorCardProps) {
   const headingId   = useId();
   const inputRef    = useRef<HTMLInputElement>(null);
@@ -756,6 +787,12 @@ export function KeywordValidatorCard({
       return () => clearTimeout(t);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen && initialKeyword?.trim()) {
+      setKeyword(initialKeyword.trim());
+    }
+  }, [isOpen, initialKeyword]);
 
   // Persist results to localStorage whenever they change (after hydration)
   useEffect(() => {
@@ -803,10 +840,21 @@ export function KeywordValidatorCard({
   // ── Stage ─────────────────────────────────────────────────────────────────
   const stageMutation = useMutation({
     mutationFn: async (score: KeywordScore) => {
+      if (!appId) throw new Error('Select an app before staging keywords');
       const res = await fetch(`/api/workspaces/${workspaceId}/staging-vault/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ locale: 'en', ...score }),
+        body: JSON.stringify({
+          locale: vaultLocale,
+          appId,
+          keyword: score.keyword,
+          difficulty: score.difficulty,
+          confidence: score.confidence,
+          searchVolume: score.searchVolume,
+          competition: score.competition,
+          monthlyInstalls: score.monthlyInstalls,
+          recommendation: score.recommendation,
+        }),
       });
       if (!res.ok && res.status !== 404) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -814,16 +862,42 @@ export function KeywordValidatorCard({
       }
       return score;
     },
-    onMutate:  (s) => setStagingState((p) => ({ ...p, [s.keyword]: 'pending' })),
+    onMutate: (s) => {
+      setStagingState((p) => ({ ...p, [s.keyword]: 'pending' }));
+      if (appId) {
+        const optimistic: KeywordSignal = {
+          keyword: s.keyword,
+          difficulty: s.difficulty,
+          confidence: s.confidence,
+          searchVolume: s.searchVolume,
+          competition: s.competition,
+          recommendation: s.recommendation,
+          liveRanks: s.liveRanks,
+          stagedAt: new Date().toISOString(),
+        };
+        upsertKeywordSignalCache(queryClient, workspaceId, appId, optimistic, vaultLocale);
+      }
+    },
     onSuccess: (s) => {
       setStagingState((p) => ({ ...p, [s.keyword]: 'done' }));
       onKeywordStaged?.(s.keyword, s);
       toast.success(`"${s.keyword}" staged to tracker`);
-      // Invalidate optimizer context so AI Listing Optimizer Active Context re-renders
-      void queryClient.invalidateQueries({ queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId) });
+      void queryClient.invalidateQueries({
+        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
+      });
+      if (appId) {
+        void queryClient.invalidateQueries({
+          queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId, vaultLocale),
+        });
+      }
     },
     onError: (err: Error, s) => {
       setStagingState((p) => { const n = { ...p }; delete n[s.keyword]; return n; });
+      if (appId) {
+        void queryClient.invalidateQueries({
+          queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId, vaultLocale),
+        });
+      }
       toast.error(err.message ?? 'Staging failed');
     },
   });
@@ -843,12 +917,18 @@ export function KeywordValidatorCard({
       const res = await fetch(`/api/workspaces/${workspaceId}/validator/live-rank`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: kw, countries, appId, locale: 'en' }),
+        body: JSON.stringify({ keyword: kw, countries, appId, locale: vaultLocale }),
       });
       const json = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         keyword?: string;
-        results?: Array<{ country: string; rank: number | null; error?: string }>;
+        results?: Array<{
+          country: string;
+          rank: number | null;
+          tracked_competitor_ranks?: Record<string, number | null>;
+          not_ranked_reason?: 'not_in_serp' | 'outside_visibility_window' | 'serper_error';
+          error?: string;
+        }>;
         creditsCharged?: number;
         balanceAfter?: number;
         rankedAt?: string;
@@ -883,8 +963,22 @@ export function KeywordValidatorCard({
 
       // Build market-indexed liveRanks and patch in-memory results
       const newRanks: KeywordScore['liveRanks'] = {};
-      for (const { country, rank, error } of marketResults) {
-        newRanks[country] = { rank, fetched_at: rankedAt, ...(error ? { error } : {}) };
+      for (const {
+        country,
+        rank,
+        tracked_competitor_ranks,
+        not_ranked_reason,
+        error,
+      } of marketResults) {
+        newRanks[country] = {
+          rank,
+          fetched_at: rankedAt,
+          ...(tracked_competitor_ranks && Object.keys(tracked_competitor_ranks).length > 0
+            ? { tracked_competitor_ranks }
+            : {}),
+          ...(not_ranked_reason ? { not_ranked_reason } : {}),
+          ...(error ? { error } : {}),
+        };
       }
       setResults((prev) => prev.map((r) =>
         r.keyword === kw
@@ -937,7 +1031,30 @@ export function KeywordValidatorCard({
         });
       }
 
-      void queryClient.invalidateQueries({ queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId) });
+      void queryClient.invalidateQueries({
+        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
+      });
+      if (appId) {
+        patchKeywordSignalsCache(
+          queryClient,
+          workspaceId,
+          appId,
+          (prev) =>
+            prev.map((s) =>
+              s.keyword === kw
+                ? {
+                    ...s,
+                    liveRanks: { ...(s.liveRanks ?? {}), ...newRanks },
+                    lastFetchedAt: rankedAt,
+                  }
+                : s
+            ),
+          vaultLocale
+        );
+        void queryClient.invalidateQueries({
+          queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId, vaultLocale),
+        });
+      }
     },
     onError: (err: Error, { kw }) => {
       setLiveRankStates((p) => ({ ...p, [kw]: 'error' }));

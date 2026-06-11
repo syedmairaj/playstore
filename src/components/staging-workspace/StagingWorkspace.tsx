@@ -43,6 +43,10 @@ interface StagingWorkspaceProps {
   config: StagingWorkspaceConfig;
   onRemoveSignal: RemovalHandler;
   onSignalsUpdate?: (totalSignals: number) => void;
+  /** Rendered after the Active Context header, before the three pillars. */
+  topSection?: React.ReactNode;
+  /** Keyword Tracker count — included in global Signals badge. */
+  keywordTrackerCount?: number;
 }
 
 /**
@@ -115,13 +119,17 @@ export default function StagingWorkspace({
   config,
   onRemoveSignal,
   onSignalsUpdate,
+  topSection,
+  keywordTrackerCount = 0,
 }: StagingWorkspaceProps) {
   const [removingSignalId, setRemovingSignalId] = useState<string | null>(null);
 
-  // Notify parent of signal count changes
+  const combinedSignalCount = state.totalSignals + keywordTrackerCount;
+
+  // Notify parent of signal count changes (all Active Context sections)
   useEffect(() => {
-    onSignalsUpdate?.(state.totalSignals);
-  }, [state.totalSignals, onSignalsUpdate]);
+    onSignalsUpdate?.(combinedSignalCount);
+  }, [combinedSignalCount, onSignalsUpdate]);
 
   // Build pillar configs
   const pillars = useMemo(
@@ -171,7 +179,7 @@ export default function StagingWorkspace({
             <div className="text-[10px] font-semibold text-white/50 uppercase tracking-[0.08em]">
               {config.locale === "ar" ? "الإشارات" : "Signals"}
             </div>
-            <div className="text-xl font-bold text-white">{state.totalSignals}</div>
+            <div className="text-xl font-bold text-white">{combinedSignalCount}</div>
           </div>
         )}
       </div>
@@ -182,6 +190,9 @@ export default function StagingWorkspace({
           {state.error}
         </div>
       )}
+
+      {/* Keyword Tracker — first panel in Active Context */}
+      {topSection}
 
       {/* Three Pillars */}
       <div className="space-y-6">
@@ -210,7 +221,7 @@ export default function StagingWorkspace({
         </div>
       )}
 
-      {state.totalSignals === 0 && !state.isLoading && (
+      {combinedSignalCount === 0 && !state.isLoading && (
         <div className={`p-3 rounded-lg bg-white/3 text-[11px] text-white/40 ${
           config.isRtl ? "text-right" : "text-left"
         }`}>

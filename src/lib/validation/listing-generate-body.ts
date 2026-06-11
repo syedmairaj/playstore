@@ -11,7 +11,7 @@ export const listingGenerateBodySchema = listingOptimizerRequestSchema.extend({
    * Subset of: "reviews" | "market" | "competitors"
    */
   activeSignalTypes: z
-    .array(z.enum(["reviews", "market", "competitors"]))
-    .max(3)
+    .array(z.enum(["reviews", "market", "competitors", "keywords"]))
+    .max(4)
     .optional(),
 });

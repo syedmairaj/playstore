@@ -111,17 +111,20 @@ export async function POST(request: NextRequest) {
   const { workspaceId, appId: bodyAppId, activeSignalTypes, ...listingInput } = input;
 
   // ── Signal quality computation ────────────────────────────────────────────
-  // Counts how many of the three signal channels (reviews, market, competitors)
-  // were active at generation time. Used to populate quality_status / quality_warning
-  // meta fields in the response, which the UI renders as a Quality Status badge.
+  // Counts active signal channels (keywords, reviews, market, competitors).
   const signalCount = (activeSignalTypes ?? []).length;
   const qualityMeta =
-    signalCount >= 3
+    signalCount >= 4
       ? { quality_status: "All signals active. Synthesis mode: Maximum." as const }
-      : {
-          quality_warning:
-            "Listing generated using partial data. Add Review, Market, or Competitor signals for a more comprehensive strategy." as const,
-        };
+      : signalCount >= 2
+        ? {
+            quality_status:
+              "Multi-signal synthesis active. Keyword Tracker terms prioritized in copy." as const,
+          }
+        : {
+            quality_warning:
+              "Listing generated using partial data. Stage Keyword Tracker terms plus Review, Market, or Competitor signals for a stronger strategy." as const,
+          };
 
   if (bodyAppId) {
     const { data: appOk, error: appLookupErr } = await supabase

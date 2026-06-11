@@ -6,7 +6,12 @@ import { maybeCreateAsoRankImprovementAlert } from "@/lib/keywords/evaluate-aso-
 import { maybeCreateRankAlerts } from "@/lib/keywords/evaluate-alerts";
 import {
   resolveRankInCountryForSerperSnapshot,
+  rankForSnapshotInsert,
 } from "@/lib/keywords/serper-snapshot-rank-resolve";
+import {
+  formatTrackedCompetitorRankForDb,
+  resolveTrackedCompetitorRankInSerp,
+} from "@/lib/keywords/tracked-competitor-ranks";
 import { SERPER_RANK_NOT_IN_FIRST_PAGE } from "@/lib/keywords/serper-rank-constants";
 import { keywordSerperSaveBodySchema } from "@/lib/validation/keyword-serper-save-body";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
@@ -303,22 +308,35 @@ export async function POST(request: Request, context: Ctx) {
 
   const rankForCountry = (cc: string): number => {
     const key = normMarket(cc);
-    const server = resolveRankInCountryForSerperSnapshot(parsed.results, pkg, cc);
+    const serverRaw = resolveRankInCountryForSerperSnapshot(parsed.results, pkg, cc);
+    const serverDb = rankForSnapshotInsert(serverRaw);
     const fromClient = snapshotRankByCountry?.get(key);
     if (fromClient != null && fromClient < SERPER_RANK_NOT_IN_FIRST_PAGE) {
-      if (server < SERPER_RANK_NOT_IN_FIRST_PAGE) return Math.min(fromClient, server);
+      if (serverDb < SERPER_RANK_NOT_IN_FIRST_PAGE) return Math.min(fromClient, serverDb);
       return fromClient;
     }
     if (
       fromClient != null &&
       fromClient >= SERPER_RANK_NOT_IN_FIRST_PAGE &&
-      server < SERPER_RANK_NOT_IN_FIRST_PAGE
+      serverDb < SERPER_RANK_NOT_IN_FIRST_PAGE
     ) {
-      return server;
+      return serverDb;
     }
     if (fromClient != null) return fromClient;
-    return server;
+    return serverDb;
   };
+
+  const { data: competitorRows } = await supabase
+    .from("workspace_competitor_analyses")
+    .select("competitor_package_id")
+    .eq("workspace_id", workspaceId)
+    .order("analyzed_at", { ascending: false })
+    .limit(2);
+
+  const comp1Pkg =
+    (competitorRows?.[0]?.competitor_package_id as string | undefined) ?? null;
+  const comp2Pkg =
+    (competitorRows?.[1]?.competitor_package_id as string | undefined) ?? null;
 
   const snapshotAt = new Date().toISOString();
   const rows = saveCountries.map((cc) => ({
@@ -327,6 +345,18 @@ export async function POST(request: Request, context: Ctx) {
     source: "serper" as const,
     country_code: cc,
     snapshot_at: snapshotAt,
+    competitor_1_package: comp1Pkg,
+    competitor_1_rank: comp1Pkg
+      ? formatTrackedCompetitorRankForDb(
+          resolveTrackedCompetitorRankInSerp(parsed.results, comp1Pkg, cc),
+        )
+      : null,
+    competitor_2_package: comp2Pkg,
+    competitor_2_rank: comp2Pkg
+      ? formatTrackedCompetitorRankForDb(
+          resolveTrackedCompetitorRankInSerp(parsed.results, comp2Pkg, cc),
+        )
+      : null,
   }));
 
   const { data: prevRows } = await supabase

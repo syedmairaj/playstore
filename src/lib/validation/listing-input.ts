@@ -31,6 +31,18 @@ export const listingOptimizerRequestSchema = z.object({
    * the prompt builder uses to craft strategic displacement copy.
    */
   exploitTargets: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+  trackedKeywordSignals: z
+    .array(
+      z.object({
+        keyword: z.string().trim().min(1).max(80),
+        confidence: z.number().min(0).max(100),
+        difficulty: z.number().min(0).max(10).optional(),
+        searchVolume: z.number().min(0).optional(),
+        liveRankSummary: z.string().trim().max(120).optional(),
+      }),
+    )
+    .max(30)
+    .optional(),
 });
 
 export type ListingOptimizerRequest = z.infer<

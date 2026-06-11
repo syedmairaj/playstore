@@ -36,6 +36,13 @@ const SERPER_ENDPOINT = "https://google.serper.dev/search";
 /** Per-country request timeout (Serper p95 ~1.2s). */
 const SERPER_TIMEOUT_MS = 12_000;
 
+/**
+ * `site:play.google.com/store/apps …` often returns only a handful of indexed
+ * detail pages for broad keywords (e.g. "run"). Keep trying fallback queries
+ * until we reach this depth or exhaust the cascade.
+ */
+const PLAY_STORE_QUERY_MIN_ITEMS = 8;
+
 /** Hard cap on countries per call — keeps fan-out + key usage predictable. */
 export const SERPER_MAX_COUNTRIES = _SERPER_MAX_COUNTRIES;
 
@@ -187,6 +194,22 @@ function isPlayStoreAppLink(link: string | undefined | null): boolean {
   return PLAY_DETAILS_LINK_RE.test(link);
 }
 
+function mergePlayStoreItems(
+  a: readonly SerperPlayStoreItem[],
+  b: readonly SerperPlayStoreItem[],
+): SerperPlayStoreItem[] {
+  const byKey = new Map<string, SerperPlayStoreItem>();
+  for (const item of [...a, ...b]) {
+    const key = (item.packageId ?? item.link).trim().toLowerCase();
+    if (!key) continue;
+    const prev = byKey.get(key);
+    if (!prev || item.position < prev.position) {
+      byKey.set(key, item);
+    }
+  }
+  return [...byKey.values()].sort((x, y) => x.position - y.position);
+}
+
 function pickPlayStoreItems(organic: SerperOrganic[] | undefined): SerperPlayStoreItem[] {
   if (!Array.isArray(organic) || organic.length === 0) return [];
   const seenPkg = new Set<string>();
@@ -238,7 +261,10 @@ async function fetchOneCountry(
       ? Math.floor(options.num)
       : 20;
 
-  let lastItems: SerperPlayStoreItem[] = [];
+  let bestItems: SerperPlayStoreItem[] = [];
+  const minItemsForExit = restrict
+    ? Math.min(PLAY_STORE_QUERY_MIN_ITEMS, num)
+    : 1;
 
   for (let i = 0; i < queries.length; i++) {
     const q = queries[i]!;
@@ -284,7 +310,7 @@ async function fetchOneCountry(
       }
 
       const items = pickPlayStoreItems(json.organic);
-      lastItems = items;
+      bestItems = mergePlayStoreItems(bestItems, items);
 
       const organic = json.organic;
       const organicEmpty = !Array.isArray(organic) || organic.length === 0;
@@ -297,14 +323,17 @@ async function fetchOneCountry(
       /** Poor: nothing usable after filtering, and SERP is empty or has no play.google.com links. */
       const poor =
         items.length === 0 && (organicEmpty || !anyPlayUrlInOrganic);
+      const deepEnough = bestItems.length >= minItemsForExit;
+      const shouldReturn =
+        i === queries.length - 1 || (restrict ? deepEnough : !poor);
 
-      if (!poor || i === queries.length - 1) {
+      if (shouldReturn) {
         return {
           country,
           gl: defaults.gl,
           hl,
-          items,
-          error: null,
+          items: bestItems,
+          error: bestItems.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
         };
       }
     } catch (e) {
@@ -331,8 +360,8 @@ async function fetchOneCountry(
     country,
     gl: defaults.gl,
     hl,
-    items: lastItems,
-    error: lastItems.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
+    items: bestItems,
+    error: bestItems.length > 0 ? null : LIVE_RANKS_PREVIEW_UNAVAILABLE,
   };
 }
 

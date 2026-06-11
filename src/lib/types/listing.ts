@@ -2,6 +2,14 @@ import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 
 export type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
 
+export type TrackedKeywordSignalInput = {
+  keyword: string;
+  confidence: number;
+  difficulty?: number;
+  searchVolume?: number;
+  liveRankSummary?: string;
+};
+
 export type ListingOptimizerInput = {
   appName: string;
   category: string;
@@ -18,6 +26,10 @@ export type ListingOptimizerInput = {
    * that positions the app against each identified competitor weakness.
    */
   exploitTargets?: string[];
+  /**
+   * Keyword Tracker signals from workspace_staging_vault (highest synthesis priority).
+   */
+  trackedKeywordSignals?: TrackedKeywordSignalInput[];
 };
 
 /** Gemini listing JSON shape (includes optional Certified ASO Score metadata). */
