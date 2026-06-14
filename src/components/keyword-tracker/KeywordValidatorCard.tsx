@@ -48,6 +48,7 @@ import {
   patchKeywordSignalsCache,
   type VaultLocale,
 } from '@/hooks/useOptimizerSync';
+import { useOptimizationQueue } from '@/hooks/useOptimizationQueue';
 import type { KeywordSignal } from '@/lib/staging/keyword-signals';
 
 // Query key used by useOptimizerSync — must match exactly so invalidation
@@ -768,6 +769,11 @@ export function KeywordValidatorCard({
   const headingId   = useId();
   const inputRef    = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+  const { addItems: addToOptimizationQueue } = useOptimizationQueue(
+    workspaceId,
+    vaultLocale,
+    appId,
+  );
 
   const [keyword,        setKeyword]        = useState('');
   // Start empty on both server and client to avoid SSR/hydration mismatch.
@@ -846,6 +852,26 @@ export function KeywordValidatorCard({
   const stageMutation = useMutation({
     mutationFn: async (score: KeywordScore) => {
       if (!appId) throw new Error('Select an app before staging keywords');
+
+      await addToOptimizationQueue([
+        {
+          type: 'market_keyword',
+          category: 'tracker',
+          content: score.keyword,
+          source: 'keyword_tracker',
+          metadata: {
+            category: 'tracker',
+            source_origin: 'keyword_validator',
+            difficulty: score.difficulty,
+            confidence: score.confidence,
+            searchVolume: score.searchVolume,
+            competition: score.competition,
+            recommendation: score.recommendation,
+            monthlyInstalls: score.monthlyInstalls,
+          },
+        },
+      ]);
+
       const res = await fetch(`/api/workspaces/${workspaceId}/staging-vault/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

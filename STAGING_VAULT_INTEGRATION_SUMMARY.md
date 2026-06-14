@@ -1,8 +1,8 @@
 # Staging Vault Integration Summary
 
-**Document Version:** 2.0  
-**Last Updated:** June 10, 2026  
-**Scope:** Growth Hub Staged-State Architecture Pattern  
+**Document Version:** 3.0  
+**Last Updated:** June 12, 2026  
+**Scope:** Growth Hub Staged-State Architecture + Optimization Queue  
 **Audience:** Senior developers, architects, future maintainers  
 
 ---
@@ -11,12 +11,17 @@
 
 The **Staging Vault** is the architectural foundation of Growth Hub. It implements a **Producer-Consumer pattern** with strict feature isolation, bilingual state separation, and zero-breaking-changes evolution semantics.
 
+As of June 12, 2026, the vault also hosts the **Optimization Queue** — the single source of truth for AI Listing Optimizer Active Context and Generate Full Listing synthesis.
+
 **Core Value:** Enables unlimited feature scaling without cross-feature data corruption while maintaining backwards compatibility across all client versions.
 
 **Key facts for new sessions:**
-- Dashboard is **English-only** — Arabic locale is set on the landing page, not inside the authenticated shell
-- `workspace_staging_vault` is a **different table** from `workspace_signal_log` (the old signal-log, renamed)
-- All 43 migrations are reconciled — `npx supabase migration list` shows all applied
+- **Research → Curate → Synthesize** — discovery modules do not auto-feed the AI; users explicitly queue signals first
+- **Active Context reads only `features.optimization_queue`** — not raw `competitor_spy` / `keyword_tracker` namespaces
+- **VaultCore** (`src/lib/staging-vault/vault-core.ts`) is the centralized write gateway with legacy + universal schema detection
+- Production DB uses **universal vault** (`state_en`, `state_ar`, `app_id`) — legacy columns (`signal_type`, `metadata`, `content`) may be absent
+- **Do not** create btree indexes on `(state_en -> 'features')` — row size limit ~2704 bytes; use GIN on full `state_en`/`state_ar` instead
+- `workspace_staging_vault` is a **different table** from `workspace_signal_log` (old signal-log, renamed)
 - `./src/components` is **outside Tailwind's content scan** — all critical styles must be inline
 
 ---
@@ -61,17 +66,23 @@ CREATE TABLE workspace_staging_vault (
 );
 ```
 
-**Active indexes:**
+**Active indexes (June 12, 2026):**
 ```
 idx_vault_workspace_app       — (workspace_id, app_id)
 idx_vault_active_features     — GIN on active_features
 idx_vault_updated_at          — (updated_at DESC)
 idx_vault_not_deleted         — (is_deleted, workspace_id)
-idx_vault_state_en            — GIN on state_en
-idx_vault_state_ar            — GIN on state_ar
-idx_vault_state_en_features   — (state_en -> 'features')
-idx_vault_state_ar_features   — (state_ar -> 'features')
+idx_vault_state_en            — GIN on state_en          ← use for JSONB queries
+idx_vault_state_ar            — GIN on state_ar          ← use for JSONB queries
 ```
+
+**Removed indexes** (migration `20260612100000_drop_vault_features_btree_indexes.sql`):
+```
+idx_vault_state_en_features   — DROPPED (btree row size limit when features JSONB grows)
+idx_vault_state_ar_features   — DROPPED (same)
+```
+
+⚠️ If queue writes fail with `index row size ... exceeds btree maximum`, apply the migration above.
 
 RLS enabled. Policies: SELECT/INSERT/UPDATE scoped to `workspace_members`.
 
@@ -112,13 +123,130 @@ interface StagingState {
 
 ### Feature namespaces inside `state_{locale}.features`
 
-| Feature key | Owner producer | Data written |
-|-------------|---------------|-------------|
-| `keyword_validator` | `KeywordValidatorProducer` | `signals.[keyword].live_ranks.[market]` |
-| `keyword_tracker` | `KeywordTrackerProducer` | tracked keywords + rank snapshots |
-| `experiment_snapshots` | `ExperimentSnapshotsProducer` | baselines + variants |
-| `competitor_spy` | `CompetitorSpyProducer` | competitor keyword gaps |
-| `review_analysis` | `ReviewAnalysisProducer` | review themes + signals |
+| Feature key | Owner / writer | Data written | Active Context? |
+|-------------|---------------|-------------|-----------------|
+| **`optimization_queue`** | **`OptimizationQueueService`** | **`items[]` curated signals** | **✅ YES — SSOT** |
+| `keyword_validator` | `KeywordValidatorProducer` / live-rank route | `signals.[keyword].live_ranks.[market]` | Only if mirrored to queue |
+| `keyword_tracker` | `KeywordTrackerProducer` / VaultCore | tracked keywords + rank snapshots | Only if mirrored to queue |
+| `experiment_snapshots` | `ExperimentSnapshotsProducer` | baselines + variants | No |
+| `competitor_spy` | `VaultCore.upsertUniversalFeatureSignal` | `competitors[]`, `staged_signals` | Only if mirrored to queue |
+| `review_analysis` | `ReviewAnalysisProducer` | review themes + opportunities | Only if mirrored to queue |
+
+**Rule (June 2026):** `optimizer-context-adapter.flattenVaultToActiveItems()` reads **only** `optimization_queue`. Discovery namespaces are for module-internal state, not optimizer injection.
+
+---
+
+## Optimization Queue (Research → Curate → Synthesize)
+
+### Storage shape
+
+```typescript
+// state_en.features.optimization_queue (state_ar is isolated copy for AR locale)
+{
+  items: OptimizationQueueItem[];
+  updatedAt: string; // ISO timestamp
+}
+
+interface OptimizationQueueItem {
+  id: string;
+  type: OptimizationQueueItemType;
+  content: string;
+  source: 'keyword_tracker' | 'competitor_spy' | 'review_analysis' | 'market_intel' | 'manual';
+  sourceContext?: string;
+  sourceContextId?: string;
+  language: 'en' | 'ar';
+  stagedAt: string;
+  metadata: Record<string, unknown>; // slimmed on write (allowed keys only)
+}
+```
+
+### Canonical signal types (Active Context)
+
+| Type | UI section | Typical source |
+|------|------------|----------------|
+| `keyword_gap` | Keyword Gaps | Competitor Spy gaps, curation, market |
+| `review_pain_point` | Review Insights | Review sentiment bugs / pain |
+| `feature_request` | Review Insights | Review sentiment requests |
+| `competitor_strength` | Competitor Strengths | Weakness / positioning angles |
+
+Legacy types still accepted on read/write: `competitor_keyword`, `market_keyword`, `competitor_weakness` — normalized via `normalizeQueueSignalType()`.
+
+### Service layer
+
+```
+src/lib/optimization-queue/
+  optimization-queue.service.ts   — read / add / remove (vault JSONB patch)
+  optimization-queue-synthesis.ts — buildSynthesisFromOptimizationQueue()
+  optimization-queue.types.ts
+  map-staging-to-queue.ts         — staging/add → queue bridge
+  index.ts
+```
+
+**Limits:** max **50** items per locale branch; content trimmed to **500** chars; metadata whitelisted keys only.
+
+### API
+
+| Method | Path |
+|--------|------|
+| `GET` | `/api/workspaces/{id}/optimization-queue?locale=en\|ar&appId=` |
+| `POST` | `/api/workspaces/{id}/optimization-queue` — body: `{ locale, appId?, items: AddOptimizationQueueInput[] }` |
+| `DELETE` | `/api/workspaces/{id}/optimization-queue/{itemId}?locale=&appId=` |
+
+### Client
+
+```
+src/hooks/useOptimizationQueue.ts
+src/lib/client/optimization-queue-client.ts
+src/lib/client/validate-and-queue.ts   — validate payload + locale, await write, then navigate
+```
+
+**Query keys:**
+```typescript
+['optimization-queue', workspaceId, locale, appId ?? '']
+['optimizer-context', workspaceId, locale]
+```
+
+---
+
+## VaultCore (Centralized Write Gateway)
+
+**Location:** `src/lib/staging-vault/vault-core.ts`
+
+All `workspace_staging_vault` INSERT/UPDATE paths should use:
+
+```typescript
+VaultCore.safeUpsert(supabase, payload)
+VaultCore.safeUpdate(supabase, payload)
+```
+
+### Schema detection
+
+```typescript
+// src/lib/staging-vault/staging-vault-schema.ts
+hasLegacySignalColumns()   // signal_type + content probe
+hasUniversalVaultColumns() // state_en + state_ar + app_id probe
+```
+
+### Write strategy
+
+1. **Legacy path** (if columns exist): insert row with `signal_type`, `content`, `metadata`
+2. **Universal path** (if columns exist): patch `state_{locale}.features`
+   - `keyword` → `upsertUniversalKeyword()`
+   - `competitor_weakness` / `review_issue` → `upsertUniversalFeatureSignal()`
+3. If legacy insert fails but universal available → **continue** to universal (no early abort)
+4. `resolveVaultAppId()` — from `sourceAppId` or first workspace app
+
+### Facade
+
+`staging-vault-service.ts` → `addSignalToVault()`, `listVaultSignals()` delegates to VaultCore.
+
+### Schema-aware reads
+
+| Reader | File | Notes |
+|--------|------|-------|
+| Competitor keywords | `read-competitor-keywords.ts` | Legacy `metadata` OR universal `competitor_spy.competitors` |
+| Active Context | `optimizer-context-adapter.ts` | Queue-only via `flattenQueueToActiveItems()` |
+| Keyword signals | `keyword-signals.ts` | Schema-aware fetch for sandbox |
 
 ---
 
@@ -127,8 +255,33 @@ interface StagingState {
 ```json
 {
   "state_en": {
-    "metadata": { "locale": "en", "schema_version": "1.0" },
+    "metadata": { "locale": "en", "schema_version": "1.0", "last_producer": "optimization_queue" },
     "features": {
+      "optimization_queue": {
+        "items": [
+          {
+            "id": "oq-1718123456789-abc123",
+            "type": "keyword_gap",
+            "content": "calorie counter",
+            "source": "competitor_spy",
+            "sourceContext": "MyFitnessPal",
+            "sourceContextId": "com.myfitnesspal.android",
+            "language": "en",
+            "stagedAt": "2026-06-12T12:00:00.000Z",
+            "metadata": { "category": "competitor_gap", "from_keyword_curation": true }
+          },
+          {
+            "id": "oq-1718123456790-def456",
+            "type": "review_pain_point",
+            "content": "app crashes on login",
+            "source": "competitor_spy",
+            "language": "en",
+            "stagedAt": "2026-06-12T12:05:00.000Z",
+            "metadata": { "from_review_insights": true, "signal_kind": "pain_point" }
+          }
+        ],
+        "updatedAt": "2026-06-12T12:05:00.000Z"
+      },
       "keyword_validator": {
         "signals": {
           "calorie tracker": {
@@ -345,22 +498,52 @@ body: JSON.stringify({
 
 ---
 
-## AI Listing Optimizer Integration
+## AI Listing Optimizer Integration (Updated June 12, 2026)
 
-The Optimizer's Active Context uses `useOptimizerSync(workspaceId)` which polls `['optimizer-context', workspaceId]`.
+### Active Context UI
 
-**Auto-refresh trigger (KeywordValidatorCard):**
+`StagingWorkspace` three pillars (labels updated):
+
+| Pillar | Queue types |
+|--------|-------------|
+| **Review Insights** | `review_pain_point`, `feature_request` |
+| **Keyword Gaps** | `keyword_gap`, `market_keyword` |
+| **Competitor Strengths** | `competitor_strength`, `competitor_weakness` |
+
+Components: `ListingOptimizer.tsx` → `StagingWorkspaceSection` → `StagingWorkspace.tsx`
+
+### Hooks
+
 ```typescript
-void queryClient.invalidateQueries({
-  queryKey: ['optimizer-context', workspaceId]
-});
+// Primary queue state (SSOT for pills / generation)
+const { items, addItems, removeItem } = useOptimizationQueue(workspaceId, locale, appId);
+
+// Optimizer context API (queue-backed activeItems)
+const { data: optimizerContext } = useOptimizerSync(workspaceId, { vaultLocale: locale, appId });
 ```
 
-Called after:
-1. Keyword staged to tracker
-2. Live rank fetch completes
+### Synthesis
 
-This causes the Optimizer's Active Context panel to re-render automatically without any user action.
+```typescript
+buildSynthesisFromOptimizationQueue(queueItems) // optimization-queue-synthesis.ts
+```
+
+Prompt version: **`listing-optimizer-v12.0`** — instructs model to use **only** curated queue signals.
+
+### Invalidation (after any queue mutation)
+
+```typescript
+queryClient.invalidateQueries({ queryKey: ['optimization-queue', workspaceId, locale, appId ?? ''] });
+queryClient.invalidateQueries({ queryKey: ['optimizer-context', workspaceId, locale] });
+dispatchStagingVaultChanged({ workspaceId, locale, appId }); // cross-tab sync
+```
+
+### Competitor Spy curation rules
+
+- **No** auto-staging on page load
+- **No** `setPlaystoreInjectedKeywordContext` / `localStorage` prefill to optimizer
+- All send paths use `validateAndQueue()` — toast on failure, navigate only after successful POST
+- `KeywordCurationModeProvider` + `KeywordSelectionProvider` in `WorkspaceAppProviders` (dashboard shell)
 
 ---
 
@@ -374,9 +557,17 @@ This causes the Optimizer's Active Context panel to re-render automatically with
 
 ## Migration History
 
-43 migrations — all reconciled with `npx supabase migration repair --status applied`.
+44+ migrations — core vault migrations:
 
-The `workspace_staging_vault` migration (`20260610000000_universal_staged_state_architecture.sql`) was applied manually before being recorded. The old `workspace_staging_vault` (signal-log schema) was renamed to `workspace_signal_log` before the new dual-state table was created.
+| Migration | Purpose |
+|-----------|---------|
+| `20260604100100_workspace_staging_vault.sql` | Legacy signal-log schema (may exist as `workspace_signal_log` after rename) |
+| `20260610000000_universal_staged_state_architecture.sql` | Universal vault: `state_en`, `state_ar`, `app_id` |
+| `20260612100000_drop_vault_features_btree_indexes.sql` | **Required** — drops btree feature indexes that break large JSONB writes |
+
+The universal vault migration (`20260610000000`) was applied manually in some environments before being recorded. The old signal-log table was renamed to `workspace_signal_log` where conflicts occurred.
+
+**`CREATE TABLE IF NOT EXISTS` caveat:** whichever migration ran first wins — production may have **only** universal columns (no `metadata`, `signal_type`). All vault code must use schema probes, not assumptions.
 
 **To verify:**
 ```sql
@@ -391,26 +582,40 @@ ORDER BY ordinal_position;
 
 ---
 
-## Summary Table (Updated)
+## Summary Table (Updated June 12, 2026)
 
 | Aspect | Rule | Enforcement |
 |--------|------|-------------|
-| **Producer Isolation** | One feature, one boundary | `ProducerRegistry.verifyIsolation()` |
+| **Optimization Queue SSOT** | Only queued signals feed Active Context + Generate | `flattenQueueToActiveItems()`, `buildSynthesisFromOptimizationQueue()` |
+| **Vault writes** | All INSERT/UPDATE via VaultCore | `VaultCore.safeUpsert()` / `safeUpdate()` |
+| **Schema awareness** | Probe before legacy/universal paths | `hasLegacySignalColumns()`, `hasUniversalVaultColumns()` |
+| **Producer Isolation** | One feature, one boundary | `ProducerRegistry.verifyIsolation()` (stubs) |
 | **Locale Isolation** | EN and AR never cross-written | `stateKey = locale === 'ar' ? 'state_ar' : 'state_en'` |
-| **Synthesis Priority** | Keywords → Snapshots → Competitors → Reviews | `SynthesisContextBuilder` priority stack |
-| **Token Budget** | Max 6,000 tokens per generation | Auto-truncation in `contextBuilder` |
-| **Soft Delete** | Never hard-delete, use `deleted_at` | Soft-delete pattern on all entities |
-| **Additive Evolution** | Never rename/delete fields | Schema review before deploy |
-| **Feature Flags** | Guard new features | Gradual rollout: 10% → 50% → 100% |
-| **Credits** | Server-side only, RPC atomic | `consume_workspace_ai_credits` SELECT FOR UPDATE |
-| **Live Rank** | Per-market, scaled credits | `serperAiCreditsForCountryCount(markets.length)` |
-| **React Query** | Locale in every queryKey | Prevents EN/AR cache contamination |
+| **Queue dedup** | Same type + normalized content | `queueDedupeKey()` in optimization-queue.service |
+| **Index safety** | No btree on `features` JSONB subtree | GIN on full `state_en`/`state_ar` only |
+| **Curation before synthesis** | No auto-dump from discovery | `validateAndQueue()`, no localStorage keyword injection |
+| **Soft Delete** | Never hard-delete vault rows | `deleted_at` / `is_deleted` |
+| **Credits** | Server-side only, RPC atomic | `consume_workspace_ai_credits` |
+| **React Query** | Locale + appId in queue keys | Prevents EN/AR cache contamination |
+| **AI transport** | Vertex AI via modelGateway | `getGenerativeModel()` — not `GEMINI_API_KEY` REST for new routes |
+
+---
+
+## Session 3 Bug Reference
+
+| Symptom | Fix location |
+|---------|--------------|
+| `No writable vault schema detected` | `vault-core.ts` universal feature signal path |
+| `column metadata does not exist` | `read-competitor-keywords.ts` |
+| `index row size exceeds btree maximum` | migration `20260612100000` |
+| Sentiment 500 after AI success | `competitors/sentiment/route.ts` — result shadowing + Vertex AI |
+| Queue empty after navigation | `validate-and-queue.ts` + `WorkspaceAppProviders` |
 
 ---
 
 **End of Document**
 
-**Version:** 2.0  
-**Last Updated:** June 10, 2026  
-**Scope:** Growth Hub Staging Vault Architecture  
+**Version:** 3.0  
+**Last Updated:** June 12, 2026  
+**Scope:** Growth Hub Staging Vault + Optimization Queue  
 **Status:** Production Reference

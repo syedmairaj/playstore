@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { DashboardNavbar } from "@/components/app/dashboard-navbar";
 import { DashboardSidebar } from "@/components/app/dashboard-sidebar";
+import { WorkspaceAppProviders } from "@/components/app/workspace-app-providers";
 import type { NavItem } from "@/components/dashboard/WorkspaceSidebarNav";
 import { cn } from "@/lib/utils";
 
@@ -46,47 +47,51 @@ export function DashboardShell({
   }, [mobileNavOpen]);
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-x-hidden bg-[#090c11] text-zinc-100 antialiased">
-      {mobileNavOpen ? (
-        <button
-          type="button"
-          className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px] md:hidden"
-          aria-label={t("closeMenu")}
-          onClick={() => setMobileNavOpen(false)}
-        />
-      ) : null}
+    <WorkspaceAppProviders>
+      <div className="flex h-full min-h-0 w-full overflow-x-hidden bg-[#090c11] text-zinc-100 antialiased">
+        {mobileNavOpen ? (
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px] md:hidden"
+            aria-label={t("closeMenu")}
+            onClick={() => setMobileNavOpen(false)}
+          />
+        ) : null}
 
-      <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[280px] max-w-[85vw] flex-col border-e border-white/[0.06] bg-[#070a0f] shadow-2xl shadow-black/50 transition-transform duration-200 ease-out md:max-w-none md:shadow-[4px_0_24px_-8px_rgba(0,0,0,0.35)]",
-          mobileNavOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
-          !mobileNavOpen && "pointer-events-none md:pointer-events-auto",
-        )}
-      >
-        <DashboardSidebar
-          items={navItems}
-          navAriaLabel={navAriaLabel}
-          onNavigate={() => setMobileNavOpen(false)}
-          className="h-full"
-        />
-      </aside>
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 flex w-[280px] max-w-[85vw] flex-col border-e border-white/[0.06] bg-[#070a0f] shadow-2xl shadow-black/50 transition-transform duration-200 ease-out md:max-w-none md:shadow-[4px_0_24px_-8px_rgba(0,0,0,0.35)]",
+            mobileNavOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+            !mobileNavOpen && "pointer-events-none md:pointer-events-auto",
+          )}
+        >
+          <DashboardSidebar
+            items={navItems}
+            navAriaLabel={navAriaLabel}
+            onNavigate={() => setMobileNavOpen(false)}
+            className="h-full"
+          />
+        </aside>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:ml-[280px]">
-        <DashboardNavbar
-          workspaceId={workspaceId}
-          workspaceName={workspaceName}
-          workspacePlan={workspacePlan}
-          workspaces={workspaces}
-          creditsRemaining={creditsRemaining}
-          creditsAllocation={creditsAllocation}
-          hubLabel={hubLabel}
-          userEmail={userEmail}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
-        />
-        <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-          <div className="mx-auto min-h-0 w-full max-w-[1600px] px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">{children}</div>
-        </main>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:ml-[280px]">
+          <DashboardNavbar
+            workspaceId={workspaceId}
+            workspaceName={workspaceName}
+            workspacePlan={workspacePlan}
+            workspaces={workspaces}
+            creditsRemaining={creditsRemaining}
+            creditsAllocation={creditsAllocation}
+            hubLabel={hubLabel}
+            userEmail={userEmail}
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+          />
+          <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+            <div className="mx-auto min-h-0 w-full max-w-[1600px] px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">
+              {children}
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </WorkspaceAppProviders>
   );
 }

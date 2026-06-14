@@ -19,6 +19,12 @@ type SeverityConfig = {
   label:       string;
 };
 
+const VAULT_SEVERITY: Record<IssueSeverity, "critical" | "medium" | "low"> = {
+  CRITICAL: "critical",
+  MEDIUM: "medium",
+  LOW: "low",
+};
+
 const SEVERITY_CONFIG: Record<IssueSeverity, SeverityConfig> = {
   CRITICAL: {
     badge:       "bg-red-500/10 text-red-500 border border-red-500/20",
@@ -124,7 +130,7 @@ export function IssueCard({ issue, workspaceId, appId }: IssueCardProps) {
           language={locale === "ar" ? "ar" : "en"}
           metadata={{
             description: issue.description,
-            severity: issue.severity,
+            severity: VAULT_SEVERITY[issue.severity] ?? "medium",
             impactPercent: impactPct,
             quote: issue.quote,
           }}

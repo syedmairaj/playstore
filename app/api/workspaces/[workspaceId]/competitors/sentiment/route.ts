@@ -1,5 +1,7 @@
+import { SchemaType } from "@/lib/ai/schema-types";
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import {
   buildInsufficientAiCreditsPayload,
   readWorkspaceAiCreditsRemaining,
@@ -8,16 +10,81 @@ import {
   consumeWorkspaceAiCredits,
   refundWorkspaceAiCredits,
 } from "@/lib/features/billing/wallet";
+import { recoverSentimentJson } from "@/lib/gemini/json-recovery";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
-import { recoverSentimentJson } from "@/lib/gemini/json-recovery";
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/competitors/sentiment";
 const CREDIT_COST = 3;
 
+const EMPTY_SENTIMENT: SentimentAnalysisResult = {
+  topPraiseKeywords: [],
+  reportedBugsKeywords: [],
+  featureRequestsKeywords: [],
+};
+
+const SENTIMENT_RESPONSE_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    topPraiseKeywords: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+    },
+    reportedBugsKeywords: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+    },
+    featureRequestsKeywords: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+    },
+  },
+  required: ["topPraiseKeywords", "reportedBugsKeywords", "featureRequestsKeywords"],
+};
+
+function parseSentimentFromText(jsonText: string): SentimentAnalysisResult {
+  if (!jsonText.trim()) return EMPTY_SENTIMENT;
+
+  const cleaned = jsonText
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      topPraiseKeywords: Array.isArray(parsed.topPraiseKeywords)
+        ? parsed.topPraiseKeywords.slice(0, 6).map(String)
+        : [],
+      reportedBugsKeywords: Array.isArray(parsed.reportedBugsKeywords)
+        ? parsed.reportedBugsKeywords.slice(0, 6).map(String)
+        : [],
+      featureRequestsKeywords: Array.isArray(parsed.featureRequestsKeywords)
+        ? parsed.featureRequestsKeywords.slice(0, 6).map(String)
+        : [],
+    };
+  } catch (parseError) {
+    const recovered = recoverSentimentJson(cleaned);
+    if (recovered) return recovered;
+    console.error(`[${ROUTE}] JSON parse failed:`, parseError);
+    return EMPTY_SENTIMENT;
+  }
+}
+
+async function safeRefundCredits(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  args: { ledgerId: string; userId: string; reason: string },
+): Promise<void> {
+  try {
+    await refundWorkspaceAiCredits(supabase, args);
+  } catch (refundErr) {
+    console.error(`[${ROUTE}] Credit refund failed:`, refundErr);
+  }
+}
+
 const bodySchema = z.object({
   /** UUID of the workspace app we are tracking as "your" app. */
-  appId: z.string().min(1),
+  appId: z.string().uuid().optional(),
   /** Play Store package ID of the competitor (e.g. "com.myfitnesspal.android"). */
   competitorPackageName: z.string().min(2).max(200),
   /** Single market code (e.g. "us", "sa"). */
@@ -120,20 +187,7 @@ export async function POST(request: Request, context: Ctx) {
 
   const ledgerId = consumeResult.ledgerId;
 
-  // ── Gemini inference ───────────────────────────────────────────────────────
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (!geminiApiKey) {
-    await refundWorkspaceAiCredits(supabase, {
-      ledgerId,
-      userId: user.id,
-      reason: "AI service not configured",
-    });
-    return NextResponse.json(
-      { ok: false, error: { code: "server_error", message: "AI service not configured" } },
-      { status: 500 },
-    );
-  }
-
+  // ── Gemini inference (Vertex AI via modelGateway) ────────────────────────
   const seedContext =
     seedKeywords.length > 0
       ? `\nKnown competitor keywords from live analysis: ${seedKeywords.join(", ")}`
@@ -162,115 +216,37 @@ Exact JSON shape:
   "featureRequestsKeywords": ["...", "..."]
 }`;
 
-  let result: SentimentAnalysisResult;
+  let result: SentimentAnalysisResult = EMPTY_SENTIMENT;
 
   try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.5,
-            maxOutputTokens: 2048,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "OBJECT",
-              properties: {
-                topPraiseKeywords: {
-                  type: "ARRAY",
-                  items: { type: "STRING" },
-                },
-                reportedBugsKeywords: {
-                  type: "ARRAY",
-                  items: { type: "STRING" },
-                },
-                featureRequestsKeywords: {
-                  type: "ARRAY",
-                  items: { type: "STRING" },
-                },
-              },
-              required: ["topPraiseKeywords", "reportedBugsKeywords", "featureRequestsKeywords"],
-            },
-          },
-          safetySettings: [
-            { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-          ],
-        }),
-      },
-    );
+    const model = getGenerativeModel({ temperature: 0.5, maxOutputTokens: 2048 });
 
-    if (!geminiRes.ok) {
-      const errBody = await geminiRes.text().catch(() => "(unreadable)");
-      throw new Error(`Gemini ${geminiRes.status}: ${errBody}`);
+    const genResult = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.5,
+        maxOutputTokens: 2048,
+        responseMimeType: "application/json",
+        responseSchema: SENTIMENT_RESPONSE_SCHEMA,
+      },
+    });
+
+    const candidate = genResult.candidates?.[0];
+    const finishReason = candidate?.finishReason as string | undefined;
+    if (finishReason && finishReason !== "STOP" && finishReason !== "1") {
+      console.warn(`[${ROUTE}] Non-STOP finishReason:`, finishReason);
     }
 
-    const geminiData = (await geminiRes.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
+    const rawText = (genResult.text ?? candidate?.content?.parts?.[0]?.text ?? "").trim();
 
-    const rawText =
-      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
-
-    // Strip optional markdown code fences — defensive, model may still emit them
-    const jsonText = rawText
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-
-    // Resilient parse with recovery strategy
-    let result: SentimentAnalysisResult;
-
-    if (!jsonText) {
-      console.warn(`[${ROUTE}] Raw response stream arrived empty, using fallback.`);
-      result = { topPraiseKeywords: [], reportedBugsKeywords: [], featureRequestsKeywords: [] };
+    if (!rawText) {
+      console.warn(`[${ROUTE}] Empty model response, using fallback.`);
     } else {
-      // Try standard parse first
-      try {
-        const parsed = JSON.parse(jsonText);
-        result = {
-          topPraiseKeywords: Array.isArray(parsed.topPraiseKeywords)
-            ? parsed.topPraiseKeywords.slice(0, 6).map(String)
-            : [],
-          reportedBugsKeywords: Array.isArray(parsed.reportedBugsKeywords)
-            ? parsed.reportedBugsKeywords.slice(0, 6).map(String)
-            : [],
-          featureRequestsKeywords: Array.isArray(parsed.featureRequestsKeywords)
-            ? parsed.featureRequestsKeywords.slice(0, 6).map(String)
-            : [],
-        };
-      } catch (parseError) {
-        // Standard parse failed — attempt recovery
-        console.warn(
-          `[CompetitorSentiment] JSON parse failed (text length: ${jsonText.length}), running recovery...`
-        );
-
-        const recovered = recoverSentimentJson(jsonText);
-
-        if (recovered) {
-          // Recovery succeeded
-          console.info(
-            `[CompetitorSentiment] JSON Truncation detected — recovery successful. Recovered ${recovered.topPraiseKeywords.length + recovered.reportedBugsKeywords.length + recovered.featureRequestsKeywords.length} total items.`
-          );
-          result = recovered;
-        } else {
-          // Recovery also failed — fall back to empty arrays
-          console.error(
-            `[CompetitorSentiment] JSON parse and recovery both failed (text length: ${jsonText.length}, preview: ${jsonText.slice(0, 100)})`,
-            parseError
-          );
-          result = { topPraiseKeywords: [], reportedBugsKeywords: [], featureRequestsKeywords: [] };
-        }
-      }
+      result = parseSentimentFromText(rawText);
     }
   } catch (err) {
     console.error(`[${ROUTE}] Gemini sentiment failed:`, err);
-    await refundWorkspaceAiCredits(supabase, {
+    await safeRefundCredits(supabase, {
       ledgerId,
       userId: user.id,
       reason: "Gemini inference failed",
@@ -307,7 +283,7 @@ Exact JSON shape:
         ? (existing.analysis_json as Record<string, unknown>)
         : {};
 
-    await supabase
+    const { error: persistError } = await supabase
       .from("workspace_competitor_analyses")
       .update({
         analysis_json: { ...base, sentiment: result, asoAudit },
@@ -315,6 +291,10 @@ Exact JSON shape:
       })
       .eq("workspace_id", workspaceId)
       .eq("competitor_package_id", pkg.trim().toLowerCase());
+
+    if (persistError) {
+      console.warn(`[${ROUTE}] Persist update failed:`, persistError.message);
+    }
   } catch (persistErr) {
     // Non-fatal — return the result to the client even if DB write fails.
     console.warn(`[${ROUTE}] Could not persist sentiment to DB:`, persistErr);

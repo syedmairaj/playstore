@@ -1,5 +1,5 @@
 import "server-only";
-import type { SchemaType } from "@google-cloud/vertexai";
+import { SchemaType } from "@/lib/ai/schema-types";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
@@ -575,7 +575,7 @@ export async function generateASOAsset(
 
   console.log(`[generateASOAsset] Calling Gemini API (maxOutputTokens: 2048)...`);
   const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
+  const text = (result.text ?? "").trim();
 
   // ── DEBUG: Log raw response for troubleshooting ──────────────────────────────
   if (text.length < 100 || !text.includes("backgroundPrompt")) {

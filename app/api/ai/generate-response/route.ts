@@ -29,7 +29,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { VertexAI } from "@google-cloud/vertexai";
+import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 
@@ -47,36 +47,6 @@ interface GenerateResponseRequest {
 }
 
 type Ctx = { params?: Promise<{ workspaceId: string }> };
-
-// ── Vertex AI Client (Singleton) ───────────────────────────────────────
-let vertexAIClient: VertexAI | null = null;
-
-function getVertexAIClient(): VertexAI {
-  if (!vertexAIClient) {
-    const project = process.env.GOOGLE_CLOUD_PROJECT;
-    const location = process.env.GOOGLE_CLOUD_REGION || "us-central1";
-
-    if (!project) {
-      throw new Error("GOOGLE_CLOUD_PROJECT environment variable not set");
-    }
-
-    // ✅ Uses Google Cloud Application Default Credentials (ADC)
-    // ADC automatically loads credentials from:
-    // 1. GOOGLE_APPLICATION_CREDENTIALS environment variable
-    // 2. gcloud auth application-default login
-    // 3. Service account attached to Cloud Run/Functions
-    vertexAIClient = new VertexAI({
-      project,
-      location,
-    });
-
-    console.info(
-      `[${ROUTE}] Initialized Vertex AI client: project=${project}, region=${location}`
-    );
-  }
-
-  return vertexAIClient;
-}
 
 // ── Vertex AI Error Detection ──────────────────────────────────────────
 interface VertexAIError extends Error {
@@ -179,54 +149,23 @@ export async function POST(request: Request, context: Ctx) {
       `[${ROUTE}] Generating response for item ${itemId} (tone: ${tone}, language: ${language})`
     );
 
-    // ── Initialize Vertex AI Client ────────────────────────────────────
-    const vertexAI = getVertexAIClient();
-
-    // ── Get Generative Model ───────────────────────────────────────────
-    const generativeModel = vertexAI.preview.getGenerativeModel({
+    // ── Call Gemini via ModelGateway (@google/genai / Vertex AI) ───────
+    const generativeModel = getGenerativeModel({
       model: MODEL_NAME,
+      maxOutputTokens: 300,
+      temperature: 0.7,
     });
 
-    // ── Call Vertex AI Generative Model ────────────────────────────────
-    // ✅ Use generateContent for non-streaming responses
     const response = await generativeModel.generateContent({
       contents: [
         {
           role: "user",
-          parts: [
-            {
-              text: prompt,
-            },
-          ],
+          parts: [{ text: prompt }],
         },
       ],
-      generationConfig: {
-        maxOutputTokens: 300, // Keep output short (matches Claude behavior)
-        temperature: 0.7, // Slightly creative but controlled
-      },
-      // Safety settings can be added here if needed
-      // safetySettings: [...]
     });
 
-    // ── Extract Response Text ──────────────────────────────────────────
-    // ✅ Vertex AI response structure differs from Claude
-    let responseText = "";
-
-    if (
-      response.response &&
-      response.response.candidates &&
-      response.response.candidates.length > 0
-    ) {
-      const candidate = response.response.candidates[0];
-      if (candidate.content && candidate.content.parts) {
-        for (const part of candidate.content.parts) {
-          if ("text" in part && typeof part.text === "string") {
-            responseText = part.text;
-            break;
-          }
-        }
-      }
-    }
+    const responseText = (response.text ?? "").trim();
 
     if (!responseText) {
       throw new Error("Empty response from Vertex AI Gemini model");

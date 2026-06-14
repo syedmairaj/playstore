@@ -1,5 +1,6 @@
 import "server-only";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
+import { extractText, extractUsageMetadata } from "@/lib/ai/extract-model-text";
 import type { GeminiUsageCounts } from "@/lib/gemini/pricing";
 import { parseGeminiUsageMetadata } from "@/lib/gemini/pricing";
 
@@ -37,8 +38,6 @@ export async function generateReviewReplyDraft(input: {
   appName?: string;
   userName?: string;
 }): Promise<ReviewReplyDraftResult> {
-  const apiKey = assertGeminiApiKey();
-  const modelName = resolveGeminiModel();
   const lang = LANGUAGE_LABEL[input.replyLanguage];
   const appLabel = input.appName?.trim()
     ? sanitize(input.appName, 120)
@@ -64,13 +63,12 @@ export async function generateReviewReplyDraft(input: {
   model.systemInstruction = systemInstruction;
 
   const result = await model.generateContent(userPrompt);
-  const text = result.response.text();
-  if (!text?.trim()) {
+  const text = extractText(result);
+  if (!text) {
     throw new Error("Model returned empty text");
   }
 
-  const usageMeta = result.response.usageMetadata;
-  const usage = parseGeminiUsageMetadata(usageMeta ?? null);
+  const usage = parseGeminiUsageMetadata(extractUsageMetadata(result));
 
   return {
     reply: stripCodeFences(text).trim().slice(0, 2000),

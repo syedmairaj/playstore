@@ -6,6 +6,8 @@
  */
 
 import { createClient } from "@/lib/supabase/server";
+import { VaultCore } from "@/lib/staging-vault/vault-core";
+import { hasUniversalVaultColumns } from "@/lib/staging-vault/staging-vault-schema";
 import {
   WorkspaceStagingVault,
   ProducerRequest,
@@ -148,14 +150,40 @@ export class VaultRouterService {
       is_deleted: false,
     };
 
-    const { data: created, error: createError } = await supabase
+    const universalAvailable = await hasUniversalVaultColumns(supabase);
+    if (!universalAvailable) {
+      throw new Error(
+        "Universal vault columns (state_en/state_ar) are not available. " +
+          "Apply migrations or use legacy staging via VaultCore.safeUpsert.",
+      );
+    }
+
+    const createResult = await VaultCore.safeUpsert(supabase, {
+      type: "universal_state",
+      vault: {
+        workspace_id: workspaceId,
+        app_id: appId,
+        state_en: newVault.state_en!,
+        state_ar: newVault.state_ar!,
+        active_features: newVault.active_features ?? [],
+        last_modified_by: null,
+        change_count: 0,
+        is_deleted: false,
+      },
+    });
+
+    if (!createResult.ok || !createResult.id) {
+      throw new Error(createResult.error ?? "Failed to create vault");
+    }
+
+    const { data: created, error: fetchError } = await supabase
       .from("workspace_staging_vault")
-      .insert([newVault])
-      .select()
+      .select("*")
+      .eq("id", createResult.id)
       .single();
 
-    if (createError || !created) {
-      throw new Error(`Failed to create vault: ${createError?.message}`);
+    if (fetchError || !created) {
+      throw new Error(`Failed to load created vault: ${fetchError?.message}`);
     }
 
     console.log(`[VaultRouter] Created new vault:`, {
@@ -173,25 +201,24 @@ export class VaultRouterService {
   async saveVault(vault: WorkspaceStagingVault): Promise<void> {
     const supabase = await createClient();
 
-    const { error } = await supabase
-      .from("workspace_staging_vault")
-      .upsert(
-        {
-          id: vault.id,
-          workspace_id: vault.workspace_id,
-          app_id: vault.app_id,
-          state_en: vault.state_en,
-          state_ar: vault.state_ar,
-          active_features: vault.active_features,
-          last_modified_by: vault.last_modified_by,
-          change_count: vault.change_count,
-          updated_at: vault.updated_at,
-        },
-        { onConflict: "id" }
-      );
+    const result = await VaultCore.safeUpsert(supabase, {
+      type: "universal_state",
+      vault: {
+        id: vault.id,
+        workspace_id: vault.workspace_id,
+        app_id: vault.app_id,
+        state_en: vault.state_en,
+        state_ar: vault.state_ar,
+        active_features: vault.active_features,
+        last_modified_by: vault.last_modified_by,
+        change_count: vault.change_count,
+        updated_at: vault.updated_at,
+        is_deleted: vault.is_deleted,
+      },
+    });
 
-    if (error) {
-      throw new Error(`Failed to save vault: ${error.message}`);
+    if (!result.ok) {
+      throw new Error(result.error ?? "Failed to save vault");
     }
 
     console.log(`[VaultRouter] Vault saved:`, {
@@ -247,17 +274,14 @@ export class VaultRouterService {
   async deleteVault(workspaceId: string, appId: string): Promise<void> {
     const supabase = await createClient();
 
-    const { error } = await supabase
-      .from("workspace_staging_vault")
-      .update({
-        is_deleted: true,
-        deleted_at: new Date(),
-      })
-      .eq("workspace_id", workspaceId)
-      .eq("app_id", appId);
+    const result = await VaultCore.safeUpdate(supabase, {
+      type: "universal_soft_delete",
+      workspaceId,
+      appId,
+    });
 
-    if (error) {
-      throw new Error(`Failed to delete vault: ${error.message}`);
+    if (!result.ok) {
+      throw new Error(result.error ?? "Failed to delete vault");
     }
 
     console.log(`[VaultRouter] Vault deleted:`, { workspaceId, appId });

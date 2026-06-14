@@ -25,7 +25,7 @@ export type SaveKeywordModalProps = {
   onSave: (countries: SupportedCountryCode[]) => void | Promise<void>;
 };
 
-function previewCountryCodes(results: SerperPreviewCountry[]): SupportedCountryCode[] {
+export function previewCountryCodes(results: SerperPreviewCountry[]): SupportedCountryCode[] {
   const out: SupportedCountryCode[] = [];
   const seen = new Set<string>();
   for (const block of results) {

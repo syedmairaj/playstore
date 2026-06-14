@@ -209,25 +209,7 @@ export async function POST(request: Request, context: Ctx) {
 
       clearTimeout(timeoutId);
 
-      // ── Extract Response Text ──────────────────────────────────────
-      // Vertex AI response structure
-      let responseText = "";
-
-      if (
-        response.response &&
-        response.response.candidates &&
-        response.response.candidates.length > 0
-      ) {
-        const candidate = response.response.candidates[0];
-        if (candidate.content && candidate.content.parts) {
-          for (const part of candidate.content.parts) {
-            if ("text" in part && typeof part.text === "string") {
-              responseText = part.text;
-              break;
-            }
-          }
-        }
-      }
+      const responseText = (response.text ?? "").trim();
 
       if (!responseText) {
         throw new Error("Empty response from Vertex AI Gemini model");

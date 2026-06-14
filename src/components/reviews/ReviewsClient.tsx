@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, ArrowUp, Calendar, Inbox, Info, Loader2, MessageSquareQuote, RefreshCw, Sparkles, Trash2, Zap } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
 import { Link } from "@/i18n/navigation";
@@ -12,6 +12,8 @@ import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/toolti
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReviewsTab } from "@/components/reviews/ReviewsTab";
 import { IssueCard } from "@/components/reviews/IssueCard";
+import { SyncInsightsCta } from "@/components/reviews/sync-insights-cta";
+import { AiCreditsModal } from "@/components/ui/ai-credits-modal";
 import { AppSourceSelector, type AppSourceOption } from "@/components/reviews/AppSourceSelector";
 import type { WorkspaceAppListRow } from "@/lib/workspace/workspace-apps-list";
 import type { ReviewRow } from "@/components/reviews/reviews-types";
@@ -163,7 +165,25 @@ type AnalyzeResponse = {
   updatedAt?: string;
   /** Only present on GET cache-miss responses (hasBeenAnalyzed=false). */
   rawReviewCount?: number;
-  error?: { code?: string; message?: string; remaining?: number };
+  bridge?: { savedCount: number };
+  usage?: { monthlyUsed: number; monthlyLimit: number };
+  error?: {
+    code?: string;
+    message?: string;
+    remaining?: number;
+    topUpRequired?: boolean;
+    monthlyUsed?: number;
+    monthlyLimit?: number;
+  };
+};
+
+type ReviewUsageSnapshot = {
+  creditCost: number;
+  monthlyUsed: number;
+  monthlyLimit: number;
+  creditsRemaining: number | null;
+  workspacePlan: string;
+  resetsAt?: string;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,12 +235,58 @@ function CommonIssuesPanel({
   excludeTitles,
   onAddImprovement,
 }: CommonIssuesPanelProps) {
+  const tSync = useTranslations("reviews.syncInsights");
+  const locale = useLocale();
+  const isRtl = locale === "ar";
+
   const [isLoading, setIsLoading]               = useState<boolean>(true);
   const [isAnalyzing, setIsAnalyzing]           = useState<boolean>(false);
   const [hasBeenAnalyzed, setHasBeenAnalyzed]   = useState<boolean>(false);
   const [insights, setInsights]                 = useState<IssueItem[]>([]);
   /** ISO 8601 string of the last Gemini write — null until first hasBeenAnalyzed=true */
   const [analysedAt, setAnalysedAt]             = useState<string | null>(null);
+  const [usage, setUsage] = useState<ReviewUsageSnapshot>({
+    creditCost: 3,
+    monthlyUsed: 0,
+    monthlyLimit: 5,
+    creditsRemaining: null,
+    workspacePlan: "free",
+    resetsAt: undefined,
+  });
+  const [topUpOpen, setTopUpOpen] = useState(false);
+
+  const refreshUsage = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/reviews/usage`, {
+        credentials: "same-origin",
+      });
+      if (!res.ok) return;
+      const json = (await res.json()) as {
+        ok?: boolean;
+        creditCost?: number;
+        monthlyUsed?: number;
+        monthlyLimit?: number;
+        creditsRemaining?: number | null;
+        workspacePlan?: string;
+        resetsAt?: string;
+      };
+      if (!json.ok) return;
+      setUsage({
+        creditCost: json.creditCost ?? 3,
+        monthlyUsed: json.monthlyUsed ?? 0,
+        monthlyLimit: json.monthlyLimit ?? 5,
+        creditsRemaining: json.creditsRemaining ?? null,
+        workspacePlan: json.workspacePlan ?? "free",
+        resetsAt: json.resetsAt,
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    void refreshUsage();
+  }, [refreshUsage, packageName, countryCode]);
 
   // ── State flushing hook ────────────────────────────────────────────────────
   //
@@ -296,122 +362,105 @@ function CommonIssuesPanel({
     return () => controller.abort();
   }, [workspaceId, packageName, langCode, countryCode]);
 
-  // ── handleReveal — "⚡ Run AI Analysis (Costs 3 Credits)" ─────────────────
-  //
-  // POST /reviews/analyze — deducts 3 credits, runs Gemini, upserts DB row.
-  //
-  // Button is disabled when reviewTexts.length === 0 (reviews still loading);
-  // the guard at the top of this function is defensive belt-and-suspenders.
-  //
-  // POST response branching on hasBeenAnalyzed:
-  //   true  → credits consumed, DB row written → update state, render results
-  //   false → zero-review short-circuit, no charge → stay on paywall
-  //   success=false → insufficient credits / server error → toast + paywall
-  const handleReveal = useCallback(async () => {
-    if (reviewTexts.length === 0) return;
+  // ── runAnalysis — Sync Insights / Re-Analyze (POST /reviews/analyze) ─────
+  const runAnalysis = useCallback(
+    async (force = false) => {
+      if (reviewTexts.length === 0) return;
 
-    setIsAnalyzing(true);
-    setIsLoading(false); // probe is done; this is the active Gemini phase
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/reviews/analyze`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          packageName,
-          langCode,
-          country: countryCode,
-          reviewTexts,
-        }),
-      });
+      setIsAnalyzing(true);
+      setIsLoading(false);
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/reviews/analyze`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            packageName,
+            langCode,
+            country: countryCode,
+            reviewTexts,
+            force,
+          }),
+        });
 
-      const json = (await res.json()) as AnalyzeResponse;
+        const json = (await res.json()) as AnalyzeResponse;
 
-      if (!json.success) {
-        if (json.error?.code === "insufficient_credits") {
-          toast.error(
-            `Not enough credits. Need 3, have ${json.error.remaining ?? 0}.`,
+        if (!json.success) {
+          if (
+            json.error?.code === "insufficient_credits" ||
+            res.status === 402
+          ) {
+            setTopUpOpen(true);
+            toast.error(tSync("insufficientCredits"));
+          } else if (json.error?.code === "monthly_limit_reached") {
+            setUsage((prev) => ({
+              ...prev,
+              monthlyUsed: json.error?.monthlyUsed ?? prev.monthlyUsed,
+              monthlyLimit: json.error?.monthlyLimit ?? prev.monthlyLimit,
+            }));
+            toast.error(tSync("monthlyLimitReached", {
+              used: json.error.monthlyUsed ?? usage.monthlyUsed,
+              limit: json.error.monthlyLimit ?? usage.monthlyLimit,
+            }));
+          } else {
+            toast.error(json.error?.message ?? tSync("analysisFailed"));
+          }
+          setIsAnalyzing(false);
+          if (!force) setHasBeenAnalyzed(false);
+          return;
+        }
+
+        if (!json.hasBeenAnalyzed) {
+          setIsAnalyzing(false);
+          setHasBeenAnalyzed(false);
+          return;
+        }
+
+        const rows = Array.isArray(json.insights) ? json.insights : [];
+        setInsights(rows);
+        setHasBeenAnalyzed(true);
+        if (json.updatedAt) setAnalysedAt(json.updatedAt);
+        setIsAnalyzing(false);
+
+        if (json.usage) {
+          setUsage((prev) => ({
+            ...prev,
+            monthlyUsed: json.usage!.monthlyUsed,
+            monthlyLimit: json.usage!.monthlyLimit,
+          }));
+        } else {
+          void refreshUsage();
+        }
+
+        if (rows.length > 0) {
+          toast.success(tSync("syncSuccess"));
+        }
+
+        if (json.bridge && json.bridge.savedCount > 0) {
+          toast.success(
+            tSync("bridgeSuccess", { count: json.bridge.savedCount }),
           );
-        } else {
-          toast.error(json.error?.message ?? "Analysis failed — please try again.");
         }
+      } catch {
+        toast.error(tSync("networkError"));
         setIsAnalyzing(false);
-        setHasBeenAnalyzed(false);
-        return;
+        if (!force) setHasBeenAnalyzed(false);
       }
+    },
+    [
+      workspaceId,
+      packageName,
+      langCode,
+      countryCode,
+      reviewTexts,
+      refreshUsage,
+      tSync,
+      usage.monthlyLimit,
+    ],
+  );
 
-      // hasBeenAnalyzed=false: zero-review short-circuit. No charge, no DB write.
-      // Return to paywall so the user can retry once reviews arrive.
-      if (!json.hasBeenAnalyzed) {
-        setIsAnalyzing(false);
-        setHasBeenAnalyzed(false);
-        return;
-      }
-
-      // hasBeenAnalyzed=true: credits consumed, DB row written.
-      const rows = Array.isArray(json.insights) ? json.insights : [];
-      setInsights(rows);
-      setHasBeenAnalyzed(true);
-      if (json.updatedAt) setAnalysedAt(json.updatedAt);
-      setIsAnalyzing(false);
-
-      if (rows.length > 0) {
-        toast.success("Competitive vulnerability mapping complete.");
-      }
-    } catch {
-      toast.error("Network error — please try again.");
-      setIsAnalyzing(false);
-      setHasBeenAnalyzed(false);
-    }
-  }, [workspaceId, packageName, langCode, countryCode, reviewTexts]);
-
-  // ── handleReAnalyze — force a fresh Gemini run on demand ─────────────────
-  //
-  // POSTs with force: true — skips the TTL freshness check on the server,
-  // immediately deducts 3 credits, re-runs Gemini, and overwrites the DB row.
-  // Reuses the same loading animation as the initial analysis.
-  const handleReAnalyze = useCallback(async () => {
-    if (reviewTexts.length === 0) return;
-
-    setIsAnalyzing(true);
-    setIsLoading(false);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/reviews/analyze`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          packageName,
-          langCode,
-          country: countryCode,
-          reviewTexts,
-          force: true,
-        }),
-      });
-
-      const json = (await res.json()) as AnalyzeResponse;
-
-      if (!json.success) {
-        if (json.error?.code === "insufficient_credits") {
-          toast.error(`Not enough credits. Need 3, have ${json.error.remaining ?? 0}.`);
-        } else {
-          toast.error(json.error?.message ?? "Re-analysis failed — please try again.");
-        }
-        setIsAnalyzing(false);
-        return;
-      }
-
-      const rows = Array.isArray(json.insights) ? json.insights : [];
-      setInsights(rows);
-      setHasBeenAnalyzed(true);
-      if (json.updatedAt) setAnalysedAt(json.updatedAt);
-      setIsAnalyzing(false);
-      toast.success("Fresh analysis complete — data updated.");
-    } catch {
-      toast.error("Network error — please try again.");
-      setIsAnalyzing(false);
-    }
-  }, [workspaceId, packageName, langCode, countryCode, reviewTexts]);
+  const handleReveal = useCallback(() => void runAnalysis(false), [runAnalysis]);
+  const handleReAnalyze = useCallback(() => void runAnalysis(true), [runAnalysis]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render — strict top-to-bottom condition matrix
@@ -452,68 +501,31 @@ function CommonIssuesPanel({
   //   rawReviewCount  > 0
   //     → Active button + "📊 Found N negative reviews waiting for semantic analysis" badge
   if (!hasBeenAnalyzed) {
-    const syncComplete  = !isSyncLoading;   // parent flag: sync fetch finished
-    const hasReviews    = rawReviewCount > 0;
-
-    // Determine which disabled-button label to show when there are no reviews
-    const noReviewsLabel = syncComplete
-      ? "No Recent Reviews Found in This Market"
-      : "Waiting for reviews…";
+    const hasReviews = rawReviewCount > 0;
 
     return (
-      <div className="relative overflow-hidden rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-950/30 via-[#0a0e14] to-[#070a0f] p-6 shadow-[0_0_0_1px_rgba(16,185,129,0.08)]">
-        <div
-          className="pointer-events-none absolute -right-10 -top-10 size-48 rounded-full bg-emerald-500/8 blur-3xl"
-          aria-hidden
+      <>
+        <SyncInsightsCta
+          isRtl={isRtl}
+          isSyncLoading={isSyncLoading}
+          isAnalyzing={isAnalyzing}
+          hasReviews={hasReviews}
+          rawReviewCount={rawReviewCount}
+          creditCost={usage.creditCost}
+          monthlyUsed={usage.monthlyUsed}
+          monthlyLimit={usage.monthlyLimit}
+          creditsRemaining={usage.creditsRemaining}
+          onSyncInsights={handleReveal}
         />
-        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          {/* Left: icon + copy */}
-          <div className="flex items-start gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
-              <Zap className="size-4" aria-hidden />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-white">
-                Unlock Competitive Vulnerability Mapping
-              </p>
-              <p className="max-w-md text-xs leading-relaxed text-zinc-400">
-                {hasReviews
-                  ? "Run AI analysis on this app’s 1–2★ reviews to surface the top pain points your listing copy should address. Results are cached for 7 days — no repeat charges during that window."
-                  : syncComplete
-                    ? "No 1–2★ reviews were found for this app in this market. Analysis is unavailable until new reviews arrive."
-                    : "Fetching reviews for this app… The button will unlock once 1–2★ reviews have loaded."}
-              </p>
-            </div>
-          </div>
-
-          {/* Right: data badge (when available) + CTA button */}
-          <div className="flex shrink-0 flex-col items-end gap-2">
-            {/* Data badge — only when we have reviews to analyse */}
-            {hasReviews && (
-              <p className="rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-3 py-1.5 text-[11px] font-medium text-emerald-300/90">
-                📊 Found {rawReviewCount} negative user review{rawReviewCount !== 1 ? "s" : ""} waiting for semantic analysis
-              </p>
-            )}
-
-            <Button
-              type="button"
-              size="sm"
-              disabled={!hasReviews}
-              className="bg-emerald-600 text-white hover:bg-emerald-500 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => void handleReveal()}
-            >
-              <Zap className="mr-1.5 size-3.5" aria-hidden />
-              {hasReviews ? (
-                <>
-                  ⚡ Run AI Analysis (Costs 3 Credits)
-                </>
-              ) : (
-                noReviewsLabel
-              )}
-            </Button>
-          </div>
-        </div>
-      </div>
+        <AiCreditsModal
+          open={topUpOpen}
+          onOpenChange={setTopUpOpen}
+          balance={usage.creditsRemaining ?? 0}
+          variant={(usage.creditsRemaining ?? 0) === 0 ? "empty" : "low"}
+          workspacePlan={usage.workspacePlan}
+          workspaceId={workspaceId}
+        />
+      </>
     );
   }
 
@@ -554,17 +566,33 @@ function CommonIssuesPanel({
         </Tooltip>
 
         {/* ── Right: Re-Analyze CTA ── */}
-        <button
-          type="button"
-          disabled={!canReAnalyze}
-          onClick={() => void handleReAnalyze()}
-          className="flex items-center gap-1.5 rounded-lg border border-zinc-700/50 bg-transparent px-3 py-1.5 text-[11px] font-medium text-zinc-400 transition-all hover:border-emerald-500/40 hover:bg-emerald-500/[0.06] hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/60 disabled:cursor-not-allowed disabled:opacity-35"
-        >
-          <RefreshCw className="size-3 shrink-0" aria-hidden />
-          🔄 Re-Analyze (3 Credits)
-        </button>
+        <SyncInsightsCta
+          variant="compact"
+          showReAnalyze
+          isRtl={isRtl}
+          isAnalyzing={isAnalyzing}
+          hasReviews={canReAnalyze}
+          rawReviewCount={reviewTexts.length}
+          creditCost={usage.creditCost}
+          monthlyUsed={usage.monthlyUsed}
+          monthlyLimit={usage.monthlyLimit}
+          creditsRemaining={usage.creditsRemaining}
+          onSyncInsights={handleReveal}
+          onReAnalyze={handleReAnalyze}
+        />
       </div>
     </TooltipProvider>
+  );
+
+  const topUpModal = (
+    <AiCreditsModal
+      open={topUpOpen}
+      onOpenChange={setTopUpOpen}
+      balance={usage.creditsRemaining ?? 0}
+      variant={(usage.creditsRemaining ?? 0) === 0 ? "empty" : "low"}
+      workspacePlan={usage.workspacePlan}
+      workspaceId={workspaceId}
+    />
   );
 
   // ── STATE C: hasBeenAnalyzed === true AND insights.length === 0 ────────────
@@ -589,6 +617,7 @@ function CommonIssuesPanel({
           </div>
         </div>
         {FreshnessFooter}
+        {topUpModal}
       </div>
     );
   }
@@ -624,6 +653,7 @@ function CommonIssuesPanel({
           </div>
         </div>
         {FreshnessFooter}
+        {topUpModal}
       </div>
     );
   }
@@ -648,6 +678,7 @@ function CommonIssuesPanel({
         })}
       </div>
       {FreshnessFooter}
+      {topUpModal}
     </div>
   );
 }

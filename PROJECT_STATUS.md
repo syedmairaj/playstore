@@ -1,9 +1,9 @@
 # Growth Hub - Project Status & Architecture Reference
 
-**Last Updated:** June 10, 2026  
+**Last Updated:** June 12, 2026  
 **Project Phase:** Production - Active Development  
 **Status:** 🟢 Stable with Active Enhancements  
-**Session:** Post-session 2 (Keyword Validator overhaul, live rank, vault migration, parity fixes)
+**Session:** Post-session 3 (Optimization Queue, VaultCore, Competitor Spy curation, schema hardening)
 
 ---
 
@@ -12,6 +12,58 @@
 Growth Hub is a **pro-grade ASO (App Store Optimization) platform** built on modern cloud-native architecture. The platform leverages a **Staged-State architecture** pattern for feature isolation, workspace-scoped data management, and zero-breaking-changes deployment strategy.
 
 **Core Mission:** Enable indie app developers to optimize their Google Play Store listings through AI-powered keyword validation, experiment snapshots, and synthesis-driven improvements.
+
+---
+
+## Current Architecture Snapshot (June 12, 2026)
+
+### Research → Curate → Synthesize
+
+The platform now follows a **three-phase ASO workflow**:
+
+| Phase | User action | System behavior |
+|-------|-------------|-----------------|
+| **Research** | Browse Keyword Tracker, Competitor Spy, Reviews, Market Intel | Discovery data stays in feature modules — **not** auto-fed to the AI |
+| **Curate** | Select keywords, pain points, gaps → **Add to Optimization Queue** | `OptimizationQueueService` persists locale-isolated items in the vault |
+| **Synthesize** | **Generate Full Listing** in AI Listing Optimizer | `buildSynthesisFromOptimizationQueue()` uses **only** queued signals |
+
+**Single source of truth for generation:** `state_{locale}.features.optimization_queue.items[]` inside `workspace_staging_vault`.
+
+### Critical decisions (Session 3 — June 12, 2026)
+
+1. **Optimization Queue as SSOT** — Active Context and Generate Full Listing read only from `optimization_queue`, not raw discovery streams (`competitor_spy`, `keyword_tracker`, etc.).
+2. **VaultCore central gateway** — All `workspace_staging_vault` INSERT/UPDATE paths go through `VaultCore.safeUpsert()` / `safeUpdate()` with schema-aware legacy + universal dual-write.
+3. **Dual-schema support** — Production DB uses universal vault (`state_en`, `state_ar`, `app_id`). Legacy signal columns (`signal_type`, `metadata`, `content`) may be absent. Code probes schema at runtime via `hasLegacySignalColumns()` / `hasUniversalVaultColumns()`.
+4. **Competitor Spy curation** — Removed auto-staging dumps and `localStorage` keyword injection. Unified **Add to Optimization Queue** + `validateAndQueue()` before any navigation to Listing Optimizer.
+5. **Typed Active Context** — Signals grouped by type: `keyword_gap`, `review_pain_point`, `feature_request`, `competitor_strength` via `partitionQueueItemsBySignalType()`.
+6. **Workspace-scoped providers** — `KeywordCurationModeProvider` + `KeywordSelectionProvider` live in `WorkspaceAppProviders` (dashboard shell) so selection state survives page transitions.
+7. **Vault index fix** — Dropped `idx_vault_state_en_features` / `idx_vault_state_ar_features` btree indexes (row size limit ~2704 bytes when `features` JSONB grows). GIN indexes on full `state_en`/`state_ar` remain.
+8. **Sentiment analysis** — Migrated from `GEMINI_API_KEY` + AI Studio REST to **Vertex AI** via `getGenerativeModel()`. Fixed `result` variable shadowing bug that caused 500 after successful inference.
+
+### Key new files (Session 3)
+
+```
+src/lib/optimization-queue/          — server service, types, synthesis builder
+src/lib/client/optimization-queue-client.ts
+src/lib/client/validate-and-queue.ts — unified Competitor Spy queue validator
+src/lib/staging-vault/vault-core.ts  — centralized vault writes
+src/lib/staging-vault/read-competitor-keywords.ts — schema-aware reads
+src/hooks/useOptimizationQueue.ts
+src/components/app/workspace-app-providers.tsx
+app/api/workspaces/[id]/optimization-queue/route.ts
+app/api/workspaces/[id]/optimization-queue/[itemId]/route.ts
+supabase/migrations/20260612100000_drop_vault_features_btree_indexes.sql
+```
+
+### API endpoints added (Session 3)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/workspaces/{id}/optimization-queue?locale=en\|ar&appId=` | Read curated queue |
+| `POST` | `/api/workspaces/{id}/optimization-queue` | Add items (batch, deduped) |
+| `DELETE` | `/api/workspaces/{id}/optimization-queue/{itemId}` | Remove one item |
+
+`POST /api/workspaces/{id}/staging/add` still exists; it mirrors explicit staging into the queue via `map-staging-to-queue.ts`.
 
 ---
 
@@ -42,7 +94,7 @@ Growth Hub is a **pro-grade ASO (App Store Optimization) platform** built on mod
 
 ---
 
-## Critical Architectural Decisions Made This Session
+## Critical Architectural Decisions — Session 2 (June 10, 2026)
 
 ### 1. Keyword Validator — Embedded Slide-Over (NOT a standalone page)
 
@@ -193,32 +245,44 @@ Auth → membership → fetch app.package_name → Serper configured check
 
 ---
 
-### 2. Experiment Snapshots ✅ (locale parity fixed this session)
+### 2. Experiment Snapshots ✅ (locale parity — Session 2)
 
-**Status:** Production Ready
-
-**Files:**
-- `src/lib/experiment/experiment-snapshots-service.ts`
-- `src/components/listing-optimizer/experiment-history-panel.tsx`
-- `src/components/experiments/experiment-snapshots-ui.tsx`
-- `src/components/experiments/experiment-snapshots-page.tsx`
-
-**Parity fixes applied:**
-- `getSnapshots()` now applies `.eq("listing->>language", filters.language)` — previously accepted `language` filter but never applied it
-- GET route schema now accepts `?language=en|ar` and forwards it to the service
-- `queryKey` in all UI components includes `locale` — EN and AR users no longer share cached results
-- `createBaseline` and `createVariant` POST bodies now pass `language: locale`
-- `text-right` → `text-end` (CSS logical property) across all experiment UI files
+**Status:** Production Ready — see Session 2 notes in git history; parity fixes for `listing->>language` filter.
 
 ---
 
 ### 3. Enhanced Synthesis (ASO Synthesizer) ✅
 
-**Status:** Production Ready — unchanged this session
+**Status:** Production Ready — generation now queue-backed (Session 3)
 
 **Components:**
 - `src/lib/synthesis/aso-synthesizer-service.ts`
 - `src/lib/staging/synthesis-context-builder.ts`
+- `src/lib/optimization-queue/optimization-queue-synthesis.ts` — `buildSynthesisFromOptimizationQueue()`
+
+---
+
+### 4. Optimization Queue & VaultCore ✅ (Session 3)
+
+**Status:** Production Ready
+
+**Workflow:** Research → Curate → Synthesize
+
+**Server:**
+- `src/lib/optimization-queue/optimization-queue.service.ts`
+- `src/lib/staging-vault/vault-core.ts`
+- `src/lib/staging/optimizer-context-adapter.ts`
+
+**Client:**
+- `src/hooks/useOptimizationQueue.ts`
+- `src/lib/client/validate-and-queue.ts`
+- `src/components/optimizer/OptimizerWorkspace.tsx`
+- `src/components/app/workspace-app-providers.tsx`
+
+**Competitor Spy changes:**
+- Unified **Add to Optimization Queue** (gaps, quick wins, review insights, keyword curation bar)
+- Removed auto-staging on snapshot load
+- Review insights: progressive disclosure + sentiment via Vertex AI (`POST .../competitors/sentiment`)
 
 ---
 
@@ -247,7 +311,10 @@ PlayStore Menu (static — do not modify)
 | Keyword Validator | Slide-over panel (400px) | ✅ Complete |
 | Live Rank Fetch | Server-side credit-gated API | ✅ Complete |
 | Experiment Snapshots | Tabbed panel | ✅ Complete (parity fixed) |
-| Enhanced Synthesis | Auto-enhanced | ✅ Complete |
+| Optimization Queue | Active Context SSOT | ✅ Complete (Session 3) |
+| Competitor Spy curation | Add to Queue + badges | ✅ Complete (Session 3) |
+| VaultCore | Centralized vault writes | ✅ Complete (Session 3) |
+| Enhanced Synthesis | Queue-backed generation | ✅ Complete (Session 3) |
 | Producer Stubs | Stub implementations | ✅ Webpack-safe |
 
 ---
@@ -294,19 +361,73 @@ Vault path: `state_{locale}.features.keyword_validator.signals.[keyword].live_ra
 
 ---
 
-## Optimizer Integration
+## Optimizer Integration (Updated June 12, 2026)
 
-The AI Listing Optimizer's Active Context panel (`useOptimizerSync` hook) uses query key `['optimizer-context', workspaceId]`. After every `KeywordValidatorCard` staging or live rank fetch, the component calls:
+### Active Context — queue-only
+
+`optimizer-context-adapter.ts` → `flattenVaultToActiveItems()` reads **only** `features.optimization_queue`. Raw feature namespaces (`competitor_spy`, `keyword_tracker`, etc.) are **not** surfaced unless mirrored into the queue.
+
+**Typed grouping** (`partitionQueueItemsBySignalType`):
+
+| UI section | Signal types |
+|------------|--------------|
+| Review Insights | `review_pain_point`, `feature_request` |
+| Keyword Gaps | `keyword_gap`, `market_keyword`, `competitor_keyword` (legacy) |
+| Competitor Strengths | `competitor_strength`, `competitor_weakness` (legacy) |
+
+### Client hooks & invalidation
 
 ```typescript
-void queryClient.invalidateQueries({ queryKey: ['optimizer-context', workspaceId] });
+// Queue state
+useOptimizationQueue(workspaceId, locale, appId?)
+// Query key: ['optimization-queue', workspaceId, locale, appId]
+
+// Optimizer context (queue-backed)
+useOptimizerSync(workspaceId, { vaultLocale: locale, appId })
+// Query key: ['optimizer-context', workspaceId, locale]
 ```
 
-This triggers an automatic refetch of `/api/workspaces/{id}/optimizer/context`, re-rendering the Active Context without any manual refresh.
+After queue mutations, invalidate **both** keys:
+
+```typescript
+queryClient.invalidateQueries({ queryKey: ['optimization-queue', workspaceId, locale, appId ?? ''] });
+queryClient.invalidateQueries({ queryKey: ['optimizer-context', workspaceId, locale] });
+```
+
+### Generate Full Listing
+
+- Prompt: `listing-optimizer-v12.0` — frames input as a **curated optimization queue**
+- Synthesis: `buildSynthesisFromOptimizationQueue()` — no grab-all from discovery APIs
+- Empty queue → standard ASO best practices (no silent injection of tracker/competitor data)
+
+### Competitor Spy → Optimizer flow
+
+```typescript
+// validateAndQueue() — src/lib/client/validate-and-queue.ts
+// 1. Validate non-empty payload + EN/AR locale match
+// 2. await addToOptimizationQueueClient()
+// 3. Only then router.push('/listing-optimizer') if navigate: true
+```
+
+Used by: Keyword Gaps CTA, Quick Wins cards, Review Insights exploit button, keyword curation floating bar.
 
 ---
 
-## Known Bugs Fixed This Session
+## Known Bugs Fixed
+
+### Session 3 (June 12, 2026)
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| `No writable vault schema detected` on competitor staging | Universal DB has no legacy columns; `competitor_weakness` had no universal write path | `VaultCore.upsertUniversalFeatureSignal()` + `resolveVaultAppId()` |
+| `column metadata does not exist` on competitor keywords GET | Route queried legacy `metadata`/`signal_type` | `readCompetitorKeywordsFromVault()` — schema-aware read |
+| `index row size exceeds btree maximum` on queue POST | `idx_vault_state_en_features` btree on large `features` JSONB | Migration `20260612100000` drops btree feature indexes; queue metadata slimmed |
+| Sentiment analysis 500 after Gemini success | Inner `let result` shadowed outer `result` → ReferenceError | Removed shadowing; migrated to Vertex AI `getGenerativeModel()` |
+| Active Context lost on navigation | `KeywordCurationModeProvider` page-scoped in Competitor Spy | Moved to `WorkspaceAppProviders` in dashboard shell |
+| Blank optimizer after Send | `router.push` before queue write completed | `validateAndQueue()` awaits persistence first |
+| `listVaultSignals` not exported | Facade incomplete after VaultCore refactor | Re-exported from `staging-vault-service.ts` |
+
+### Session 2 (June 10, 2026)
 
 | Bug | Root Cause | Fix |
 |-----|-----------|-----|
@@ -332,7 +453,8 @@ This triggers an automatic refetch of `/api/workspaces/{id}/optimizer/context`, 
 | Heuristic scoring only | "nutrition" and "calorie" score identically | Serper keyword difficulty API integration |
 | Live rank is point-in-time | Ranks shift hourly; no history | Store snapshots with timestamps, build history chart |
 | No rank history in validator | Only shows latest rank | Extend `live_ranks` schema with array of snapshots |
-| Producer stubs only | `initializeDefaultProducers()` not functional | Implement each producer with real vault logic |
+| Producer stubs only | `initializeDefaultProducers()` not functional | VaultCore handles writes; producers remain stubs |
+| Queue size / vault JSON growth | Large `features` blob from multiple namespaces | Queue capped at 50 items; slim metadata; avoid btree feature indexes |
 | Manual metric entry | Users record installs weekly | Google Play API sync |
 | 6K token limit | Context may truncate | Extended context windows |
 
@@ -410,8 +532,31 @@ npx supabase migration repair --status applied <version>
 npx supabase migration list
 ```
 
+### Optimization Queue POST fails (index row size)
+**Cause:** Btree indexes on `(state_en -> 'features')` exceed PostgreSQL row limit when vault JSON grows.  
+**Fix:** Apply `supabase/migrations/20260612100000_drop_vault_features_btree_indexes.sql`:
+```sql
+DROP INDEX IF EXISTS idx_vault_state_en_features;
+DROP INDEX IF EXISTS idx_vault_state_ar_features;
+```
+
+### Competitor keywords empty but staging “succeeds”
+**Cause:** Universal vault stores data in `state_en.features.competitor_spy`, not legacy `metadata` column.  
+**Fix:** Ensure `read-competitor-keywords.ts` is wired; pass `sourceAppId` from Competitor Spy when staging.
+
 ---
 
-**Version:** 2.0  
-**Last Updated:** June 10, 2026  
+## Manual Test Checklist (Session 3)
+
+1. **Competitor Spy (EN & AR):** select keywords → **Add to Optimization Queue** → badge updates
+2. **Review Insights:** Analyze sentiment → **Add to Optimization Queue** → items under Review Insights in Active Context
+3. **Listing Optimizer:** only queued items visible; remove pill → deletes from queue
+4. **Generate:** with queue populated → synthesis uses only curated signals
+5. **Locale isolation:** EN queue items do not appear in AR optimizer
+6. **Navigation:** queue items persist after Competitor Spy → Listing Optimizer transition
+
+---
+
+**Version:** 3.0  
+**Last Updated:** June 12, 2026  
 **Status:** Production — Active Development

@@ -6,7 +6,6 @@ import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { generateReviewAnalysis, type IssueItem } from "@/lib/gemini/generate-review-analysis";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import {
-  readWorkspaceAiCreditsRemaining,
   buildInsufficientAiCreditsPayload,
 } from "@/lib/features/billing/workspace-ai-credits";
 import {
@@ -14,6 +13,11 @@ import {
   refundWorkspaceAiCredits,
 } from "@/lib/features/billing/wallet";
 import { logAdminAiTransaction } from "@/lib/admin/log-ai-transaction";
+import {
+  savePendingReviewInsights,
+} from "@/lib/review-insights/pending-insights.service";
+import { guardReviewAnalysisAction } from "@/lib/review-insights";
+import { nextReviewAnalysisResetIso } from "@/lib/review-insights/monthly-usage";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -75,6 +79,9 @@ type SuccessPayload = {
    * an extra round-trip.  Omitted on POST responses and GET cache hits.
    */
   rawReviewCount?: number;
+  /** Pain points auto-bridged to Listing Optimizer Active Context. */
+  bridge?: { savedCount: number };
+  usage?: { monthlyUsed: number; monthlyLimit: number };
 };
 
 /** Flat success response — used by both GET and POST. */
@@ -140,6 +147,7 @@ type CachedRow = {
   id: string;
   insights: unknown;
   updated_at: string;
+  analysis_transaction_id: string | null;
 };
 
 /**
@@ -163,7 +171,7 @@ async function getCachedInsights(
   const admin = getSupabaseAdmin();
   const { data, error } = await admin
     .from(TABLE)
-    .select("id, insights, updated_at")
+    .select("id, insights, updated_at, analysis_transaction_id")
     .eq("workspace_id", workspaceId)
     .eq("package_name", packageName)
     .eq("lang_code", langCode)
@@ -223,9 +231,10 @@ async function upsertInsights(
   langCode: string,
   country: string,
   issues: IssueItem[],
-): Promise<void> {
+  analysisTransactionId: string,
+): Promise<string | null> {
   const admin = getSupabaseAdmin();
-  const { error } = await admin
+  const { data, error } = await admin
     .from(TABLE)
     .upsert(
       {
@@ -235,16 +244,22 @@ async function upsertInsights(
         country,
         insights: issues,
         updated_at: new Date().toISOString(),
+        analysis_transaction_id: analysisTransactionId,
       },
       {
         onConflict: "workspace_id,package_name,lang_code,country",
         ignoreDuplicates: false,
       },
-    );
+    )
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     console.error(`[${ROUTE}] upsert failed:`, error.message);
+    return null;
   }
+
+  return (data?.id as string | undefined) ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,18 +338,30 @@ async function handleAnalyze(
     );
   }
 
-  // ── Step 3: Credit balance check ─────────────────────────────────────────
-  const creditsResult = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
-  if (!creditsResult.ok) {
+  // ── Step 3: ActionGuard — credits + monthly usage ────────────────────────
+  const guard = await guardReviewAnalysisAction(supabase, workspaceId);
+  if (!guard.allowed) {
+    if (guard.reason === "insufficient_credits" && guard.payload) {
+      return NextResponse.json(guard.payload, { status: 402 });
+    }
     return NextResponse.json(
-      { success: false, error: { code: "credits_read_error", message: "Could not read workspace credits." } },
-      { status: 500 },
-    );
-  }
-  if (creditsResult.remaining < COST) {
-    return NextResponse.json(
-      buildInsufficientAiCreditsPayload(COST, creditsResult.remaining),
-      { status: 402 },
+      {
+        success: false,
+        error: {
+          code: guard.reason,
+          message:
+            guard.reason === "monthly_limit_reached"
+              ? `Monthly review analysis limit reached (${guard.monthlyUsed}/${guard.monthlyLimit}).`
+              : "Insufficient AI credits.",
+          topUpRequired: guard.topUpRequired,
+          monthlyUsed: guard.monthlyUsed,
+          monthlyLimit: guard.monthlyLimit,
+          monthlyRemaining: Math.max(0, guard.monthlyLimit - guard.monthlyUsed),
+          resetsAt: nextReviewAnalysisResetIso(),
+          remaining: guard.creditsRemaining,
+        },
+      },
+      { status: guard.reason === "monthly_limit_reached" ? 429 : 402 },
     );
   }
 
@@ -354,7 +381,7 @@ async function handleAnalyze(
   if (!consume.ok) {
     if (consume.code === "insufficient_credits") {
       return NextResponse.json(
-        buildInsufficientAiCreditsPayload(COST, consume.remaining ?? creditsResult.remaining),
+        buildInsufficientAiCreditsPayload(COST, consume.remaining ?? guard.creditsRemaining),
         { status: 402 },
       );
     }
@@ -405,7 +432,30 @@ async function handleAnalyze(
   // the analysis ran. getCachedInsights checks Array.isArray(insights) so an
   // empty array here will correctly return hasBeenAnalyzed=true on subsequent
   // GET requests (no paywall, show "No Pain-Point Clusters Found").
-  await upsertInsights(workspaceId, packageName, langCode, country, issues);
+  const competitorInsightsId = await upsertInsights(
+    workspaceId,
+    packageName,
+    langCode,
+    country,
+    issues,
+    ledgerId,
+  );
+
+  const vaultLocale = langCode.startsWith("ar") ? "ar" : "en";
+  const pending =
+    competitorInsightsId != null
+      ? await savePendingReviewInsights(supabase, {
+          workspaceId,
+          packageName,
+          country,
+          langCode,
+          competitorInsightsId,
+          analysisTransactionId: ledgerId,
+          issues,
+          locale: vaultLocale,
+          userId,
+        })
+      : { savedCount: 0 };
 
   // ── Step 7: COGS tracking (fire-and-forget) ───────────────────────────────
   void logAdminAiTransaction({
@@ -419,8 +469,22 @@ async function handleAnalyze(
 
   const nowIso = new Date().toISOString();
   return successJson(
-    { success: true, hasBeenAnalyzed: true, insights: issues, updatedAt: nowIso },
-    { route: ROUTE, source: "gemini", count: issues.length, reviewsAnalysed: reviewTexts.length },
+    {
+      success: true,
+      hasBeenAnalyzed: true,
+      insights: issues,
+      updatedAt: nowIso,
+      analysisStatus: "SUCCESS_PAID",
+      transactionId: ledgerId,
+      bridge: {
+        savedCount: pending.savedCount,
+      },
+      usage: {
+        monthlyUsed: guard.monthlyUsed + 1,
+        monthlyLimit: guard.monthlyLimit,
+      },
+    },
+    { route: ROUTE, source: "gemini", count: issues.length, reviewsAnalysed: reviewTexts.length, pending },
   );
 }
 

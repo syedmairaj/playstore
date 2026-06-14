@@ -38,6 +38,8 @@ export interface KeywordTrackerPanelProps {
   isRtl?: boolean;
   onOpenValidator: (keyword: string, signal?: KeywordSignal) => void;
   isLoading?: boolean;
+  /** Queue-backed tracker category signals (SSOT). Falls back to vault keyword-signals API. */
+  trackerSignals?: KeywordSignal[];
 }
 
 function DifficultyPill({
@@ -144,16 +146,20 @@ export default function KeywordTrackerPanel({
   isRtl: isRtlProp,
   onOpenValidator,
   isLoading: externalLoading,
+  trackerSignals,
 }: KeywordTrackerPanelProps) {
   const isRtl = isRtlProp ?? vaultLocale === "ar";
   const t = useTranslations("optimizer.activeContext");
   const queryClient = useQueryClient();
-  const { signals, total, isLoading, isFetching } = useKeywordSignals(
+  const { signals: vaultSignals, isLoading, isFetching } = useKeywordSignals(
     workspaceId,
     appId,
     vaultLocale
   );
   const [removingKeyword, setRemovingKeyword] = useState<string | null>(null);
+
+  const signals = trackerSignals !== undefined ? trackerSignals : vaultSignals;
+  const total = signals.length;
 
   const sortedSignals = useMemo(
     () => [...signals].sort((a, b) => b.confidence - a.confidence),

@@ -1,50 +1,35 @@
 /**
- * Model Gateway - Centralized AI Model Management (Vertex AI Edition)
+ * Model Gateway — @google/genai (Vertex AI primary, API-key fallback)
  *
- * ⚠️ CRITICAL: This module EXCLUSIVELY uses the official @google-cloud/vertexai SDK
- * which routes ALL requests to Google Cloud Vertex AI (aiplatform.googleapis.com)
- *
- * GUARANTEE: No requests will route to AI Studio API (generativelanguage.googleapis.com)
- * GUARANTEE: No API keys are used, loaded, or accepted
- * GUARANTEE: Only Application Default Credentials (ADC) via Service Account
- * GUARANTEE: Full UTF-8 multilingual support (Arabic, English, etc.)
- *
- * Migration: @google/genai → @google-cloud/vertexai (official SDK)
- * Project: playstore-496016 | Location: us-central1
- * Authentication: Application Default Credentials (ADC) - no API keys required
- * Service Account with 'AI Platform User' role automatically detected
- * Maintains 100% backward compatibility with existing service calls
+ * Replaces deprecated @google-cloud/vertexai (EOL June 2026).
+ * Primary: Vertex AI via ADC → aiplatform.googleapis.com
+ * Fallback: GEMINI_API_KEY when Vertex generateContent fails
  */
 
 import "server-only";
-import { VertexAI, GenerativeModel } from "@google-cloud/vertexai";
+import { randomUUID } from "crypto";
+import {
+  ApiError,
+  GoogleGenAI,
+  type GenerateContentResponse,
+} from "@google/genai";
+import type { GenerateContentRequest } from "@/lib/ai/genai-compat";
+import {
+  checkFinishReason,
+  extractText,
+  isBlockedFinishReason,
+} from "@/lib/ai/extract-model-text";
+import { ModelGatewayError, isModelGatewayError } from "@/lib/ai/model-gateway-errors";
 
-// ⚠️ CRITICAL SAFEGUARD: Explicitly block any API key environment variables
-// This prevents accidental fallback to AI Studio API
-const BLOCKED_API_KEY_VARS = [
-  "GOOGLE_API_KEY",
-  "API_KEY",
-  "GEMINI_API_KEY",
-  "GENERATIVE_AI_API_KEY",
-];
-
-// Validate on startup that no API keys are present
-if (typeof process !== "undefined" && process.env) {
-  for (const varName of BLOCKED_API_KEY_VARS) {
-    if (process.env[varName]) {
-      console.warn(
-        `[ModelGateway] ⚠️ SECURITY WARNING: ${varName} is set but will be IGNORED. ` +
-        `This module uses ONLY Application Default Credentials (ADC). ` +
-        `Requests route to Vertex AI (aiplatform.googleapis.com), NOT AI Studio (generativelanguage.googleapis.com). ` +
-        `Remove this environment variable to avoid confusion.`
-      );
-    }
-  }
-}
+export type { GenerateContentRequest };
+export type { GenerateContentResponse };
+export { ModelGatewayError, isModelGatewayError };
+export { extractText, checkFinishReason, isBlockedFinishReason } from "@/lib/ai/extract-model-text";
 
 const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || "playstore-496016";
 const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || "us-central1";
 const ACTIVE_MODEL = process.env.AI_MODEL_ID || "gemini-2.5-flash";
+const FALLBACK_API_KEY = process.env.GEMINI_API_KEY?.trim() || "";
 
 export const AVAILABLE_MODELS = {
   GEMINI_25_FLASH: "gemini-2.5-flash",
@@ -53,161 +38,420 @@ export const AVAILABLE_MODELS = {
   GEMINI_15_PRO: "gemini-1.5-pro",
 } as const;
 
-let vertexAIInstance: VertexAI | null = null;
-let modelInstanceCache: Map<string, GenerativeModel> = new Map();
-
-/**
- * Initialize the Vertex AI client with EXPLICIT safeguards
- * ✅ Routes to: aiplatform.googleapis.com (Vertex AI)
- * ❌ NEVER routes to: generativelanguage.googleapis.com (AI Studio)
- *
- * @throws Error if initialization fails or if API keys are detected
- */
-function initializeVertexAIClient(): VertexAI {
-  if (!vertexAIInstance) {
-    try {
-      // ✅ EXPLICIT: Using official @google-cloud/vertexai SDK ONLY
-      // This class ALWAYS uses Vertex AI endpoint, NEVER AI Studio
-      vertexAIInstance = new VertexAI({
-        project: PROJECT_ID,
-        location: LOCATION,
-        // ✅ CRITICAL: NO apiKey parameter - uses ADC only
-        // The VertexAI class from @google-cloud/vertexai does NOT accept apiKey
-        // It ONLY accepts credentials via Application Default Credentials (ADC)
-      });
-
-      console.info(
-        `[ModelGateway] ✅ Initialized Vertex AI client (CRITICAL: Endpoint = aiplatform.googleapis.com)`,
-        {
-          sdk: "@google-cloud/vertexai",
-          endpoint: "https://us-central1-aiplatform.googleapis.com",
-          project: PROJECT_ID,
-          location: LOCATION,
-          authMethod: "Application Default Credentials (ADC)",
-          apiKeyUsage: "NONE - Explicitly disabled",
-          serviceAccountDetected: true,
-          multilingual: "Full UTF-8 support (English, Arabic, etc.)",
-          timestamp: new Date().toISOString(),
-        }
-      );
-    } catch (error) {
-      console.error(
-        `[ModelGateway] ❌ Failed to initialize Vertex AI client`,
-        {
-          sdk: "@google-cloud/vertexai",
-          endpoint: "https://us-central1-aiplatform.googleapis.com",
-          project: PROJECT_ID,
-          location: LOCATION,
-          error: error instanceof Error ? error.message : String(error),
-          authMethod: "ADC",
-          hint: "Ensure Service Account has 'AI Platform User' role. Check that GOOGLE_APPLICATION_CREDENTIALS is set correctly.",
-          apiKeyWarning: "This module does NOT use API keys. If you see 'prepayment credits depleted', check other code for @google/generative-ai SDK usage.",
-        }
-      );
-      throw error;
-    }
-  }
-
-  return vertexAIInstance;
-}
-
 export interface GenerativeModelConfig {
   model?: string;
   temperature?: number;
   maxOutputTokens?: number;
   topP?: number;
   topK?: number;
+  responseMimeType?: string;
+  responseSchema?: Record<string, unknown>;
+}
+
+export type ModelProvider = "vertex" | "gemini_api";
+
+export interface CompatGenerativeModel {
+  systemInstruction?: string;
+  generateContent(
+    request: GenerateContentRequest | string,
+  ): Promise<GenerateContentResponse>;
+}
+
+export function createModelGatewayCorrelationId(): string {
+  return randomUUID();
 }
 
 /**
- * Get the active generative model instance
+ * Vertex AI client via ADC.
  *
- * ✅ GUARANTEED Vertex AI routing (aiplatform.googleapis.com)
- * ✅ GUARANTEED no API key usage
- * ✅ GUARANTEED multilingual support (UTF-8: Arabic, English, etc.)
- *
- * @param config Optional configuration overrides
- * @returns GenerativeModel instance ready for use
+ * @google/genai v2.x uses flat `vertexai` + `project` + `location` options
+ * (equivalent intent to `vertexAI: { project, location }` in migration guides).
  */
-export function getGenerativeModel(
-  config?: Partial<GenerativeModelConfig>
-): GenerativeModel {
-  const vertexAI = initializeVertexAIClient();
+function createVertexAIClient(): GoogleGenAI {
+  return new GoogleGenAI({
+    vertexai: true,
+    project: PROJECT_ID,
+    location: LOCATION,
+  });
+}
 
-  const modelId = config?.model || ACTIVE_MODEL;
+function buildGenerationConfig(
+  modelConfig: Partial<GenerativeModelConfig>,
+  requestConfig?: Record<string, unknown>,
+  systemInstruction?: string,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {
+    temperature: modelConfig.temperature ?? 0.7,
+    maxOutputTokens: modelConfig.maxOutputTokens ?? 300,
+    topP: modelConfig.topP ?? 0.95,
+    topK: modelConfig.topK ?? 40,
+    ...(modelConfig.responseMimeType
+      ? { responseMimeType: modelConfig.responseMimeType }
+      : {}),
+    ...(modelConfig.responseSchema
+      ? { responseSchema: modelConfig.responseSchema }
+      : {}),
+    ...(requestConfig ?? {}),
+  };
 
-  if (config?.model && config.model !== ACTIVE_MODEL) {
-    console.warn(
-      `[ModelGateway] ⚠️ Using override model: ${config.model} (default: ${ACTIVE_MODEL})`
-    );
+  if (systemInstruction) {
+    merged.systemInstruction = systemInstruction;
   }
 
-  if (modelInstanceCache.has(modelId)) {
-    const cachedModel = modelInstanceCache.get(modelId)!;
-    console.debug(
-      `[ModelGateway] 📦 Using cached model instance for: ${modelId}`,
-      {
-        endpoint: "aiplatform.googleapis.com",
-        multilingual: "UTF-8 supported",
-      }
-    );
-    return cachedModel;
-  }
+  return merged;
+}
 
-  try {
-    // ✅ CRITICAL: vertexAI.getGenerativeModel() ALWAYS uses Vertex AI endpoint
-    // This is from @google-cloud/vertexai which does NOT support API keys
-    const model = vertexAI.getGenerativeModel({
-      model: modelId,
-      generationConfig: {
-        temperature: config?.temperature ?? 0.7,
-        maxOutputTokens: config?.maxOutputTokens ?? 300,
-        topP: config?.topP ?? 0.95,
-        topK: config?.topK ?? 40,
-      },
+function logGenAIApiError(error: unknown, correlationId: string, provider: ModelProvider) {
+  if (error instanceof ApiError) {
+    console.error("[ModelGateway] ApiError from @google/genai", {
+      correlationId,
+      provider,
+      status: error.status,
+      message: error.message,
     });
+    return;
+  }
 
-    modelInstanceCache.set(modelId, model);
+  console.error("[ModelGateway] generateContent threw", {
+    correlationId,
+    provider,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
+function toModelGatewayError(
+  error: unknown,
+  correlationId: string,
+  provider: ModelProvider,
+): ModelGatewayError {
+  if (error instanceof ModelGatewayError) return error;
+
+  const message =
+    error instanceof ApiError
+      ? `GenAI API error (${error.status}): ${error.message}`
+      : error instanceof Error
+        ? error.message
+        : "Vertex AI generation failed";
+
+  const httpStatus = error instanceof ApiError ? error.status : 502;
+
+  return new ModelGatewayError(message, {
+    code: "AI_GENERATION_FAILED",
+    httpStatus: httpStatus >= 400 && httpStatus < 600 ? httpStatus : 502,
+    correlationId,
+    provider,
+    cause: error,
+  });
+}
+
+function logBlockedFinishReason(
+  finishReason: string,
+  correlationId: string,
+  provider: ModelProvider,
+  modelId: string,
+) {
+  console.error("[ModelGateway] Response blocked by model policy", {
+    correlationId,
+    provider,
+    model: modelId,
+    finishReason,
+    policy:
+      finishReason === "SAFETY"
+        ? "content safety filter"
+        : finishReason === "RECITATION"
+          ? "copyright/recitation filter"
+          : "generation policy",
+  });
+}
+
+class CompatModel implements CompatGenerativeModel {
+  systemInstruction?: string;
+
+  constructor(
+    private readonly ai: GoogleGenAI,
+    private readonly modelId: string,
+    private readonly defaultConfig: Partial<GenerativeModelConfig>,
+  ) {}
+
+  async generateContent(
+    request: GenerateContentRequest | string,
+  ): Promise<GenerateContentResponse> {
+    const contents = typeof request === "string" ? request : request.contents;
+    const requestConfig =
+      typeof request === "string" ? undefined : request.generationConfig;
+
+    return this.ai.models.generateContent({
+      model: this.modelId,
+      contents: contents as never,
+      config: buildGenerationConfig(
+        this.defaultConfig,
+        requestConfig,
+        this.systemInstruction,
+      ) as never,
+    });
+  }
+}
+
+/** Singleton gateway — Vertex client + optional API-key fallback per process. */
+class ModelGatewaySingleton {
+  private static instance: ModelGatewaySingleton | null = null;
+
+  private vertexClient: GoogleGenAI | null = null;
+  private fallbackClient: GoogleGenAI | null = null;
+  private modelCache = new Map<string, CompatModel>();
+  private initialized = false;
+
+  static getInstance(): ModelGatewaySingleton {
+    if (!ModelGatewaySingleton.instance) {
+      ModelGatewaySingleton.instance = new ModelGatewaySingleton();
+    }
+    return ModelGatewaySingleton.instance;
+  }
+
+  private ensureInitialized(): void {
+    if (this.initialized) return;
+
+    this.vertexClient = createVertexAIClient();
+
+    if (FALLBACK_API_KEY) {
+      this.fallbackClient = new GoogleGenAI({ apiKey: FALLBACK_API_KEY });
+    }
 
     console.info(
-      `[ModelGateway] 🎯 Created and cached model instance (Vertex AI endpoint)`,
+      `[ModelGateway] ✅ Initialized Google Gen AI SDK (Vertex AI endpoint)`,
       {
-        model: modelId,
-        sdk: "@google-cloud/vertexai",
-        endpoint: "https://us-central1-aiplatform.googleapis.com",
+        sdk: "@google/genai",
+        endpoint: `https://${LOCATION}-aiplatform.googleapis.com`,
         project: PROJECT_ID,
         location: LOCATION,
-        authMethod: "ADC (Service Account)",
-        apiKeyUsage: "NONE",
-        multilingual: "Full UTF-8 support",
-        config: {
-          temperature: config?.temperature ?? 0.7,
-          maxOutputTokens: config?.maxOutputTokens ?? 300,
-          topP: config?.topP ?? 0.95,
-          topK: config?.topK ?? 40,
-        },
-      }
+        authMethod: "Application Default Credentials (ADC)",
+        apiKeyUsage: "NONE - primary path",
+        fallbackConfigured: Boolean(FALLBACK_API_KEY),
+        multilingual: "Full UTF-8 support (English, Arabic, etc.)",
+        timestamp: new Date().toISOString(),
+      },
     );
 
-    return model;
-  } catch (error) {
-    console.error(
-      `[ModelGateway] ❌ Failed to create model instance`,
-      {
-        model: modelId,
-        sdk: "@google-cloud/vertexai",
-        endpoint: "aiplatform.googleapis.com",
-        error: error instanceof Error ? error.message : String(error),
-        project: PROJECT_ID,
-        location: LOCATION,
-        troubleshooting:
-          "If you see '429 Too Many Requests: prepayment credits depleted', " +
-          "this means other code is using @google/generative-ai SDK. " +
-          "Search codebase for 'GoogleGenerativeAI', '@google/generative-ai', and 'GEMINI_API_KEY'.",
-      }
-    );
-    throw error;
+    this.initialized = true;
   }
+
+  getGenerativeModel(config?: Partial<GenerativeModelConfig>): CompatModel {
+    this.ensureInitialized();
+    const modelId = config?.model || ACTIVE_MODEL;
+    const cacheKey = JSON.stringify({ modelId, config: config ?? {} });
+
+    const cached = this.modelCache.get(cacheKey);
+    if (cached) return cached;
+
+    const model = new CompatModel(this.vertexClient!, modelId, config ?? {});
+    this.modelCache.set(cacheKey, model);
+
+    console.info(`[ModelGateway] 🎯 Cached model handle (Vertex AI)`, {
+      model: modelId,
+      sdk: "@google/genai",
+      endpoint: `https://${LOCATION}-aiplatform.googleapis.com`,
+      project: PROJECT_ID,
+      location: LOCATION,
+    });
+
+    return model;
+  }
+
+  private async invokeVertex(
+    modelId: string,
+    request: GenerateContentRequest,
+    modelConfig?: Partial<GenerativeModelConfig>,
+    systemInstruction?: string,
+  ): Promise<GenerateContentResponse> {
+    this.ensureInitialized();
+    const contents = request.contents;
+    const requestConfig = request.generationConfig ?? {};
+
+    return this.vertexClient!.models.generateContent({
+      model: modelId,
+      contents: contents as never,
+      config: buildGenerationConfig(
+        modelConfig ?? {},
+        requestConfig,
+        systemInstruction,
+      ) as never,
+    });
+  }
+
+  private async invokeFallback(
+    modelId: string,
+    request: GenerateContentRequest,
+    modelConfig?: Partial<GenerativeModelConfig>,
+    systemInstruction?: string,
+  ): Promise<GenerateContentResponse> {
+    if (!this.fallbackClient) {
+      throw new Error("GEMINI_API_KEY fallback not configured");
+    }
+
+    const contents = request.contents;
+    const requestConfig = request.generationConfig ?? {};
+
+    return this.fallbackClient.models.generateContent({
+      model: modelId,
+      contents: contents as never,
+      config: buildGenerationConfig(
+        modelConfig ?? {},
+        requestConfig,
+        systemInstruction,
+      ) as never,
+    });
+  }
+
+  async generateContentValidated(args: {
+    request: GenerateContentRequest;
+    modelConfig?: Partial<GenerativeModelConfig>;
+    correlationId?: string;
+  }): Promise<{
+    text: string;
+    correlationId: string;
+    provider: ModelProvider;
+    result: GenerateContentResponse;
+  }> {
+    const correlationId = args.correlationId ?? createModelGatewayCorrelationId();
+    const modelId = args.modelConfig?.model || ACTIVE_MODEL;
+    const startedAt = Date.now();
+
+    console.info("[ModelGateway] generateContent start", {
+      correlationId,
+      model: modelId,
+      provider: "vertex",
+      project: PROJECT_ID,
+      location: LOCATION,
+    });
+
+    let genaiResponse: GenerateContentResponse | null = null;
+    let provider: ModelProvider = "vertex";
+
+    try {
+      genaiResponse = await this.invokeVertex(modelId, args.request, args.modelConfig);
+    } catch (vertexError) {
+      logGenAIApiError(vertexError, correlationId, "vertex");
+
+      if (this.fallbackClient) {
+        console.warn(
+          "[ModelGateway] Vertex generateContent failed — trying GEMINI_API_KEY fallback",
+          {
+            correlationId,
+            error:
+              vertexError instanceof Error ? vertexError.message : String(vertexError),
+          },
+        );
+        try {
+          genaiResponse = await this.invokeFallback(
+            modelId,
+            args.request,
+            args.modelConfig,
+          );
+          provider = "gemini_api";
+        } catch (fallbackError) {
+          logGenAIApiError(fallbackError, correlationId, "gemini_api");
+          throw toModelGatewayError(fallbackError, correlationId, "gemini_api");
+        }
+      } else {
+        throw toModelGatewayError(vertexError, correlationId, "vertex");
+      }
+    }
+
+    if (!genaiResponse) {
+      throw new ModelGatewayError("Model returned null result", {
+        code: "AI_GENERATION_FAILED",
+        httpStatus: 502,
+        correlationId,
+        provider,
+      });
+    }
+
+    const finish = checkFinishReason(genaiResponse);
+    const text = extractText(genaiResponse);
+
+    if (!finish.ok && finish.blocked) {
+      logBlockedFinishReason(finish.finishReason, correlationId, provider, modelId);
+      throw new ModelGatewayError(
+        `Model response blocked by safety filter (${finish.finishReason})`,
+        {
+          code: "AI_RESPONSE_BLOCKED",
+          httpStatus: 502,
+          correlationId,
+          finishReason: finish.finishReason,
+          provider,
+        },
+      );
+    }
+
+    if (!text) {
+      const finishReason = finish.finishReason ?? "UNKNOWN";
+      if (isBlockedFinishReason(finishReason)) {
+        logBlockedFinishReason(finishReason, correlationId, provider, modelId);
+      }
+
+      throw new ModelGatewayError(
+        !finish.ok
+          ? `Model response incomplete (${finishReason})`
+          : "Model returned empty text",
+        {
+          code: "AI_RESPONSE_EMPTY",
+          httpStatus: 502,
+          correlationId,
+          finishReason,
+          provider,
+        },
+      );
+    }
+
+    if (!finish.ok && finish.truncated) {
+      console.warn("[ModelGateway] finishReason MAX_TOKENS — using partial text", {
+        correlationId,
+        textLength: text.length,
+        provider,
+        finishReason: finish.finishReason,
+      });
+    }
+
+    console.info("[ModelGateway] generateContent success", {
+      correlationId,
+      provider,
+      model: modelId,
+      durationMs: Date.now() - startedAt,
+      textLength: text.length,
+      finishReason: finish.finishReason ?? "STOP",
+      responseId: genaiResponse.responseId,
+    });
+
+    return { text, correlationId, provider, result: genaiResponse };
+  }
+
+  clearCaches(): void {
+    this.modelCache.clear();
+    this.vertexClient = null;
+    this.fallbackClient = FALLBACK_API_KEY ? new GoogleGenAI({ apiKey: FALLBACK_API_KEY }) : null;
+    this.initialized = false;
+  }
+}
+
+const gateway = ModelGatewaySingleton.getInstance();
+
+export function getGenerativeModel(
+  config?: Partial<GenerativeModelConfig>,
+): CompatGenerativeModel {
+  return gateway.getGenerativeModel(config);
+}
+
+export async function generateContentValidated(args: {
+  request: GenerateContentRequest;
+  modelConfig?: Partial<GenerativeModelConfig>;
+  correlationId?: string;
+}): Promise<{
+  text: string;
+  correlationId: string;
+  provider: ModelProvider;
+  result: GenerateContentResponse;
+}> {
+  return gateway.generateContentValidated(args);
 }
 
 export function getActiveModelInfo() {
@@ -218,13 +462,16 @@ export function getActiveModelInfo() {
     gcpProject: PROJECT_ID,
     gcpLocation: LOCATION,
     authMethod: "Application Default Credentials (ADC)",
-    sdkVersion: "@google-cloud/vertexai",
+    fallbackApiKeyConfigured: Boolean(FALLBACK_API_KEY),
+    sdk: "@google/genai",
     timestamp: new Date().toISOString(),
   };
 }
 
 export function isValidModel(modelId: string): boolean {
-  return Object.values(AVAILABLE_MODELS).includes(modelId as any);
+  return Object.values(AVAILABLE_MODELS).includes(
+    modelId as (typeof AVAILABLE_MODELS)[keyof typeof AVAILABLE_MODELS],
+  );
 }
 
 export function getFallbackModel(): string {
@@ -243,122 +490,65 @@ export const modelGatewayConfig = {
   gcpProject: PROJECT_ID,
   gcpLocation: LOCATION,
   nodeEnv: process.env.NODE_ENV || "development",
-  sdkVersion: "@google-cloud/vertexai",
+  sdk: "@google/genai",
   authMethod: "Application Default Credentials (ADC)",
 };
 
 export function clearModelCache(): void {
-  modelInstanceCache.clear();
-  console.info(`[ModelGateway] 🔄 Model instance cache cleared`);
+  gateway.clearCaches();
 }
 
 export function clearVertexAIClient(): void {
-  vertexAIInstance = null;
-  modelInstanceCache.clear();
-  console.info(`[ModelGateway] 🔄 Vertex AI client and model cache cleared`);
+  gateway.clearCaches();
 }
 
-/**
- * Comprehensive validation of Vertex AI setup
- *
- * Tests:
- * 1. ✅ Client initialization (Vertex AI endpoint, NOT AI Studio)
- * 2. ✅ Authentication (ADC with Service Account)
- * 3. ✅ Model availability
- * 4. ✅ Multilingual support (Arabic + English)
- * 5. ✅ UTF-8 encoding for internationalization
- *
- * @returns Validation result with endpoint confirmation
- */
 export async function validateVertexAISetup(): Promise<{
   valid: boolean;
   message: string;
-  details?: {
-    project: string;
-    location: string;
-    model: string;
-    endpoint: string;
-    authMethod: string;
-    multilingualSupport: boolean;
-  };
+  details?: Record<string, unknown>;
 }> {
+  const correlationId = createModelGatewayCorrelationId();
   try {
-    const model = getGenerativeModel();
-
-    // Test 1: English prompt
-    console.debug("[ModelGateway:Validation] Testing English prompt...");
-    const englishResponse = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: "Say 'OK'" }],
-        },
-      ],
+    const { text } = await generateContentValidated({
+      correlationId,
+      modelConfig: { temperature: 0, maxOutputTokens: 16 },
+      request: {
+        contents: [{ role: "user", parts: [{ text: "Say OK" }] }],
+      },
     });
 
-    if (!englishResponse || !englishResponse.response) {
-      return {
-        valid: false,
-        message: "❌ English test call failed",
-      };
-    }
-
-    // Test 2: Arabic prompt (multilingual validation)
-    console.debug("[ModelGateway:Validation] Testing Arabic prompt...");
-    const arabicResponse = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: "قل 'حسناً'" }], // "Say 'OK'" in Arabic with UTF-8
-        },
-      ],
+    const arabic = await generateContentValidated({
+      correlationId: createModelGatewayCorrelationId(),
+      modelConfig: { temperature: 0, maxOutputTokens: 16 },
+      request: {
+        contents: [{ role: "user", parts: [{ text: "قل حسناً" }] }],
+      },
     });
-
-    const multilingualSupported =
-      arabicResponse && arabicResponse.response ? true : false;
-
-    if (!multilingualSupported) {
-      console.warn(
-        "[ModelGateway:Validation] ⚠️ Arabic test failed - multilingual support may be limited"
-      );
-    }
 
     return {
-      valid: true,
+      valid: Boolean(text),
       message:
-        "✅ Vertex AI is properly configured and accessible " +
-        (multilingualSupported ? "(multilingual support verified)" : ""),
+        "✅ Vertex AI is properly configured and accessible" +
+        (arabic.text ? " (multilingual support verified)" : ""),
       details: {
         project: PROJECT_ID,
         location: LOCATION,
         model: ACTIVE_MODEL,
         endpoint: `https://${LOCATION}-aiplatform.googleapis.com`,
-        authMethod: "Application Default Credentials (ADC)",
-        multilingualSupport: multilingualSupported,
+        authMethod: "ADC",
+        sdk: "@google/genai",
+        multilingualSupport: Boolean(arabic.text),
+        correlationId,
       },
     };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const message = isModelGatewayError(error)
+      ? `${error.message} (correlationId=${error.correlationId})`
+      : error instanceof Error
+        ? error.message
+        : String(error);
 
-    // Detect if error is from wrong endpoint
-    const is429Error = errorMsg.includes("429");
-    const isQuotaError = errorMsg.includes("prepayment credits");
-
-    if (is429Error || isQuotaError) {
-      return {
-        valid: false,
-        message:
-          `❌ ENDPOINT ERROR: You are hitting AI Studio API, not Vertex AI. ` +
-          `Error: ${errorMsg} ` +
-          `Solution: Search codebase for @google/generative-ai, GoogleGenerativeAI, GEMINI_API_KEY, and remove them. ` +
-          `This module (@google-cloud/vertexai) must be the ONLY AI client.`,
-      };
-    }
-
-    return {
-      valid: false,
-      message: `❌ Vertex AI validation failed: ${errorMsg}`,
-    };
+    return { valid: false, message: `❌ Vertex AI validation failed: ${message}` };
   }
 }
 
@@ -367,17 +557,14 @@ export function logModelUsage(context: {
   modelUsed: string;
   durationMs?: number;
   tokensUsed?: { input: number; output: number };
+  correlationId?: string;
 }) {
   console.info("[ModelGateway:Usage]", {
-    endpoint: context.endpoint,
-    modelUsed: context.modelUsed,
+    ...context,
     activeModelConfig: ACTIVE_MODEL,
     project: PROJECT_ID,
     location: LOCATION,
-    durationMs: context.durationMs,
-    tokensUsed: context.tokensUsed,
-    sdkVersion: "@google-cloud/vertexai",
-    authMethod: "ADC",
+    sdk: "@google/genai",
     timestamp: new Date().toISOString(),
   });
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import type { SchemaType } from "@google-cloud/vertexai";
+import { SchemaType } from "@/lib/ai/schema-types";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
@@ -542,7 +542,7 @@ export async function generateScreenshotLayout(
 
   const prompt = buildLayoutPrompt(input);
   const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
+  const text = (result.text ?? "").trim();
 
   let parsed: unknown;
   try {

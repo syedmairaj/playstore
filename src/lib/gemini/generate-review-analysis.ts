@@ -1,8 +1,10 @@
 import "server-only";
-import type { SchemaType } from "@google-cloud/vertexai";
+import { SchemaType } from "@/lib/ai/schema-types";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
+import { extractText, extractUsageMetadata } from "@/lib/ai/extract-model-text";
 import type { GeminiUsageCounts } from "@/lib/gemini/pricing";
 import { parseGeminiUsageMetadata } from "@/lib/gemini/pricing";
+import type { ReviewInsightCategory } from "@/lib/review-insights/pending-insights.types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -39,6 +41,8 @@ export type IssueItem = {
    * Empty string when no clean excerpt exists.
    */
   quote: string;
+  /** ASO cluster category for curation UI. */
+  category?: ReviewInsightCategory;
 };
 
 export type ReviewAnalysisResult = {
@@ -118,8 +122,14 @@ const RESPONSE_SCHEMA = {
         type: SchemaType.STRING,
         description: "The percentage impact weight as a clean string, e.g. '53%' or '20%'.",
       },
+      category: {
+        type: SchemaType.STRING,
+        enum: ["UX", "CRASHES", "ACCURACY", "PERFORMANCE", "PRICING", "FEATURES"],
+        description:
+          "Cluster theme: UX (usability/onboarding), CRASHES (bugs/crashes), ACCURACY (wrong data), PERFORMANCE (speed/battery), PRICING (subscriptions), FEATURES (missing capabilities).",
+      },
     },
-    required: ["title", "description", "severity", "impact"],
+    required: ["title", "description", "severity", "impact", "category"],
   },
 };
 
@@ -140,6 +150,14 @@ function sanitize(value: string, maxLen: number): string {
 }
 
 const VALID_SEVERITIES: IssueSeverity[] = ["CRITICAL", "MEDIUM", "LOW"];
+const VALID_CATEGORIES: ReviewInsightCategory[] = [
+  "UX",
+  "CRASHES",
+  "ACCURACY",
+  "PERFORMANCE",
+  "PRICING",
+  "FEATURES",
+];
 
 /**
  * Parses the model's string impact value ("45%", "0.45", "45") into a
@@ -194,12 +212,21 @@ function parseIssues(raw: unknown): IssueItem[] | null {
 
       const impact = parseImpact(item.impact);
 
+      const categoryRaw =
+        typeof item.category === "string"
+          ? (item.category.trim().toUpperCase() as ReviewInsightCategory)
+          : null;
+      const category: ReviewInsightCategory =
+        categoryRaw && VALID_CATEGORIES.includes(categoryRaw)
+          ? categoryRaw
+          : "UX";
+
       // quote is omitted from the schema — fall back to empty string
       const quote =
         typeof item.quote === "string" ? item.quote.trim().slice(0, 200) : "";
 
       if (!title || !description || impact === null) return null;
-      return { title, description, severity, impact, quote };
+      return { title, description, severity, impact, quote, category };
     })
     .filter((item): item is IssueItem => item !== null)
     .slice(0, MAX_ISSUES);
@@ -225,6 +252,7 @@ LOW      — minor UX friction, missing quality-of-life features, cosmetic issue
 - Return between 3 and 5 issues — never more than 5.
 - Order by impact descending (highest percentage first).
 - impact must be a percentage string like "45%" representing the share of sampled reviews mentioning this issue.
+- category must be one of: UX, CRASHES, ACCURACY, PERFORMANCE, PRICING, FEATURES.
 - title must be ≤ 6 words, punchy and action-oriented.
 - description must be ≤ 25 words — one dense sentence only.
 - If no clear pain points exist, return an empty array.`;
@@ -263,9 +291,6 @@ export async function generateReviewAnalysis(
   if (input.reviewTexts.length === 0) {
     return { issues: [], usage: null };
   }
-
-  const apiKey    = assertGeminiApiKey();
-  const modelName = resolveGeminiModel();
 
   const langLabel = input.langCode ?? "en";
   const appLabel  = input.appName?.trim() ? sanitize(input.appName, 120) : "this app";
@@ -330,9 +355,8 @@ export async function generateReviewAnalysis(
     },
   });
 
-  const rawText  = result.response.text();
-  const usageMeta = result.response.usageMetadata;
-  const usage    = parseGeminiUsageMetadata(usageMeta ?? null);
+  const rawText = extractText(result);
+  const usage = parseGeminiUsageMetadata(extractUsageMetadata(result));
 
   // ── Empty response guard ──────────────────────────────────────────────────
   if (!rawText?.trim()) {

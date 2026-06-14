@@ -1,5 +1,5 @@
 import "server-only";
-import type { SchemaType } from "@google-cloud/vertexai";
+import { SchemaType } from "@/lib/ai/schema-types";
 import { clampListingGenerationParsed } from "@/lib/gemini/clamp-listing-generation-parsed";
 import type { ClampListingResult } from "@/lib/gemini/clamp-listing-generation-parsed";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
@@ -161,10 +161,9 @@ async function attemptGeneration(
   });
 
   // ── Finish-reason guard ───────────────────────────────────────────────────
-  // response.text() throws a generic Error when finishReason is MAX_TOKENS,
-  // SAFETY, etc. Inspect the candidate first so we throw InvalidModelOutputError
+  // Inspect the candidate first so we throw InvalidModelOutputError
   // (which triggers a credit refund + 422) rather than an unclassified 500.
-  const candidate = result.response.candidates?.[0];
+  const candidate = result.candidates?.[0];
   const finishReason = candidate?.finishReason as string | undefined;
   const isBlocked = finishReason && finishReason !== "STOP" && finishReason !== "1";
 
@@ -180,13 +179,9 @@ async function attemptGeneration(
   }
 
   // ── Extract text ──────────────────────────────────────────────────────────
-  let rawText: string;
-  try {
-    rawText = result.response.text();
-  } catch (textErr) {
-    throw new InvalidModelOutputError(
-      `Model returned empty/unreadable response: ${textErr instanceof Error ? textErr.message : String(textErr)}`,
-    );
+  const rawText = result.text ?? "";
+  if (!rawText.trim()) {
+    throw new InvalidModelOutputError("Model returned empty/unreadable response.");
   }
 
   // ── Truncation recovery ───────────────────────────────────────────────────

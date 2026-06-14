@@ -1,14 +1,69 @@
 /**
- * Staging Vault Service - INSERT with 23505 Error Handling
+ * Staging Vault Service — feature-facing facade over VaultCore.
  *
- * Uses simple `.insert()` with explicit PostgreSQL unique constraint (23505) handling.
- * If a signal already exists (23505 error), treats it as success (idempotent).
- * This avoids fragile `.upsert()` `onConflict` logic while maintaining data integrity.
- * Fully supports English (en) and Arabic (ar) content with UTF-8 preservation.
+ * All INSERT/UPDATE operations delegate to VaultCore.safeUpsert / safeUpdate.
+ * Legacy content column is always written when available (backward compatible reads).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { KeywordPayload } from "@/hooks/useKeywordSelection";
+import { VaultCore } from "@/lib/staging-vault/vault-core";
+import type { VaultSignalType } from "@/lib/staging-vault/vault-core.types";
+import { hasLegacySignalColumns } from "@/lib/staging-vault/staging-vault-schema";
+
+export type VaultListSignalType =
+  | "keyword"
+  | "review_issue"
+  | "competitor_weakness"
+  | "optimization_insight"
+  | "optimizer_selection";
+
+export type VaultSignalRow = {
+  id: string;
+  workspace_id: string;
+  signal_type: VaultListSignalType;
+  content: string;
+  source: string;
+  source_app_id?: string | null;
+  source_context?: string | null;
+  source_context_id?: string | null;
+  language?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string | null;
+  deleted_at?: string | null;
+};
+
+export type VaultSignalsGrouped = {
+  keywords: VaultSignalRow[];
+  reviewIssues: VaultSignalRow[];
+  competitorWeaknesses: VaultSignalRow[];
+  optimizationInsights: VaultSignalRow[];
+  optimizerSelections: VaultSignalRow[];
+  total: number;
+  lastUpdated: string;
+};
+
+const EMPTY_GROUPED: VaultSignalsGrouped = {
+  keywords: [],
+  reviewIssues: [],
+  competitorWeaknesses: [],
+  optimizationInsights: [],
+  optimizerSelections: [],
+  total: 0,
+  lastUpdated: new Date().toISOString(),
+};
+
+function groupVaultSignals(signals: VaultSignalRow[]): VaultSignalsGrouped {
+  return {
+    keywords: signals.filter((s) => s.signal_type === "keyword"),
+    reviewIssues: signals.filter((s) => s.signal_type === "review_issue"),
+    competitorWeaknesses: signals.filter((s) => s.signal_type === "competitor_weakness"),
+    optimizationInsights: signals.filter((s) => s.signal_type === "optimization_insight"),
+    optimizerSelections: signals.filter((s) => s.signal_type === "optimizer_selection"),
+    total: signals.length,
+    lastUpdated: new Date().toISOString(),
+  };
+}
 
 export interface AddSignalPayload {
   signalType: string;
@@ -20,7 +75,7 @@ export interface AddSignalPayload {
   language: "en" | "ar";
   metadata: Record<string, unknown>;
   keywords?: KeywordPayload[];
-  category?: string;  // ✅ CATEGORIZATION: Route signal to correct bucket (e.g., 'competitor_keyword')
+  category?: string;
 }
 
 export interface StagingVaultResult {
@@ -34,286 +89,167 @@ export interface StagingVaultResult {
 export async function addSignalToVault(
   supabase: SupabaseClient,
   workspaceId: string,
-  payload: AddSignalPayload
+  payload: AddSignalPayload,
+  options?: { userId?: string },
 ): Promise<StagingVaultResult> {
-  const {
-    signalType,
-    content,
-    source,
-    sourceAppId,
-    sourceContext,
-    sourceContextId,
-    language,
-    metadata,
-    keywords,
-    category,
-  } = payload;
+  const vaultLocale: "en" | "ar" = String(payload.language).startsWith("ar") ? "ar" : "en";
 
-  const now = new Date().toISOString();
-
-  console.log("[StagingVaultService] 📝 ADDING SIGNAL:", {
-    signalType,
-    source,
-    language,
+  console.log("[StagingVaultService] 📝 ADDING SIGNAL via VaultCore:", {
+    signalType: payload.signalType,
+    source: payload.source,
+    language: vaultLocale,
     workspaceId,
   });
 
-  try {
-    // Build the signal record to insert
-    const finalMetadata: Record<string, unknown> = {
-      ...metadata,
-      keywords: keywords || [],
-      signal_created_at: now,
-    };
+  const result = await VaultCore.safeUpsert(supabase, {
+    type: "legacy_signal",
+    workspaceId,
+    signalType: payload.signalType as VaultSignalType,
+    content: payload.content,
+    source: payload.source,
+    locale: vaultLocale,
+    sourceAppId: payload.sourceAppId,
+    sourceContext: payload.sourceContext,
+    sourceContextId: payload.sourceContextId,
+    metadata: {
+      ...payload.metadata,
+      keywords: payload.keywords ?? [],
+    },
+    category: payload.category,
+    userId: options?.userId,
+  });
 
-    // ✅ CATEGORIZATION: Preserve category in metadata if provided
-    if (category) {
-      finalMetadata.category = category;
-    }
-
-    const signalRecord = {
-      workspace_id: workspaceId,
-      signal_type: signalType,
-      content, // UTF-8 preserved: Arabic/English/etc fully supported
-      source,
-      source_app_id: sourceAppId || null,
-      source_context: sourceContext || null,
-      source_context_id: sourceContextId || null,
-      language, // 'en' or 'ar' or other language codes - CRITICAL for bilingual support
-      metadata: finalMetadata,
-      created_at: now,
-    };
-
-    console.log("[StagingVaultService] ➕ INSERTING SIGNAL:", {
-      signalType,
-      source,
-      language,
-      category,  // ✅ Log category for debugging
-      workspaceId,
-    });
-
-    // Attempt insert
-    const { data, error } = await supabase
-      .from("workspace_staging_vault")
-      .insert([signalRecord])
-      .select("id, created_at");
-
-    // Handle errors with explicit 23505 (unique constraint violation) logic
-    if (error) {
-      // 23505: unique_violation - signal already exists with same (workspace_id, competitor_id, language, signal_type)
-      if (error.code === "23505") {
-        console.log("[StagingVaultService] ℹ️ SIGNAL ALREADY EXISTS (23505):", {
-          signalType,
-          source,
-          language,
-          category,  // ✅ Log category for debugging
-          workspaceId,
-          message: "Treating as success - signal is already in vault (idempotent)",
-        });
-
-        // Return success response using the record data (we don't have the actual ID, so generate placeholder)
-        const placeholderId = `existing-${Date.now()}`;
-        return {
-          id: placeholderId,
-          workspaceId,
-          signalType,
-          message: `Signal already exists in vault (${keywords?.length || 0} keywords) - idempotent success`,
-          createdAt: now,
-        };
-      }
-
-      // Any other error code: log and throw
-      console.error("[StagingVaultService] ❌ INSERT FAILED:", {
-        errorCode: error.code,
-        errorMessage: error.message,
-        errorDetails: error.details,
-        signalType,
-        source,
-        workspaceId,
-      });
-      throw new Error(
-        `Failed to add signal to vault: ${error.message} (${error.code})`
-      );
-    }
-
-    // Success: signal was inserted
-    if (!data || data.length === 0) {
-      throw new Error("Signal inserted but no ID returned");
-    }
-
-    const { id, created_at } = data[0];
-
-    console.log("[StagingVaultService] ✅ SIGNAL INSERTED:", {
-      signalId: id,
-      signalType,
-      source,
-      language,
-      createdAt: created_at,
-      keywordCount: keywords?.length || 0,
-    });
-
-    return {
-      id,
-      workspaceId,
-      signalType,
-      message: `Signal added to vault (${keywords?.length || 0} keywords)`,
-      createdAt: created_at,
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-
-    console.error("[StagingVaultService] ❌ UNEXPECTED ERROR:", {
-      errorMessage: errorMsg,
-      errorType: error instanceof Error ? error.constructor.name : typeof error,
-      signalType,
-      source,
-      language,
-      workspaceId,
-    });
-
-    throw error;
+  if (!result.ok) {
+    throw new Error(result.error ?? "Failed to add signal to vault");
   }
+
+  return {
+    id: result.id!,
+    workspaceId,
+    signalType: payload.signalType,
+    message:
+      result.message ??
+      `Signal added to vault (${payload.keywords?.length ?? 0} keywords) via ${result.writePath}`,
+    createdAt: result.createdAt ?? new Date().toISOString(),
+  };
+}
+
+/**
+ * List legacy vault signals grouped by type (staging/list API).
+ * Returns empty groups when legacy columns are not deployed.
+ */
+export async function listVaultSignals(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  filters?: {
+    signalType?: VaultListSignalType;
+    language?: string;
+    sourceAppId?: string;
+    limit?: number;
+  },
+): Promise<VaultSignalsGrouped> {
+  const { signalType, language, sourceAppId, limit = 1000 } = filters ?? {};
+
+  const legacyAvailable = await hasLegacySignalColumns(supabase);
+  if (!legacyAvailable) {
+    console.warn(
+      "[StagingVaultService] listVaultSignals: legacy columns unavailable, returning empty groups",
+    );
+    return { ...EMPTY_GROUPED, lastUpdated: new Date().toISOString() };
+  }
+
+  let query = supabase
+    .from("workspace_staging_vault")
+    .select(
+      "id, workspace_id, signal_type, content, source, source_app_id, source_context, source_context_id, language, metadata, created_at, deleted_at",
+      { count: "exact" },
+    )
+    .eq("workspace_id", workspaceId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (signalType) {
+    query = query.eq("signal_type", signalType);
+  }
+  if (language) {
+    query = query.eq("language", language);
+  }
+  if (sourceAppId) {
+    query = query.eq("source_app_id", sourceAppId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(`Failed to list signals: ${error.message} (${error.code})`);
+  }
+
+  return groupVaultSignals((data ?? []) as VaultSignalRow[]);
 }
 
 export async function getStagingVaultItems(
   supabase: SupabaseClient,
   workspaceId: string,
-  options: { includeDeleted?: boolean } = {}
+  options: { includeDeleted?: boolean } = {},
 ) {
   const { includeDeleted = false } = options;
 
-  console.log("[StagingVaultService] 📖 FETCHING ITEMS:", {
-    workspaceId,
-    includeDeleted,
-  });
+  let query = supabase
+    .from("workspace_staging_vault")
+    .select(
+      `id, workspace_id, signal_type, content, source, source_app_id, source_context, source_context_id, language, metadata, created_at, deleted_at`,
+    )
+    .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: false });
 
-  try {
-    let query = supabase
-      .from("workspace_staging_vault")
-      .select(
-        `id, workspace_id, signal_type, content, source, source_app_id, source_context, source_context_id, language, metadata, created_at, deleted_at`
-      )
-      .eq("workspace_id", workspaceId)
-      .order("created_at", { ascending: false });
-
-    if (!includeDeleted) {
-      query = query.is("deleted_at", null);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error("[StagingVaultService] ❌ FETCH FAILED:", {
-        errorCode: error.code,
-        errorMessage: error.message,
-        workspaceId,
-      });
-      throw new Error(
-        `Failed to fetch staging items: ${error.message} (${error.code})`
-      );
-    }
-
-    console.log("[StagingVaultService] ✅ ITEMS FETCHED:", {
-      itemCount: data?.length || 0,
-      workspaceId,
-    });
-
-    return data || [];
-  } catch (error) {
-    console.error(
-      "[StagingVaultService] ❌ UNEXPECTED ERROR:",
-      error instanceof Error ? error.message : String(error)
-    );
-    throw error;
+  if (!includeDeleted) {
+    query = query.is("deleted_at", null);
   }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(`Failed to fetch staging items: ${error.message} (${error.code})`);
+  }
+
+  return data || [];
 }
 
 export async function archiveStagingItem(
   supabase: SupabaseClient,
   workspaceId: string,
-  itemId: string
+  itemId: string,
 ) {
-  console.log("[StagingVaultService] 🗑️ ARCHIVING ITEM:", {
-    itemId,
+  const result = await VaultCore.safeUpdate(supabase, {
+    type: "legacy_patch",
     workspaceId,
+    id: itemId,
+    patch: { deleted_at: new Date().toISOString() },
   });
 
-  try {
-    const { data, error } = await supabase
-      .from("workspace_staging_vault")
-      .update({
-        deleted_at: new Date().toISOString(),
-      })
-      .eq("id", itemId)
-      .eq("workspace_id", workspaceId)
-      .select("id");
-
-    if (error) {
-      throw new Error(
-        `Failed to archive item: ${error.message} (${error.code})`
-      );
-    }
-
-    if (!data || data.length === 0) {
-      throw new Error("Item not found or already archived");
-    }
-
-    console.log("[StagingVaultService] ✅ ITEM ARCHIVED:", {
-      itemId,
-      workspaceId,
-    });
-
-    return { success: true, itemId };
-  } catch (error) {
-    console.error(
-      "[StagingVaultService] ❌ ARCHIVE FAILED:",
-      error instanceof Error ? error.message : String(error)
-    );
-    throw error;
+  if (!result.ok) {
+    throw new Error(result.error ?? "Failed to archive item");
   }
+
+  return { success: true, itemId };
 }
 
 export async function restoreStagingItem(
   supabase: SupabaseClient,
   workspaceId: string,
-  itemId: string
+  itemId: string,
 ) {
-  console.log("[StagingVaultService] 🔄 RESTORING ITEM:", {
-    itemId,
+  const result = await VaultCore.safeUpdate(supabase, {
+    type: "legacy_patch",
     workspaceId,
+    id: itemId,
+    patch: { deleted_at: null },
   });
 
-  try {
-    const { data, error } = await supabase
-      .from("workspace_staging_vault")
-      .update({
-        deleted_at: null,
-      })
-      .eq("id", itemId)
-      .eq("workspace_id", workspaceId)
-      .select("id");
-
-    if (error) {
-      throw new Error(
-        `Failed to restore item: ${error.message} (${error.code})`
-      );
-    }
-
-    if (!data || data.length === 0) {
-      throw new Error("Item not found");
-    }
-
-    console.log("[StagingVaultService] ✅ ITEM RESTORED:", {
-      itemId,
-      workspaceId,
-    });
-
-    return { success: true, itemId };
-  } catch (error) {
-    console.error(
-      "[StagingVaultService] ❌ RESTORE FAILED:",
-      error instanceof Error ? error.message : String(error)
-    );
-    throw error;
+  if (!result.ok) {
+    throw new Error(result.error ?? "Failed to restore item");
   }
+
+  return { success: true, itemId };
 }

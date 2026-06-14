@@ -1,5 +1,5 @@
 import "server-only";
-import type { GenerationConfig } from "@google-cloud/vertexai";
+import type { GenerationConfig } from "@/lib/ai/schema-types";
 import { shouldLogGeminiDebug } from "@/lib/gemini/log-gemini-env";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";

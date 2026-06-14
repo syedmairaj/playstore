@@ -13,6 +13,9 @@ import { z, ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { addSignalToVault } from "@/lib/staging-vault/staging-vault-service";
+import { StagingVaultSchemaError } from "@/lib/staging-vault/staging-vault-schema";
+import { addToOptimizationQueue } from "@/lib/optimization-queue";
+import { mapStagingPayloadToQueueInputs } from "@/lib/optimization-queue/map-staging-to-queue";
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/staging/add";
 
@@ -133,7 +136,9 @@ export async function POST(request: Request, context: Ctx) {
     console.log(`  body.metadata.competitor_id: ${(body.metadata as any)?.competitor_id}`);
 
     // Add signal to vault
-    const result = await addSignalToVault(supabase, workspaceId, body);
+    const result = await addSignalToVault(supabase, workspaceId, body, {
+      userId: user.id,
+    });
 
     // ═════════════════════════════════════════════════════════════════════
     // DEBUG TRACER #4: addSignalToVault succeeded
@@ -141,6 +146,15 @@ export async function POST(request: Request, context: Ctx) {
     console.log(`[${ROUTE}] ✅ addSignalToVault succeeded`);
     console.log(`  signalId: ${result.id}`);
     console.log(`  message: ${result.message}`);
+
+    const queueInputs = mapStagingPayloadToQueueInputs(body);
+    if (queueInputs.length > 0) {
+      const locale = String(body.language).startsWith("ar") ? "ar" : "en";
+      await addToOptimizationQueue(supabase, workspaceId, locale, queueInputs, {
+        appId: body.sourceAppId,
+        userId: user.id,
+      });
+    }
 
     return NextResponse.json({
       ok: true,
@@ -158,16 +172,19 @@ export async function POST(request: Request, context: Ctx) {
     console.error(`  fullError:`, error);
 
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const status = error instanceof StagingVaultSchemaError ? 422 : 500;
+    const code =
+      error instanceof StagingVaultSchemaError ? "staging_vault_schema_mismatch" : "staging_error";
 
     return NextResponse.json(
       {
         ok: false,
         error: {
-          code: "staging_error",
+          code,
           message: errorMessage,
         },
       },
-      { status: 500 }
+      { status }
     );
   }
 }

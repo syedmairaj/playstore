@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getGenerativeModel } from "@/lib/ai/modelGateway";
+import {
+  createModelGatewayCorrelationId,
+  generateContentValidated,
+  isModelGatewayError,
+} from "@/lib/ai/modelGateway";
 import {
   AI_CREDIT_COSTS,
   buildInsufficientAiCreditsPayload,
@@ -24,6 +28,19 @@ export type KeywordSpotlightResult = {
   asoTip: string;
 };
 
+const SPOTLIGHT_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    trendingKeywords: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+    },
+    narrative: { type: "STRING" },
+    asoTip: { type: "STRING" },
+  },
+  required: ["trendingKeywords", "narrative", "asoTip"],
+} as const;
+
 type RequestBody = {
   /** Top apps (we use top 10 titles + summaries) */
   apps: Pick<TopChartApp, "title" | "summary">[];
@@ -35,9 +52,25 @@ type RequestBody = {
   workspaceId: string;
 };
 
+function stripJsonFences(text: string): string {
+  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+}
+
+function parseSpotlightJson(text: string): KeywordSpotlightResult {
+  const parsed = JSON.parse(stripJsonFences(text)) as KeywordSpotlightResult;
+  if (!Array.isArray(parsed.trendingKeywords) || typeof parsed.narrative !== "string") {
+    throw new Error("Unexpected response shape from model");
+  }
+  return parsed;
+}
+
 export async function POST(request: Request) {
+  const correlationId = createModelGatewayCorrelationId();
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
     return NextResponse.json(
       { ok: false, error: { code: "unauthorized", message: "Sign in required" } },
@@ -47,7 +80,7 @@ export async function POST(request: Request) {
 
   let body: RequestBody;
   try {
-    body = await request.json() as RequestBody;
+    body = (await request.json()) as RequestBody;
   } catch {
     return NextResponse.json(
       { ok: false, error: { code: "invalid_body", message: "Invalid JSON" } },
@@ -70,7 +103,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Workspace membership check ────────────────────────────────────────────
   const role = await getWorkspaceRole(supabase, workspaceId, user.id);
   if (!role) {
     return NextResponse.json(
@@ -79,7 +111,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Balance check ─────────────────────────────────────────────────────────
   const balanceResult = await readWorkspaceAiCreditsRemaining(supabase, workspaceId);
   const remaining = balanceResult.ok ? balanceResult.remaining : 0;
   if (remaining < CREDIT_COST) {
@@ -89,14 +120,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Deduct credits upfront ────────────────────────────────────────────────
   const consumeResult = await consumeWorkspaceAiCredits(supabase, {
     workspaceId,
     userId: user.id,
     amount: CREDIT_COST,
     description: `Market Intelligence: AI Keyword Spotlight — ${getCategoryLabel(category)} (${country.toUpperCase()})`,
     sourceType: "generation",
-    meta: { route: ROUTE, category, country },
+    meta: { route: ROUTE, category, country, correlationId },
   });
 
   if (!consumeResult.ok) {
@@ -114,8 +144,6 @@ export async function POST(request: Request) {
   }
 
   const ledgerId = consumeResult.ledgerId;
-
-  // ── Gemini inference ──────────────────────────────────────────────────────
   const top10 = apps.slice(0, 10);
   const categoryLabel = getCategoryLabel(category);
 
@@ -140,47 +168,83 @@ Analyse these 10 apps and return a JSON object with exactly these three fields:
   "asoTip": "One actionable sentence telling an app developer what they should do with their listing based on this chart intelligence."
 }
 
-Return only valid JSON. No markdown, no explanation outside the JSON object.`;
+CRITICAL: Output strictly valid JSON only. No markdown fences, no commentary, no trailing text.`;
 
   let result: KeywordSpotlightResult;
+
   try {
-    // ✅ REFACTORED: Use centralized Vertex AI gateway (no API key needed)
-    const model = getGenerativeModel({
-      temperature: 0.4,
-      topP: 0.9,
-      maxOutputTokens: 512,
-    });
-    const response = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
+    const { text, correlationId: modelCorrelationId, provider } = await generateContentValidated({
+      correlationId,
+      modelConfig: {
         temperature: 0.4,
         topP: 0.9,
         maxOutputTokens: 512,
-        // @ts-expect-error — thinkingConfig is a valid Gemini 2.5 Flash param
-        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+        responseSchema: SPOTLIGHT_RESPONSE_SCHEMA,
+      },
+      request: {
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.4,
+          topP: 0.9,
+          maxOutputTokens: 512,
+          responseMimeType: "application/json",
+          responseSchema: SPOTLIGHT_RESPONSE_SCHEMA,
+          // @ts-expect-error — thinkingConfig valid for Gemini 2.5 Flash on Vertex
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       },
     });
 
-    let text = response.response.text().trim();
-    // Strip markdown code fences if the model wraps output despite the prompt
-    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    result = JSON.parse(text) as KeywordSpotlightResult;
+    console.info(`[${ROUTE}] AI spotlight generated`, {
+      correlationId: modelCorrelationId,
+      provider,
+      workspaceId,
+      category,
+      country,
+    });
 
-    // Validate shape
-    if (!Array.isArray(result.trendingKeywords) || typeof result.narrative !== "string") {
-      throw new Error("Unexpected response shape from Gemini");
-    }
+    result = parseSpotlightJson(text);
   } catch (err) {
-    // Refund on any AI failure — user should not lose credits for a server error
     await refundWorkspaceAiCredits(supabase, {
       ledgerId,
       userId: user.id,
       reason: "AI Keyword Spotlight generation failed",
     });
+
+    if (isModelGatewayError(err)) {
+      console.error(`[${ROUTE}] ModelGatewayError`, {
+        correlationId: err.correlationId,
+        code: err.code,
+        finishReason: err.finishReason,
+        provider: err.provider,
+        message: err.message,
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "AI_GENERATION_FAILED",
+          message:
+            err.code === "AI_RESPONSE_BLOCKED"
+              ? "AI analysis was blocked by safety filters. Your credits have been refunded."
+              : "Could not generate market spotlight. Your credits have been refunded.",
+          correlationId: err.correlationId,
+        },
+        { status: err.httpStatus >= 500 ? err.httpStatus : 502 },
+      );
+    }
+
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[${ROUTE}] Gemini error:`, message);
+    console.error(`[${ROUTE}] Spotlight parse/generation error`, { correlationId, message });
+
     return NextResponse.json(
-      { ok: false, error: { code: "ai_error", message: "Could not generate spotlight. Your credits have been refunded." } },
+      {
+        ok: false,
+        error: "AI_GENERATION_FAILED",
+        message: "Could not generate spotlight. Your credits have been refunded.",
+        correlationId,
+      },
       { status: 502 },
     );
   }
@@ -190,5 +254,6 @@ Return only valid JSON. No markdown, no explanation outside the JSON object.`;
     spotlight: result,
     creditsUsed: CREDIT_COST,
     creditsRemaining: remaining - CREDIT_COST,
+    correlationId,
   });
 }

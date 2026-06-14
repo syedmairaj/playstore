@@ -5,11 +5,8 @@ import { useTranslations, useLocale } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { RankDisplay } from "@/components/keywords/rank-display";
 import { CompetitorSpyOpenPlayButton } from "@/components/competitor-spy/competitor-spy-open-play-button";
-import { StageButtonRefactored } from "@/components/staging/StageButtonRefactored";
 import { KeywordSurfacesInline } from "@/components/competitor-spy/keyword-surfaces-inline";
-import { stageCompetitorAnalysis } from "@/lib/competitor-spy/capture-and-stage-keywords";
 import type { RankDisplayLabels } from "@/lib/keywords/format-rank-display";
-import type { LanguageCode } from "@/types/staging-contract";
 import { cn } from "@/lib/utils";
 
 const STICKY_TOP_CLASS = "top-24";
@@ -83,7 +80,6 @@ export function CompetitorSpySnapshotCard({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const stickyEnabled = useSnapshotStickyEnabled(measureRef);
-  const [stagingAttempted, setStagingAttempted] = useState(false);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -100,60 +96,6 @@ export function CompetitorSpySnapshotCard({
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [displayName, packageId]);
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // CRITICAL: Stage competitor keywords when analysis is complete
-  // This captures analysis results and saves them to staging vault
-  // Enables 3D isolation: (workspace_id, competitor_id, language)
-  // ═══════════════════════════════════════════════════════════════════════
-  useEffect(() => {
-    if (stagingAttempted || !keywordSurfaces || keywordSurfaces.length === 0 || !packageId) {
-      return;
-    }
-
-    setStagingAttempted(true);
-
-    const stageKeywords = async () => {
-      console.log('[CompetitorSpySnapshotCard] Staging competitor analysis:', {
-        competitor: packageId,
-        competitorName: competitorDisplayName,
-        keywordCount: keywordSurfaces.length,
-        language: locale === 'ar' ? 'ar' : 'en',
-      });
-
-      const result = await stageCompetitorAnalysis(
-        {
-          competitorId: packageId,
-          competitorName: competitorDisplayName,
-          categoryLabel: categoryLabel,
-          keywords: keywordSurfaces,
-          vulnerabilities: [],
-          workspaceId: workspaceId,
-          language: (locale === 'ar' ? 'ar' : 'en') as LanguageCode,
-          isRtl: locale === 'ar',
-        },
-        workspaceId
-      );
-
-      if (!result.success) {
-        console.error('[CompetitorSpySnapshotCard] Failed to stage keywords:', result.error);
-      } else {
-        console.log('[CompetitorSpySnapshotCard] Keywords staged successfully:', result.signalId);
-      }
-    };
-
-    stageKeywords().catch((err) => {
-      console.error('[CompetitorSpySnapshotCard] Error staging keywords:', err);
-    });
-  }, [
-    keywordSurfaces,
-    packageId,
-    competitorDisplayName,
-    categoryLabel,
-    workspaceId,
-    locale,
-    stagingAttempted,
-  ]);
 
   const title = (liveTitle?.trim() || displayName).trim() || t("emptyTitle");
 
@@ -254,73 +196,17 @@ export function CompetitorSpySnapshotCard({
                 />
               </div>
 
-              {/* Action Buttons - Naturally Pushed Down When Expanded */}
-              <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
+              {/* Action — curate keywords via selection bar; no auto-dump to optimizer */}
+              <div className="flex flex-col gap-2">
                 <CompetitorSpyOpenPlayButton
                   packageId={packageId}
                   isRtl={isRtl}
                   variant="outline"
-                  className="w-full border-emerald-500/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15 sm:flex-1"
+                  className="w-full border-emerald-500/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15"
                 />
-                <StageButtonRefactored
-                  module="competitor_spy"
-                  signalType="competitor_weakness"
-                  content={JSON.stringify({
-                    competitor_name: competitorDisplayName,
-                    app_title: liveTitle || displayName,
-                    keywords: keywordSurfaces && keywordSurfaces.length > 0
-                      ? keywordSurfaces
-                      : [
-                          "fitness tracker",
-                          "calorie counter",
-                          "workout planner",
-                          "weight loss",
-                          "step counter",
-                          "meal tracker",
-                          "food scanner app",
-                          "diet goals app",
-                          "nutrition tracking",
-                          "health monitoring",
-                          "exercise routine",
-                          "activity tracker",
-                        ],
-                  })}
-                  source="competitor_spy"
-                  sourceContext="competitor_weakness"
-                  sourceContextId={packageId}
-                  workspaceId={workspaceId}
-                  sourceAppId={appId}
-                  language={isRtl ? "ar" : "en"}
-                  metadata={{
-                    competitorName: competitorDisplayName,
-                    competitorPackageId: packageId,
-                    appTitle: liveTitle || displayName,
-                    categoryLabel,
-                    bestRank,
-                    metricsKeywordCount,
-                    keywords: keywordSurfaces && keywordSurfaces.length > 0
-                      ? keywordSurfaces
-                      : [
-                          "fitness tracker",
-                          "calorie counter",
-                          "workout planner",
-                          "weight loss",
-                          "step counter",
-                          "meal tracker",
-                          "food scanner app",
-                          "diet goals app",
-                          "nutrition tracking",
-                          "health monitoring",
-                          "exercise routine",
-                          "activity tracker",
-                        ],
-                    keywordCount: metricsKeywordCount,
-                  }}
-                  variant="primary"
-                  size="md"
-                  className="w-full sm:flex-1"
-                  label={t("sendOptimizer")}
-                />
+                <p className="text-[11px] leading-relaxed text-zinc-500">
+                  {t("curateHint")}
+                </p>
               </div>
             </div>
           </div>
