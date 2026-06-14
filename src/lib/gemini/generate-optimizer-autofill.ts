@@ -62,8 +62,6 @@ export async function generateOptimizerAutofillWithGemini(input: {
   field: OptimizerAutofillField;
   language?: "en" | "ar";
 }): Promise<string> {
-  const apiKey = assertGeminiApiKey();
-  const modelName = resolveGeminiModel();
   const appName = sanitizeOptimizerPromptContext(input.appName, 200);
   const category = sanitizeOptimizerPromptContext(input.category, 120);
   const language: "en" | "ar" = input.language === "ar" ? "ar" : "en";
@@ -85,7 +83,7 @@ export async function generateOptimizerAutofillWithGemini(input: {
     model.systemInstruction = systemInstruction;
 
     const result = await model.generateContent(userPrompt);
-    const text = result.response.text();
+    const text = result.text ?? "";
     if (!text?.trim()) {
       throw new Error("Model returned empty text");
     }

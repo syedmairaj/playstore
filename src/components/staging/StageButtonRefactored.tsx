@@ -18,6 +18,46 @@ import { Check, ChevronRight, AlertCircle } from "lucide-react";
 import { stageSignal, StageSignalRequest } from "@/lib/staging-vault/stageSignal";
 import { createClient } from "@/lib/supabase/client";
 
+const WORKSPACE_APP_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function formatStageError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    if (typeof record.message === "string" && record.message.trim()) {
+      return record.message;
+    }
+    if (typeof record.error === "string" && record.error.trim()) {
+      return record.error;
+    }
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== "{}") return serialized;
+    } catch {
+      // fall through
+    }
+  }
+  return error == null ? "Unknown staging error" : String(error);
+}
+
+/** source_app_id is a workspace apps.id UUID; package names go in metadata instead. */
+function resolveSourceAppIdForStaging(sourceAppId?: string): {
+  sourceAppId?: string;
+  packageName?: string;
+} {
+  const trimmed = sourceAppId?.trim();
+  if (!trimmed) return {};
+
+  if (WORKSPACE_APP_UUID_RE.test(trimmed)) {
+    return { sourceAppId: trimmed };
+  }
+
+  return { packageName: trimmed };
+}
+
 type SignalType = "keyword" | "review_issue" | "competitor_weakness" | "optimization_insight";
 type SignalSource =
   | "keyword_spotlight"
@@ -138,15 +178,6 @@ export function StageButtonRefactored({
       return { valid: false, error: "Missing sourceContextId" };
     }
 
-    // Validate sourceAppId if provided
-    if (sourceAppId) {
-      // Must be valid UUID format or empty
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(sourceAppId)) {
-        return { valid: false, error: `Invalid sourceAppId format: "${sourceAppId}"` };
-      }
-    }
-
     // Validate metadata is object
     if (metadata && typeof metadata !== "object") {
       return { valid: false, error: `Metadata must be object, got ${typeof metadata}` };
@@ -186,7 +217,16 @@ export function StageButtonRefactored({
 
     try {
       // ── Build stageSignal Request ──────────────────────────────────
-      const supabase = await createClient();
+      const supabase = createClient();
+
+      const { sourceAppId: resolvedSourceAppId, packageName } =
+        resolveSourceAppIdForStaging(sourceAppId);
+
+      const mergedMetadata =
+        metadata && Object.keys(metadata).length > 0 ? { ...metadata } : {};
+      if (packageName) {
+        mergedMetadata.packageName = packageName;
+      }
 
       const request: StageSignalRequest = {
         workspace_id: workspaceId,
@@ -196,8 +236,9 @@ export function StageButtonRefactored({
         source_context_id: sourceContextId,
         content: content.trim(),
         language: effectiveLanguage,
-        source_app_id: sourceAppId,
-        metadata: metadata && Object.keys(metadata).length > 0 ? metadata : undefined,
+        source_app_id: resolvedSourceAppId,
+        metadata:
+          Object.keys(mergedMetadata).length > 0 ? mergedMetadata : undefined,
       };
 
       // ── Log Complete Payload for Verification ──────────────────────
@@ -269,14 +310,14 @@ export function StageButtonRefactored({
       // Reset after delay
       setTimeout(() => setState("idle"), 2000);
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = formatStageError(error);
 
-      console.error(`[StageButton] [${module.toUpperCase()}] FAILED:`, {
-        error: errorMsg,
+      console.error(`[StageButton] [${module.toUpperCase()}] FAILED:`, errorMsg, {
         workspace_id: workspaceId,
         signal_type: signalType,
         source_context: sourceContext,
         source_context_id: sourceContextId,
+        raw_error: error,
       });
 
       setState("error");

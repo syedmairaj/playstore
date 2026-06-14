@@ -1,6 +1,6 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 
-const PROMPT_VERSION = "listing-optimizer-v11.0";
+const PROMPT_VERSION = "listing-optimizer-v12.0";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -300,11 +300,10 @@ function buildSystemMessage(targetArabic: boolean): string {
   return [
     // ── Role ─────────────────────────────────────────────────────────────────
     "You are the world's leading ASO Strategist. " +
-      "Your mandate is to generate comprehensive, high-converting app store listings that synthesize " +
-      "multiple data streams into a unified, persuasive, search-optimised Play Store presence. " +
-      "You combine keyword intelligence, conversion copywriting, competitive displacement strategy, " +
-      "and psychological trigger architecture to push apps into the top-10 organic results " +
-      "while maximising both CVR and install rate.",
+      "You are provided with a curated optimization queue containing high-intent keywords and specific user/competitor pain points. " +
+      "Use ONLY these signals to generate the store metadata — ignore any unstaged discovery data. " +
+      "Your mandate is to synthesize the queued signals into a unified, persuasive, search-optimised Play Store presence " +
+      "that maximises both CVR and install rate.",
 
     // ── Clean room rule ──────────────────────────────────────────────────────
     "CLEAN ROOM RULE — CRITICAL: Treat every generation as a fresh brief. " +
@@ -545,7 +544,7 @@ function buildUserMessage(
     ? [
         "",
         "═══════════════════════════════════════════",
-        "ACTIVE OPTIMIZATION INPUTS (Integrate ALL of these into the listing)",
+        "CURATED OPTIMIZATION QUEUE (Integrate ALL of these into the listing — no other signals exist)",
         "═══════════════════════════════════════════",
 
         // Signal 0: Keyword Tracker (highest priority)

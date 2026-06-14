@@ -39,6 +39,12 @@ import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
 import { useAppLimits, workspaceAppsQueryKey } from "@/hooks/use-app-limits";
 import { useOptimizerSync } from "@/hooks/useOptimizerSync";
+import { AsoSandboxPanel } from "@/components/listing-optimizer/aso-sandbox-panel";
+import { ReviewInsightsPanel } from "@/components/listing-optimizer/review-insights-panel";
+import {
+  STAGING_VAULT_CHANGED_EVENT,
+  type StagingVaultChangedDetail,
+} from "@/lib/client/staging-vault-sync";
 import { precheckAddApp } from "@/lib/client/precheck-add-app";
 import {
   clearFinalListingCache,
@@ -87,7 +93,18 @@ import {
 } from "@/components/reviews/review-improvements-queue";
 import StagingWorkspace from "@/components/staging-workspace/StagingWorkspace";
 import KeywordTrackerPanel from "@/components/listing-optimizer/KeywordTrackerPanel";
-import { formatLiveRankIndicators } from "@/lib/staging/keyword-signals";
+import {
+  filterActiveContextKeywordSignals,
+  filterSandboxKeywordSignals,
+  formatLiveRankIndicators,
+} from "@/lib/staging/keyword-signals";
+import {
+  partitionActiveContextByWidget,
+  partitionQueueItemsByCategory,
+  partitionQueueItemsBySignalType,
+} from "@/lib/staging/optimizer-context-adapter";
+import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import { buildSynthesisFromOptimizationQueue } from "@/lib/optimization-queue";
 import { KeywordValidatorCard } from "@/components/keyword-tracker/KeywordValidatorCard";
 import { useStagingWorkspace } from "@/hooks/useStagingWorkspace";
 import {
@@ -99,6 +116,11 @@ import type {
   MarketOpportunitySignal,
   CompetitorKeywordSignal,
 } from "@/lib/client/staging-workspace-types";
+import {
+  adoptPendingInsightClient,
+  dismissPendingInsightClient,
+  fetchReviewCurationInsights,
+} from "@/lib/client/review-derived-insights-client";
 import { cn } from "@/lib/utils";
 
 type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
@@ -343,6 +365,7 @@ interface StagingWorkspaceSectionProps {
   onOpenKeywordValidator: (keyword: string) => void;
   keywordSignalsLoading?: boolean;
   keywordTrackerCount?: number;
+  trackerKeywordSignals?: import("@/lib/staging/keyword-signals").KeywordSignal[];
   vaultLocale: "en" | "ar";
 }
 
@@ -363,6 +386,7 @@ function StagingWorkspaceSection({
   onOpenKeywordValidator,
   keywordSignalsLoading,
   keywordTrackerCount = 0,
+  trackerKeywordSignals = [],
   vaultLocale,
 }: StagingWorkspaceSectionProps) {
   // Convert review queue pills to ReviewIssueSignal format
@@ -440,6 +464,7 @@ function StagingWorkspaceSection({
               isRtl={isRtl}
               onOpenValidator={(keyword) => onOpenKeywordValidator(keyword)}
               isLoading={keywordSignalsLoading}
+              trackerSignals={trackerKeywordSignals}
             />
           ) : null
         }
@@ -553,6 +578,10 @@ export function ListingOptimizer({
   const [category, setCategory] = useState("");
   const [keywords, setKeywords] = useState("");
   const [features, setFeatures] = useState("");
+  const [contextViewTab, setContextViewTab] = useState<"activeContext" | "reviewInsights">(
+    "activeContext",
+  );
+  const [adoptingInsightId, setAdoptingInsightId] = useState<string | null>(null);
   const [toneStyle, setToneStyle] = useState<ToneStyle>("professional");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -608,6 +637,92 @@ export function ListingOptimizer({
     appId: selectedAppId.trim() || undefined,
     vaultLocale: locale,
   });
+
+  const activeContextByWidget = useMemo(
+    () => partitionActiveContextByWidget(optimizerContext?.activeItems),
+    [optimizerContext?.activeItems],
+  );
+
+  const {
+    items: optimizationQueueItems,
+    removeItem: removeQueueItem,
+    isLoading: optimizationQueueLoading,
+  } = useOptimizationQueue(
+    workspaceId,
+    locale,
+    selectedAppId.trim() || undefined,
+  );
+
+  const {
+    data: reviewDerivedGate,
+    isLoading: reviewDerivedLoading,
+    refetch: refetchReviewDerived,
+  } = useQuery({
+    queryKey: [
+      "review-derived-insights",
+      workspaceId,
+      locale,
+      selectedAppId.trim() || null,
+    ],
+    queryFn: () =>
+      fetchReviewCurationInsights(workspaceId, {
+        locale,
+        appId: selectedAppId.trim() || undefined,
+      }),
+    enabled: Boolean(workspaceId),
+    staleTime: 30_000,
+  });
+
+  const pendingReviewInsights = reviewDerivedGate?.pendingInsights ?? [];
+  const adoptedReviewInsights = reviewDerivedGate?.adoptedInsights ?? [];
+  const reviewAnalysisStatus = reviewDerivedGate?.analysisStatus ?? "NOT_FOUND";
+  const reviewGateValid = reviewDerivedGate?.valid === true;
+
+  const queueByCategory = useMemo(
+    () => partitionQueueItemsByCategory(optimizationQueueItems),
+    [optimizationQueueItems],
+  );
+
+  const trackerKeywordSignals = useMemo(() => {
+    return queueByCategory.tracker.map((i) => ({
+      keyword: i.content,
+      difficulty:
+        typeof i.metadata.difficulty === "number" ? i.metadata.difficulty : 5,
+      confidence:
+        typeof i.metadata.confidence === "number" ? i.metadata.confidence : 0,
+      searchVolume:
+        typeof i.metadata.searchVolume === "number"
+          ? i.metadata.searchVolume
+          : typeof i.metadata.search_volume === "number"
+            ? i.metadata.search_volume
+            : 0,
+      competition:
+        typeof i.metadata.competition === "number" ? i.metadata.competition : undefined,
+      recommendation:
+        typeof i.metadata.recommendation === "string"
+          ? i.metadata.recommendation
+          : undefined,
+      stagedAt: i.stagedAt,
+      explicitlyStaged: true,
+    }));
+  }, [queueByCategory.tracker]);
+
+  const sandboxKeywordSignals = useMemo(
+    () => filterSandboxKeywordSignals(keywordSignals),
+    [keywordSignals],
+  );
+
+  useEffect(() => {
+    const onStagingChanged = (event: Event) => {
+      const detail = (event as CustomEvent<StagingVaultChangedDetail>).detail;
+      if (!detail || detail.workspaceId !== workspaceId) return;
+      if (detail.appId && detail.appId !== selectedAppId.trim()) return;
+      if (detail.locale && detail.locale !== locale) return;
+      void refreshOptimizerContext();
+    };
+    window.addEventListener(STAGING_VAULT_CHANGED_EVENT, onStagingChanged);
+    return () => window.removeEventListener(STAGING_VAULT_CHANGED_EVENT, onStagingChanged);
+  }, [workspaceId, selectedAppId, locale, refreshOptimizerContext]);
 
   const [validatorOpen, setValidatorOpen] = useState(false);
   const [validatorPrefillKeyword, setValidatorPrefillKeyword] = useState("");
@@ -1236,149 +1351,78 @@ export function ListingOptimizer({
   // ── Queue item deletion ───────────────────────────────────────────────────
   const handleRemoveQueueItem = useCallback(
     (itemId: string) => {
-      // Optimistic: remove from local state immediately
-      setQueuedImprovements((prev) => {
-        const next = prev.filter((item) => item.id !== itemId);
-        // Keep sessionStorage in sync when a spotlight stub is removed
-        if (itemId.startsWith("url-exploit-")) {
-          writeSpotlightStubsToSession(next);
-        }
-        return next;
-      });
-      // Skip API call for synthetic url-inject stubs (no DB row)
-      if (itemId.startsWith("url-exploit-")) return;
-      if (!workspaceId) return;
-      // Backlog items are prefixed "backlog-" — mark them as implemented rather than delete
-      if (itemId.startsWith("backlog-")) {
-        const realId = itemId.replace(/^backlog-/, "");
-        void fetch(
-          `/api/workspaces/${workspaceId}/backlog/${realId}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ is_implemented: true }),
-            credentials: "same-origin",
-          },
-        ).catch(() => refreshQueuedImprovements());
-        return;
-      }
-      void fetch(
-        `/api/workspaces/${workspaceId}/listing-improvements/${itemId}`,
-        { method: "DELETE", credentials: "same-origin" },
-      ).then((res) => {
-        if (!res.ok) {
-          // Re-fetch if the server rejected the deletion
-          refreshQueuedImprovements();
-        }
-      }).catch(() => {
-        refreshQueuedImprovements();
+      void removeQueueItem(itemId).then(() => {
+        void refreshOptimizerContext();
+        void refetchReviewDerived();
       });
     },
-    [workspaceId, refreshQueuedImprovements],
+    [removeQueueItem, refreshOptimizerContext, refetchReviewDerived],
+  );
+
+  const handleAdoptReviewInsight = useCallback(
+    async (insight: import("@/lib/review-insights/pending-insights.types").PendingReviewInsight) => {
+      if (!reviewGateValid || reviewAnalysisStatus !== "SUCCESS_PAID") {
+        toast.error(t("reviewInsights.adoptBlocked"));
+        return;
+      }
+      setAdoptingInsightId(insight.id);
+      try {
+        const result = await adoptPendingInsightClient(workspaceId, insight.id, {
+          locale,
+          appId: selectedAppId.trim() || undefined,
+        });
+        if (!result.ok) {
+          toast.error(result.error ?? t("reviewInsights.adoptFailed"));
+          return;
+        }
+        toast.success(t("reviewInsights.adoptedToast"));
+        await Promise.all([refetchReviewDerived(), refreshOptimizerContext()]);
+      } finally {
+        setAdoptingInsightId(null);
+      }
+    },
+    [
+      t,
+      reviewGateValid,
+      reviewAnalysisStatus,
+      workspaceId,
+      locale,
+      selectedAppId,
+      refetchReviewDerived,
+      refreshOptimizerContext,
+    ],
+  );
+
+  const handleDismissPendingInsight = useCallback(
+    async (insightId: string) => {
+      const ok = await dismissPendingInsightClient(workspaceId, insightId);
+      if (!ok) {
+        toast.error(t("reviewInsights.dismissFailed"));
+        return;
+      }
+      void refetchReviewDerived();
+    },
+    [workspaceId, refetchReviewDerived, t],
   );
 
   // ── Remove signal from staging vault ──────────────────────────────────────
   const handleRemoveFromStagingVault = useCallback(
     (signalId: string) => {
-      if (!workspaceId) return;
-
-      // Optimistically remove from context
-      if (optimizerContext) {
-        // This would require a more complex state update
-        // For now, just call the API and refresh
-      }
-
-      void fetch(
-        `/api/workspaces/${workspaceId}/staging/delete`,
-        {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ signalId }),
-          credentials: "same-origin",
-        },
-      ).then((res) => {
-        if (res.ok) {
-          // Refresh optimizer context after deletion
-          refreshOptimizerContext();
-        }
-      }).catch((err) => {
-        console.error("Failed to delete signal from staging vault:", err);
-        // Refresh to show current state
-        refreshOptimizerContext();
+      void removeQueueItem(signalId).then(() => {
+        void refreshOptimizerContext();
       });
     },
-    [workspaceId, refreshOptimizerContext],
+    [removeQueueItem, refreshOptimizerContext],
   );
 
-  // ── Remove individual keyword from staging vault ──────────────────────────
+  // ── Remove individual keyword from optimization queue ─────────────────────
   const handleRemoveKeyword = useCallback(
-    (keywordId: string, signalId: string) => {
-      if (!workspaceId) {
-        console.error("[ListingOptimizer] ❌ REMOVAL FAILED: No workspaceId");
-        return;
-      }
-
-      // Extract keyword term from keywordId (format: "{signalId}-{term}")
-      const keywordTerm = keywordId.split('-').slice(1).join('-');
-
-      console.log("[ListingOptimizer] 🗑️ GRANULAR KEYWORD DELETION (EN/AR SUPPORT):", {
-        keywordId,
-        keywordTerm,
-        signalId,
-        workspaceId,
-        locale,
-        timestamp: new Date().toISOString(),
-      });
-
-      // ✅ GRANULAR DELETION: Remove just this keyword from the signal
-      const deletePayload = {
-        signalId,
-        keywordTerm,  // ✅ Pass the keyword term for granular deletion
-      };
-
-      console.log("[ListingOptimizer] 📤 SENDING DELETE REQUEST:", {
-        endpoint: `/api/workspaces/${workspaceId}/staging/delete`,
-        payload: deletePayload,
-      });
-
-      void fetch(
-        `/api/workspaces/${workspaceId}/staging/delete`,
-        {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(deletePayload),
-          credentials: "same-origin",
-        },
-      ).then(async (res) => {
-        const resBody = await res.json();
-
-        if (res.ok) {
-          console.log("[ListingOptimizer] ✅ DELETE SUCCESSFUL:", {
-            status: res.status,
-            response: resBody,
-          });
-
-          // Refresh optimizer context after deletion
-          console.log("[ListingOptimizer] 🔄 INVALIDATING QUERY to refresh optimizer context...");
-          refreshOptimizerContext();
-
-          console.log("[ListingOptimizer] ✅ Keyword removed successfully, context refreshed");
-        } else {
-          console.error("[ListingOptimizer] ❌ DELETE FAILED:", {
-            status: res.status,
-            response: resBody,
-          });
-          refreshOptimizerContext();
-        }
-      }).catch((err) => {
-        console.error("[ListingOptimizer] ❌ ERROR REMOVING KEYWORD:", {
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : 'no stack',
-        });
-        refreshOptimizerContext();
+    (_keywordId: string, signalId: string) => {
+      void removeQueueItem(signalId).then(() => {
+        void refreshOptimizerContext();
       });
     },
-    [workspaceId, locale, refreshOptimizerContext],
+    [removeQueueItem, refreshOptimizerContext],
   );
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -2330,46 +2374,40 @@ export function ListingOptimizer({
     // Snapshot the queue before generation — used for "Optimization Factors" pills
     setGenerationQueueSnapshot([...queuedImprovements]);
     try {
-      // ── Competitor inversion directive ────────────────────────────────────
-      // If the Exploit bridge injected competitor pain-points, prepend a
-      // one-time system instruction that inverts them into positive positioning
-      // angles. Consumed here and cleared so it never leaks into a re-generate.
-      // Use the UI-visible state if present (user may have removed some pills);
-      // fall back to the raw ref for programmatic invocations.
-      const vulns = competitorWeaknesses.length > 0
-        ? competitorWeaknesses
-        : competitorVulnerabilitiesRef.current;
+      // ── Curated optimization queue only (no raw discovery streams) ────────
       competitorVulnerabilitiesRef.current = [];
       setCompetitorWeaknesses([]);
-      const inversionDirective =
-        vulns.length > 0
-          ? `Tracked competitor analysis has surfaced the following active user pain-points across rival apps: ${vulns.join("; ")}. DO NOT mention these issues literally in the listing. Instead, aggressively position our app as the definitive solution — emphasise stability, accuracy, seamless synchronisation, and a clean ad-free experience that directly resolves each of these rival weaknesses. Where multiple competitors share the same pain-point, treat it as a high-priority differentiation signal. Keep all target keywords positive and optimised for high-volume Play Store indexing.`
-          : "";
-      // ── Split queued items by type ────────────────────────────────────────
-      // Spotlight items (market_spotlight: prefix on sentimentTag) travel as
-      // exploitTargets[] — the v10 prompt builder routes them into SYNTHESIS
-      // PRIORITY 2 (EXPLOIT MARKET INTELLIGENCE block).
-      // Review-based issues travel as userInstruction via the improvements
-      // directive — SYNTHESIS PRIORITY 1 (FIX & REASSURE block).
-      const spotlightQueueItems = queuedImprovements.filter(
-        (item) => item.sentimentTag?.startsWith("market_spotlight:"),
-      );
-      const reviewQueueItems = queuedImprovements.filter(
-        (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
+
+      const seedKwList = keywords
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const queueSynthesis = buildSynthesisFromOptimizationQueue(
+        optimizationQueueItems,
+        seedKwList,
       );
 
-      // Build exploit targets — keep the "market_spotlight:" prefix so the
-      // server-side prompt builder can split them correctly (buildUserMessage
-      // already does .filter(t => t.startsWith("market_spotlight:"))).
-      const exploitTargets: string[] = spotlightQueueItems.map(
-        (item) => item.sentimentTag!.trim(),
-      );
+      const reviewQueueItems = queueSynthesis.reviewIssueLabels.map((label, i) => ({
+        id: `queue-review-${i}`,
+        reviewId: `queue-review-${i}`,
+        reviewText: label,
+        title: label,
+        userName: "",
+        score: 0,
+        sentimentTag: label,
+        appId: null,
+        packageName: null,
+        isUtilized: false,
+        createdAt: new Date().toISOString(),
+      }));
 
       const improvementsDirective = buildListingImprovementsGenerateDirective(
         reviewQueueItems,
       );
+
       const effectiveInstruction = [
-        inversionDirective,
+        ...queueSynthesis.userInstructionParts,
         improvementsDirective,
         opts.userInstruction,
       ]
@@ -2377,25 +2415,9 @@ export function ListingOptimizer({
         .filter(Boolean)
         .join("\n\n");
 
-      const trackedKeywordSignals = keywordSignals.map((s) => ({
-        keyword: s.keyword,
-        confidence: s.confidence,
-        difficulty: s.difficulty,
-        searchVolume: s.searchVolume,
-        liveRankSummary:
-          formatLiveRankIndicators(s.liveRanks).join(", ") || undefined,
-      }));
-
-      const seedKwList = keywords
-        .split(/[,;\n]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const trackedTerms = [...keywordSignals]
-        .sort((a, b) => b.confidence - a.confidence)
-        .map((s) => s.keyword);
-      const mergedKeywords = [
-        ...new Set([...trackedTerms, ...seedKwList]),
-      ].slice(0, 40);
+      const trackedKeywordSignals = queueSynthesis.trackedKeywordSignals;
+      const exploitTargets = queueSynthesis.exploitTargets;
+      const mergedKeywords = queueSynthesis.mergedKeywords;
 
       const res = await fetch("/api/listings/generate", {
         method: "POST",
@@ -2419,12 +2441,7 @@ export function ListingOptimizer({
             ? { trackedKeywordSignals }
             : {}),
           // Active signal types — used server-side to compute quality_status / quality_warning meta.
-          activeSignalTypes: [
-            ...(keywordSignals.length > 0 ? (["keywords"] as const) : []),
-            ...(reviewQueueItems.length > 0 ? (["reviews"] as const) : []),
-            ...(spotlightQueueItems.length > 0 ? (["market"] as const) : []),
-            ...(vulns.length > 0 ? (["competitors"] as const) : []),
-          ],
+          activeSignalTypes: queueSynthesis.activeSignalTypes,
         }),
       });
       const json = (await res.json()) as ApiSuccess | ApiError;
@@ -3013,55 +3030,42 @@ export function ListingOptimizer({
   // These MUST be plain variables (not IIFEs inside JSX) so that Framer Motion
   // AnimatePresence can track key identity across renders without frame.join errors.
 
-  // Combine queued improvements with staging vault signals
-  const reviewQueuePills = [
-    // From listing backlog
-    ...queuedImprovements.filter(
-      (item) => !item.sentimentTag?.startsWith("market_spotlight:"),
-    ).map((item) => ({
-      id: item.id,
-      label: item.title,
-      source: "backlog" as const,
-      item,
-    })),
-    // From staging vault - review_issue signals
-    ...(optimizerContext?.activeItems || [])
-      .filter((item) => item.signalType === "review_issue")
-      .map((item) => ({
-        id: item.id,
-        label: item.content,
-        source: "staging_vault" as const,
-        item,
-      })),
-  ];
+  const queueBySignalType = useMemo(
+    () => partitionQueueItemsBySignalType(optimizationQueueItems),
+    [optimizationQueueItems],
+  );
 
-  const spotlightQueuePills = [
-    // From listing backlog
-    ...queuedImprovements.filter(
-      (item) => item.sentimentTag?.startsWith("market_spotlight:"),
-    ).map((item) => ({
-      id: item.id,
-      label: item.title,
-      source: "backlog" as const,
-      item,
-    })),
-    // From staging vault - keyword/optimization_insight signals
-    ...(optimizerContext?.activeItems || [])
-      .filter((item) => item.signalType === "keyword" || item.signalType === "optimization_insight")
-      .map((item) => ({
-        id: item.id,
-        label: item.content,
-        source: "staging_vault" as const,
-        item,
+  const reviewQueuePills = useMemo(
+    () =>
+      [
+        ...queueBySignalType.review_insights,
+        ...queueBySignalType.feature_requests,
+      ].map((signal) => ({
+        id: signal.payload.id,
+        label: signal.payload.content,
+        source: "optimization_queue" as const,
+        item: signal,
       })),
-  ];
-  // ─────────────────────────────────────────────────────────────────────────
+    [queueBySignalType],
+  );
 
-  // ── Extract individual keywords from staging vault signals ────────────────
-  const stagedKeywords = useMemo(() => {
-    const extracted = extractKeywordsFromContext(optimizerContext?.activeItems);
-    return deduplicateKeywords(extracted);
-  }, [optimizerContext?.activeItems]);
+  const spotlightQueuePills = useMemo(
+    () =>
+      queueBySignalType.keyword_gaps.map((signal) => ({
+        id: signal.payload.id,
+        label: signal.payload.content.replace(/^market_spotlight:/, ""),
+        source: "optimization_queue" as const,
+        item: signal,
+      })),
+    [queueBySignalType],
+  );
+
+  const stagedKeywords = useMemo(() => [], []);
+
+  const queueCompetitorWeaknesses = useMemo(
+    () => queueBySignalType.competitor_strengths.map((s) => s.payload.content),
+    [queueBySignalType],
+  );
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
@@ -3094,20 +3098,19 @@ export function ListingOptimizer({
         synthesisContext={
           creditConfirmPending?.kind === "listing_generation"
             ? ((): SynthesisSignalContext => {
-                const reviewItems = queuedImprovements
-                  .filter((item) => !item.sentimentTag?.startsWith("market_spotlight:"))
-                  .map((item) => ({
-                    label: item.sentimentTag?.trim() || item.reviewText?.slice(0, 60) || "",
+                const reviewItems = optimizationQueueItems
+                  .filter((i) => i.type === "review_pain_point")
+                  .map((i) => ({ label: i.content.slice(0, 60) }));
+                const marketItems = optimizationQueueItems
+                  .filter((i) => i.type === "market_keyword")
+                  .map((i) => ({
+                    keyword: i.content.replace(/^market_spotlight:/, "").trim(),
                   }));
-                const marketItems = queuedImprovements
-                  .filter((item) => item.sentimentTag?.startsWith("market_spotlight:"))
-                  .map((item) => ({
-                    keyword: item.sentimentTag!.replace(/^market_spotlight:/, "").trim(),
-                  }));
-                // ✅ INCLUDE STAGED COMPETITOR KEYWORDS (not just weaknesses)
                 const competitorItems = [
-                  ...stagedKeywords.map((kw) => kw.term),  // Add staged keywords from Competitor Spy
-                  ...competitorWeaknesses.slice(0, 3),     // Add manual competitor weaknesses
+                  ...optimizationQueueItems
+                    .filter((i) => i.type === "competitor_keyword")
+                    .map((i) => i.content),
+                  ...queueCompetitorWeaknesses.slice(0, 3),
                 ];
                 return { reviewItems, marketItems, competitorItems };
               })()
@@ -3616,29 +3619,95 @@ export function ListingOptimizer({
                 >
                   <div className="space-y-6 border-t border-zinc-800/60 pt-5 sm:pt-6">
 
-                    {/* ── Staging Workspace (Transparent Three-Pillar Control Center) ────────── */}
+                    <div
+                      className={cn(
+                        "flex flex-wrap gap-2 border-b border-white/[0.06] pb-3",
+                        isRtl && "flex-row-reverse",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setContextViewTab("activeContext")}
+                        className={cn(
+                          "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                          contextViewTab === "activeContext"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : "text-zinc-500 hover:text-zinc-300",
+                        )}
+                      >
+                        {t("reviewInsights.tabActiveContext")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setContextViewTab("reviewInsights")}
+                        className={cn(
+                          "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                          contextViewTab === "reviewInsights"
+                            ? "bg-rose-500/15 text-rose-300"
+                            : "text-zinc-500 hover:text-zinc-300",
+                        )}
+                      >
+                        {t("reviewInsights.tabReviewInsights")}
+                        {reviewGateValid && pendingReviewInsights.length > 0 ? (
+                          <span className="ms-1.5 rounded-full bg-indigo-500/20 px-1.5 py-0.5 text-[10px] tabular-nums">
+                            {pendingReviewInsights.length}
+                          </span>
+                        ) : null}
+                      </button>
+                    </div>
+
+                    {contextViewTab === "reviewInsights" ? (
+                      <ReviewInsightsPanel
+                        workspaceId={workspaceId}
+                        pendingInsights={pendingReviewInsights}
+                        adoptedInsights={adoptedReviewInsights}
+                        isRtl={isRtl}
+                        loading={loading || reviewDerivedLoading}
+                        gateValid={reviewGateValid}
+                        analysisStatus={reviewAnalysisStatus}
+                        adoptingId={adoptingInsightId}
+                        onDismiss={(id) => void handleDismissPendingInsight(id)}
+                        onAdopt={(insight) => void handleAdoptReviewInsight(insight)}
+                      />
+                    ) : (
+                    <>
                     <StagingWorkspaceSection
                       workspaceId={workspaceId}
                       appId={selectedAppId.trim()}
                       reviewQueuePills={reviewQueuePills}
                       spotlightQueuePills={spotlightQueuePills}
                       stagedKeywords={stagedKeywords}
-                      competitorWeaknesses={competitorWeaknesses}
+                      competitorWeaknesses={queueCompetitorWeaknesses}
                       locale={locale}
                       isRtl={isRtl}
-                      loading={loading}
-                      keywordSignalsLoading={keywordSignalsLoading}
-                      keywordTrackerCount={keywordSignalsTotal}
+                      loading={loading || optimizationQueueLoading}
+                      keywordSignalsLoading={optimizationQueueLoading}
+                      keywordTrackerCount={trackerKeywordSignals.length}
+                      trackerKeywordSignals={trackerKeywordSignals}
                       vaultLocale={locale}
                       onRemoveReviewIssue={handleRemoveQueueItem}
                       onRemoveMarketOpportunity={handleRemoveFromStagingVault}
                       onRemoveCompetitorKeyword={handleRemoveKeyword}
                       onRemoveCompetitorWeakness={(idx) => {
-                        const updated = competitorWeaknesses.filter((_, i) => i !== idx);
-                        setCompetitorWeaknesses(updated);
-                        competitorVulnerabilitiesRef.current = updated;
+                        const item = optimizationQueueItems.filter(
+                          (i) =>
+                            i.type === "competitor_weakness" ||
+                            i.type === "competitor_strength",
+                        )[idx];
+                        if (item) void removeQueueItem(item.id);
                       }}
                       onOpenKeywordValidator={handleOpenKeywordValidator}
+                    />
+                    </>
+                    )}
+
+                    <AsoSandboxPanel
+                      title={editedTitle}
+                      shortDescription={editedShort}
+                      longDescription={editedLong}
+                      keywordSignals={sandboxKeywordSignals}
+                      isRtl={isRtl}
+                      loading={keywordSignalsLoading}
                     />
                     {/* ─────────────────────────────────────────────────────────── */}
 

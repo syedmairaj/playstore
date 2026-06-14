@@ -32,8 +32,9 @@ import {
   getStagingFlowMessages,
   buildStagingToastMessage,
   buildOptimizerActionUrl,
-  formatStagedKeywordsPreview,
 } from "@/lib/client/competitor-spy-staging-flow";
+import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import { QueueStatusBadge } from "@/components/competitor-spy/queue-status-badge";
 
 export interface KeywordCurationFloatingBarProps {
   isRtl?: boolean;
@@ -60,11 +61,11 @@ function getComponentLabels(locale: string) {
     ? {
         selectedCount: (count: number) => `${count} كلمة مختارة`,
         clearButton: "مسح",
-        sendButton: "إرسال للمحسِّن",
-        sendingButton: "جاري الإرسال...",
+        sendButton: "إضافة إلى طابور التحسين",
+        sendingButton: "جاري الإضافة...",
         goToOptimizer: "انتقل إلى المحسِّن",
         continueLater: "المتابعة لاحقاً",
-        helperText: "سيتم إرسال الكلمات المختارة إلى محسِّن القائمة للمعالجة",
+        helperText: "تُضاف الكلمات المختارة إلى طابور التحسين — لن تُستخدم في التوليد حتى تضغط توليد",
         successDetail: (count: number, competitor: string) =>
           `تم إرسال ${count} كلمة من تحليل ${competitor}`,
         hint: "يمكنك إضافة المزيد من الإشارات قبل الإنشاء",
@@ -72,11 +73,11 @@ function getComponentLabels(locale: string) {
     : {
         selectedCount: (count: number) => `${count} Keywords Selected`,
         clearButton: "Clear",
-        sendButton: "Send to AI Optimizer",
-        sendingButton: "Sending...",
+        sendButton: "Add to Optimization Queue",
+        sendingButton: "Adding...",
         goToOptimizer: "Go to Optimizer",
         continueLater: "Continue Later",
-        helperText: "Selected keywords will be sent to the AI Listing Optimizer for processing",
+        helperText: "Selected keywords join your optimization queue — they won't affect generation until you click Generate",
         successDetail: (count: number, competitor: string) =>
           `Sent ${count} keywords from ${competitor} analysis`,
         hint: "You can add more signals before generating",
@@ -146,6 +147,17 @@ export function KeywordCurationFloatingBar({
   const [showPostStagingPrompt, setShowPostStagingPrompt] = useState(false);
   const [stagedSignalId, setStagedSignalId] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
+  const vaultLocale = locale === "ar" ? "ar" : "en";
+  const { items: queueItems } = useOptimizationQueue(workspaceId, vaultLocale, appId);
+
+  const queuedSelectionCount = useMemo(() => {
+    const queued = new Set(
+      queueItems
+        .filter((i) => i.type === "keyword_gap" || i.type === "competitor_keyword")
+        .map((i) => i.content.trim().toLowerCase()),
+    );
+    return selectedKeywords.filter((kw) => queued.has(kw.term.trim().toLowerCase())).length;
+  }, [queueItems, selectedKeywords]);
 
   const handleSend = async () => {
     if (selectedKeywords.length === 0) {
@@ -209,7 +221,10 @@ export function KeywordCurationFloatingBar({
       });
 
       queryClient.invalidateQueries({
-        queryKey: ["optimizer-context", workspaceId],
+        queryKey: ["optimizer-context", workspaceId, vaultLocale],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["optimization-queue", workspaceId, vaultLocale, appId ?? ""],
       });
 
       // Build enhanced toast message
@@ -257,16 +272,24 @@ export function KeywordCurationFloatingBar({
     }
   };
 
-  const handleNavigateToOptimizer = () => {
+  const handleNavigateToOptimizer = async () => {
+    if (queueItems.length === 0) {
+      toast.error(
+        locale === "ar"
+          ? "الطابور فارغ — أضف إشارات قبل الانتقال إلى المحسّن."
+          : "Queue is empty — add signals before opening the optimizer.",
+      );
+      return;
+    }
+
     const optimizerUrl = buildOptimizerActionUrl(workspaceId);
     console.log("[KeywordCurationFloatingBar] 🔗 Navigating to optimizer:", {
       url: optimizerUrl,
       stagedSignalId,
+      queueCount: queueItems.length,
     });
     setShowPostStagingPrompt(false);
-    // Clear keyword selection before navigating
     onClear();
-    // Navigate to optimizer
     router.push(optimizerUrl);
   };
 
@@ -399,9 +422,16 @@ export function KeywordCurationFloatingBar({
               isRtl && "flex-row-reverse"
             )}>
               <div>
-                <p className="text-sm font-semibold text-emerald-100">
-                  {labels.selectedCount(selectedCount)}
-                </p>
+                <div className={cn("flex flex-wrap items-center gap-2", isRtl && "flex-row-reverse")}>
+                  <p className="text-sm font-semibold text-emerald-100">
+                    {labels.selectedCount(selectedCount)}
+                  </p>
+                  <QueueStatusBadge
+                    selectedCount={selectedCount}
+                    queuedCount={queuedSelectionCount}
+                    isRtl={isRtl}
+                  />
+                </div>
                 {formattedSummary && (
                   <p className="text-xs text-emerald-300/70 mt-1">
                     {formattedSummary}

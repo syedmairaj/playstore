@@ -92,8 +92,6 @@ export async function generateAddAppFieldSuggest(input: {
     shortDescriptionHint?: string;
   };
 }): Promise<string> {
-  const apiKey = assertGeminiApiKey();
-  const modelName = resolveGeminiModel();
   const systemInstruction =
     input.field === "app_name"
       ? appNameInstruction(input.context)
@@ -111,7 +109,7 @@ export async function generateAddAppFieldSuggest(input: {
   model.systemInstruction = systemInstruction;
 
   const result = await model.generateContent(userPrompt);
-  const text = result.response.text();
+  const text = result.text ?? "";
   if (!text?.trim()) {
     throw new Error("Model returned empty text");
   }

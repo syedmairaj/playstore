@@ -1,15 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Loader2, ScanLine, Sparkles, TrendingUp, Activity } from "lucide-react";
+import { AlertTriangle, Check, Loader2, ScanLine, Sparkles, TrendingUp, Activity } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { KeywordHistoryDialog } from "@/components/keyword-tracker/keyword-history-dialog";
-import { SaveKeywordModal } from "@/components/keyword-tracker/save-keyword-modal";
-import { KeywordTrackerStagingButton } from "@/components/keyword-tracker/KeywordTrackerStagingButton";
+import { PreviewDismissDialog } from "@/components/keyword-tracker/preview-dismiss-dialog";
+import { PreviewHiddenBar } from "@/components/keyword-tracker/preview-hidden-bar";
+import { PreviewMarketsModal } from "@/components/keyword-tracker/preview-markets-modal";
+import { PreviewPromotePanel } from "@/components/keyword-tracker/preview-promote-panel";
+import { PreviewStartNewDialog } from "@/components/keyword-tracker/preview-start-new-dialog";
+import { previewCountryCodes } from "@/components/keyword-tracker/save-keyword-modal";
 import {
   buildKeywordWatchlistCsv,
   downloadCsvFile,
@@ -34,10 +38,15 @@ import {
   SerperPreviewResults,
   type SerperPreviewCountry,
 } from "@/components/serper/serper-preview-results";
-import { type SupportedCountryCode } from "@/lib/countries";
+import { isSupportedCountry, type SupportedCountryCode } from "@/lib/countries";
 import { formatRelativePastSince } from "@/lib/intl/format-relative-past";
+import { DiscoveryKeywordsPanel } from "@/components/keyword-tracker/discovery-keywords-panel";
 import type { LatestAiListingKeywordsRow } from "@/lib/keywords/latest-ai-listing-by-app";
 import type { KeywordWithRanks } from "@/lib/keywords/load-workspace-keywords";
+import {
+  buildTrackedKeywordKeySet,
+  isKeywordTrackedOnApp,
+} from "@/lib/keywords/keyword-tracking-match";
 import {
   competitorInitialForDisplay,
   normalizeCompetitorDisplayNameForRank,
@@ -110,8 +119,15 @@ export function KeywordTrackerClient({
     useState<(typeof WATCHLIST_PAGE_SIZES)[number]>(25);
   const [addTargetAppId, setAddTargetAppId] = useState<string>(() => apps[0]?.id ?? "");
   const [trackingAiTerm, setTrackingAiTerm] = useState<string | null>(null);
+  /** Optimistic keys after Add to tracker — merged until router.refresh() reloads rows. */
+  const [optimisticTrackedKeys, setOptimisticTrackedKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [saveSerperPending, setSaveSerperPending] = useState(false);
-  const [saveKeywordModalOpen, setSaveKeywordModalOpen] = useState(false);
+  const [previewDismissOpen, setPreviewDismissOpen] = useState(false);
+  const [previewMarketsModalOpen, setPreviewMarketsModalOpen] = useState(false);
+  const [previewMarketsPending, setPreviewMarketsPending] = useState(false);
+  const [previewStartNewOpen, setPreviewStartNewOpen] = useState(false);
   const [serperRowRefreshId, setSerperRowRefreshId] = useState<string | null>(null);
   /** Row pending credit-confirm modal: holds { id, term } until user confirms or cancels. */
   const [pendingRefreshRow, setPendingRefreshRow] = useState<{ id: string; term: string } | null>(null);
@@ -133,6 +149,12 @@ export function KeywordTrackerClient({
   );
   const [previewPending, setPreviewPending] = useState(false);
   const [previewResults, setPreviewResults] = useState<SerperPreviewCountry[] | null>(null);
+  /** True after preview data was promoted to the watchlist without clearing the preview UI. */
+  const [previewPromoted, setPreviewPromoted] = useState(false);
+  /** Collapses preview UI only — does not delete paid preview data from draft/session. */
+  const [previewHidden, setPreviewHidden] = useState(false);
+  /** Credits charged for the current on-screen preview session (non-refundable). */
+  const [previewCreditsUsed, setPreviewCreditsUsed] = useState(0);
   /** After Add keyword, pin row id for Save so snapshots attach to that row (add → preview → save). */
   const [saveAttach, setSaveAttach] = useState<{
     id: string;
@@ -160,6 +182,7 @@ export function KeywordTrackerClient({
 
   useEffect(() => {
     setRows(initialKeywordsRef.current);
+    setOptimisticTrackedKeys(new Set());
   }, [initialKeywordsSyncKey]);
 
   /**
@@ -323,6 +346,10 @@ export function KeywordTrackerClient({
               : serverDraft;
       if (!best) return;
       setPreviewResults(best.results);
+      setPreviewHidden(false);
+      setPreviewCreditsUsed(
+        serperAiCreditsForCountryCount(sanitizeDraftCountries(best.selectedCountries).length),
+      );
       setTerm(best.term);
       const sc = sanitizeDraftCountries(best.selectedCountries);
       if (sc.length > 0) {
@@ -598,22 +625,49 @@ export function KeywordTrackerClient({
   const aiPack = scopeAppId ? latestAiByApp[scopeAppId] : undefined;
 
   const trackedTermKeysForApp = useMemo(() => {
-    const set = new Set<string>();
-    if (!scopeAppId) return set;
+    if (!scopeAppId) return new Set<string>();
+    const terms: string[] = [];
     for (const r of rows) {
       if (r.app_id !== scopeAppId) continue;
-      set.add(r.term.trim().toLowerCase());
+      terms.push(r.term);
     }
-    return set;
-  }, [rows, scopeAppId]);
+    const fromRows = buildTrackedKeywordKeySet(terms);
+    if (optimisticTrackedKeys.size === 0) return fromRows;
+    return new Set([...fromRows, ...optimisticTrackedKeys]);
+  }, [rows, scopeAppId, optimisticTrackedKeys]);
 
   const aiSuggestedRows = useMemo(() => {
     if (!aiPack?.keywordSuggestions?.length) return [];
-    return aiPack.keywordSuggestions.filter((term) => {
-      const k = term.trim().toLowerCase();
-      return k.length > 0 && !trackedTermKeysForApp.has(k);
+    return aiPack.keywordSuggestions.filter((suggestion) => suggestion.trim().length >= 2);
+  }, [aiPack]);
+
+  const previewMarketCodes = useMemo(
+    () => (previewResults?.length ? previewCountryCodes(previewResults) : []),
+    [previewResults],
+  );
+
+  const hasActivePreview = Boolean(previewResults?.length);
+
+  const countriesOutOfSync = useMemo(() => {
+    if (!hasActivePreview) return false;
+    const previewKey = [...previewMarketCodes].sort().join(",");
+    const selectedKey = [...selectedCountries].sort().join(",");
+    return previewKey !== selectedKey;
+  }, [hasActivePreview, previewMarketCodes, selectedCountries]);
+
+  const isCurrentTermTracked = useMemo(() => {
+    const k = term.trim();
+    return k.length >= 2 && isKeywordTrackedOnApp(k, trackedTermKeysForApp);
+  }, [term, trackedTermKeysForApp]);
+
+  const isPreviewOnWatchlist = isCurrentTermTracked || previewPromoted;
+
+  const hidePreview = useCallback(() => {
+    setPreviewHidden(true);
+    toast.message(t("previewHidden.hideToastTitle"), {
+      description: t("previewHidden.hideToastBody"),
     });
-  }, [aiPack, trackedTermKeysForApp]);
+  }, [t]);
 
   const refresh = useCallback(() => {
     startTransition(() => {
@@ -694,8 +748,7 @@ export function KeywordTrackerClient({
 
       toast.success(t("add.toastSuccess"));
       if (body.initialRanks) {
-        setPreviewResults(null);
-        clearSerperPreviewPersistence();
+        setPreviewPromoted(true);
       }
       if (json.keyword?.id && targetApp) {
         setSaveAttach({
@@ -710,7 +763,10 @@ export function KeywordTrackerClient({
     }
   }
 
-  async function onTrackAiSuggested(term: string) {
+  async function onTrackAiSuggested(
+    term: string,
+    options?: { background?: boolean },
+  ) {
     if (!scopeAppId || !aiPack) return;
     const trimmed = term.trim();
     if (trimmed.length < 2) return;
@@ -736,7 +792,18 @@ export function KeywordTrackerClient({
         return;
       }
 
-      toast.success(t("aiSuggestedKeywords.toastTracked", { term: trimmed }));
+      setOptimisticTrackedKeys((prev) => {
+        const next = new Set(prev);
+        for (const key of buildTrackedKeywordKeySet([trimmed])) {
+          next.add(key);
+        }
+        return next;
+      });
+      if (options?.background) {
+        toast.message(t("aiSuggestedKeywords.trackBackgroundToast", { term: trimmed }));
+      } else {
+        toast.success(t("aiSuggestedKeywords.toastTracked", { term: trimmed }));
+      }
       refresh();
     } finally {
       setTrackingAiTerm(null);
@@ -774,6 +841,80 @@ export function KeywordTrackerClient({
 
   const showAiSuggested = aiSuggestedRows.length > 0 && Boolean(aiPack);
 
+  const runPreviewFetch = useCallback(
+    async (
+      countries: SupportedCountryCode[],
+      options?: { mergeInto?: SerperPreviewCountry[] | null; persistCountries?: SupportedCountryCode[] },
+    ): Promise<boolean> => {
+      const trimmed = term.trim();
+      if (trimmed.length < 2 || countries.length === 0) return false;
+
+      try {
+        const res = await fetch(`/api/serper/play-store-search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            keyword: trimmed,
+            countries,
+          }),
+        });
+        const json = (await res.json()) as {
+          ok?: boolean;
+          results?: SerperPreviewCountry[];
+          creditsCharged?: number;
+          error?: { code?: string; message?: string; required?: number; remaining?: number };
+        };
+
+        if (!res.ok || !json.ok || !Array.isArray(json.results)) {
+          if (res.status === 402 || json.error?.code === "insufficient_credits") {
+            const req = json.error?.required;
+            const rem = json.error?.remaining;
+            if (typeof req === "number" && typeof rem === "number") {
+              toast.error(t("serper.previewInsufficient", { required: req, remaining: rem }));
+            } else {
+              toast.error(json.error?.message ?? tSerper("insufficientCredits"));
+            }
+          } else if (res.status === 503 || json.error?.code === "serper_not_configured") {
+            toast.message(tSerper("configMissingTitle"), {
+              description: tSerper("configMissingBody"),
+            });
+          } else if (json.error?.code === "search_error") {
+            toast.error(tSerper("liveRanksUnavailable"));
+          } else {
+            toast.error(json.error?.message ?? tSerper("errorGeneric"));
+          }
+          return false;
+        }
+
+        const merged = options?.mergeInto?.length
+          ? [...options.mergeInto, ...json.results]
+          : json.results;
+        const persistCountries = options?.persistCountries ?? countries;
+
+        const charged =
+          typeof json.creditsCharged === "number"
+            ? json.creditsCharged
+            : serperAiCreditsForCountryCount(countries.length);
+
+        setPreviewResults(merged);
+        setPreviewHidden(false);
+        setPreviewCreditsUsed((prev) => (options?.mergeInto?.length ? prev + charged : charged));
+        setSelectedCountries(persistCountries);
+        persistSerperPreviewDraft({
+          term: trimmed,
+          countries: persistCountries,
+          results: merged,
+        });
+        return true;
+      } catch {
+        toast.error(tSerper("errorGeneric"));
+        return false;
+      }
+    },
+    [term, workspaceId, t, tSerper, persistSerperPreviewDraft],
+  );
+
   const onPreviewRanks = useCallback(async () => {
     if (previewPending) return;
     const trimmed = term.trim();
@@ -783,72 +924,86 @@ export function KeywordTrackerClient({
     }
     if (selectedCountries.length === 0) return;
 
-    clearSerperPreviewPersistence();
-    setPreviewResults(null);
+    setPreviewPromoted(false);
     setPreviewPending(true);
     setFormError(null);
     try {
-      const res = await fetch(`/api/serper/play-store-search`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspaceId,
-          keyword: trimmed,
-          countries: selectedCountries,
-        }),
-      });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        results?: SerperPreviewCountry[];
-        error?: { code?: string; message?: string; required?: number; remaining?: number };
-      };
-
-      if (!res.ok || !json.ok || !Array.isArray(json.results)) {
-        if (res.status === 402 || json.error?.code === "insufficient_credits") {
-          const req = json.error?.required;
-          const rem = json.error?.remaining;
-          if (typeof req === "number" && typeof rem === "number") {
-            toast.error(t("serper.previewInsufficient", { required: req, remaining: rem }));
-          } else {
-            toast.error(json.error?.message ?? tSerper("insufficientCredits"));
-          }
-        } else if (
-          res.status === 503 ||
-          json.error?.code === "serper_not_configured"
-        ) {
-          toast.message(tSerper("configMissingTitle"), {
-            description: tSerper("configMissingBody"),
-          });
-        } else if (json.error?.code === "search_error") {
-          toast.error(tSerper("liveRanksUnavailable"));
-        } else {
-          toast.error(json.error?.message ?? tSerper("errorGeneric"));
-        }
+      const ok = await runPreviewFetch(selectedCountries);
+      if (!ok && !previewResults?.length) {
         setPreviewResults(null);
-        return;
       }
-      setPreviewResults(json.results);
-      persistSerperPreviewDraft({
-        term: trimmed,
-        countries: selectedCountries,
-        results: json.results,
-      });
-    } catch {
-      toast.error(tSerper("errorGeneric"));
-      setPreviewResults(null);
     } finally {
       setPreviewPending(false);
     }
-  }, [
-    previewPending,
-    term,
-    selectedCountries,
-    workspaceId,
-    t,
-    tSerper,
-    clearSerperPreviewPersistence,
-    persistSerperPreviewDraft,
-  ]);
+  }, [previewPending, term, selectedCountries, t, runPreviewFetch, previewResults]);
+
+  const onConfirmStartNewSearch = useCallback(async () => {
+    setPreviewResults(null);
+    setPreviewPromoted(false);
+    setPreviewHidden(false);
+    setPreviewCreditsUsed(0);
+    clearSerperPreviewPersistence();
+    await onPreviewRanks();
+  }, [clearSerperPreviewPersistence, onPreviewRanks]);
+
+  const onApplyPreviewMarkets = useCallback(
+    async (nextCountries: SupportedCountryCode[]) => {
+      if (previewMarketsPending || !previewResults?.length || nextCountries.length === 0) return;
+
+      const currentCodes = previewCountryCodes(previewResults);
+      const toAdd = nextCountries.filter((c) => !currentCodes.includes(c));
+      const keep = new Set(nextCountries);
+      const trimmed = term.trim();
+
+      const filtered = previewResults.filter((block) => {
+        const raw = String(block.country ?? "").trim().toLowerCase();
+        return isSupportedCountry(raw) && keep.has(raw);
+      });
+
+      if (toAdd.length === 0) {
+        setPreviewResults(filtered);
+        setSelectedCountries(nextCountries);
+        persistSerperPreviewDraft({
+          term: trimmed,
+          countries: nextCountries,
+          results: filtered,
+        });
+        setPreviewMarketsModalOpen(false);
+        toast.success(t("serper.marketsUpdated"));
+        return;
+      }
+
+      setPreviewMarketsPending(true);
+      try {
+        const ok = await runPreviewFetch(toAdd, {
+          mergeInto: filtered,
+          persistCountries: nextCountries,
+        });
+        if (ok) {
+          setPreviewMarketsModalOpen(false);
+          toast.success(t("serper.marketsUpdated"));
+        }
+      } finally {
+        setPreviewMarketsPending(false);
+      }
+    },
+    [
+      previewMarketsPending,
+      previewResults,
+      term,
+      runPreviewFetch,
+      persistSerperPreviewDraft,
+      t,
+    ],
+  );
+
+  const onPreviewButtonClick = useCallback(() => {
+    if (hasActivePreview) {
+      setPreviewStartNewOpen(true);
+      return;
+    }
+    void onPreviewRanks();
+  }, [hasActivePreview, onPreviewRanks]);
 
   const onSaveSerperPreview = useCallback(
     async (countries: SupportedCountryCode[]) => {
@@ -902,6 +1057,7 @@ export function KeywordTrackerClient({
         });
         const json = (await res.json()) as {
           ok?: boolean;
+          keywordId?: string;
           createdKeyword?: boolean;
           error?: { code?: string; message?: string };
         };
@@ -918,13 +1074,19 @@ export function KeywordTrackerClient({
           return;
         }
         toast.success(
-          json.createdKeyword ? t("serper.saveToastNew") : t("serper.saveToastUpdated"),
+          json.createdKeyword
+            ? t("serper.promoteToastNew")
+            : t("serper.promoteToastUpdated"),
         );
-        setPreviewResults(null);
-        clearSerperPreviewPersistence();
-        setSaveKeywordModalOpen(false);
+        setPreviewPromoted(true);
         setFormError(null);
-        setSaveAttach(null);
+        if (json.keywordId && targetApp) {
+          setSaveAttach({
+            id: String(json.keywordId),
+            termNorm: trimmed.toLowerCase(),
+            appId: targetApp,
+          });
+        }
         refresh();
       } catch {
         toast.error(t("serper.saveError"));
@@ -943,7 +1105,6 @@ export function KeywordTrackerClient({
       keywordIdForSerperSave,
       t,
       refresh,
-      clearSerperPreviewPersistence,
     ],
   );
 
@@ -1331,8 +1492,15 @@ export function KeywordTrackerClient({
           <CountrySelector
             value={selectedCountries}
             onChange={setSelectedCountries}
-            disabled={apps.length === 0 || blockingError}
+            disabled={apps.length === 0 || blockingError || previewPending || previewMarketsPending}
           />
+          {hasActivePreview ? (
+            <p className="text-xs leading-relaxed text-zinc-500" role="note">
+              {countriesOutOfSync
+                ? t("serper.previewCountriesOutOfSync")
+                : t("serper.previewCountriesSynced")}
+            </p>
+          ) : null}
 
           <form className="space-y-4" onSubmit={onAdd}>
             <div className="min-w-0 space-y-2">
@@ -1382,14 +1550,19 @@ export function KeywordTrackerClient({
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => void onPreviewRanks()}
+                    onClick={() => void onPreviewButtonClick()}
                     disabled={
                       previewPending ||
+                      previewMarketsPending ||
                       term.trim().length < 2 ||
                       selectedCountries.length === 0 ||
                       blockingError
                     }
-                    aria-label={tSerper("previewButtonTooltip", { appName: tooltipAppName })}
+                    aria-label={
+                      hasActivePreview
+                        ? t("serper.startNewSearchTooltip")
+                        : tSerper("previewButtonTooltip", { appName: tooltipAppName })
+                    }
                     className="h-10 min-h-10 shrink-0 gap-2 border-emerald-500/30 bg-emerald-500/[0.07] px-4 text-emerald-100 hover:bg-emerald-500/15 hover:text-white disabled:opacity-40"
                   >
                     {previewPending ? (
@@ -1397,7 +1570,11 @@ export function KeywordTrackerClient({
                     ) : (
                       <Sparkles className="size-4 shrink-0" aria-hidden />
                     )}
-                    {previewPending ? tSerper("previewPending") : tSerper("previewButton")}
+                    {previewPending
+                      ? tSerper("previewPending")
+                      : hasActivePreview
+                        ? t("serper.startNewSearch")
+                        : tSerper("previewButton")}
                   </Button>
                 </Tooltip>
                 <Tooltip
@@ -1428,8 +1605,35 @@ export function KeywordTrackerClient({
             </TooltipProvider>
           </form>
 
-          {previewResults && previewResults.length > 0 ? (
+          {previewResults && previewResults.length > 0 && previewHidden ? (
+            <div className="mt-1">
+              <PreviewHiddenBar
+                term={term}
+                marketCount={previewMarketCodes.length}
+                creditsUsed={previewCreditsUsed}
+                promotePending={saveSerperPending}
+                canPromote={Boolean(scopePackageName && scopeAppId && !blockingError)}
+                onShowPreview={() => setPreviewHidden(false)}
+                onPromote={() => void onSaveSerperPreview(previewMarketCodes)}
+                isRtl={isRtl}
+              />
+            </div>
+          ) : null}
+
+          {previewResults && previewResults.length > 0 && !previewHidden ? (
             <div className="mt-1 space-y-4">
+              <PreviewPromotePanel
+                term={term}
+                isOnWatchlist={isPreviewOnWatchlist}
+                promotePending={saveSerperPending}
+                canPromote={Boolean(scopePackageName && scopeAppId && !blockingError)}
+                needsPackageMessage={!scopePackageName ? t("serper.saveNeedsPackage") : null}
+                creditsUsed={previewCreditsUsed}
+                onPromote={() => void onSaveSerperPreview(previewMarketCodes)}
+                onAdjustMarkets={() => setPreviewMarketsModalOpen(true)}
+                onRequestDismiss={() => setPreviewDismissOpen(true)}
+                isRtl={isRtl}
+              />
               {livePreviewIssueBanner ? (
                 <div
                   className="rounded-xl border border-rose-500/35 bg-rose-500/[0.12] px-4 py-3 text-sm leading-relaxed text-rose-50/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ring-1 ring-rose-400/15"
@@ -1447,110 +1651,27 @@ export function KeywordTrackerClient({
                   scopeAppId ? (appNameById.get(scopeAppId) ?? undefined) : undefined
                 }
               />
-              <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/[0.08] p-4 sm:p-5">
-                <p className="text-sm font-medium text-emerald-50">{t("serper.saveTitle")}</p>
-                <p className="mt-1.5 text-xs leading-relaxed text-emerald-100/80">
-                  {t("serper.saveHintMulti")}
-                </p>
-                {!scopePackageName ? (
-                  <p className="mt-3 text-xs text-amber-200/90">{t("serper.saveNeedsPackage")}</p>
-                ) : null}
-                <Button
-                  type="button"
-                  className="mt-4 h-11 w-full bg-emerald-500 text-emerald-950 hover:bg-emerald-400 sm:w-auto"
-                  disabled={
-                    saveSerperPending ||
-                    !scopePackageName ||
-                    !scopeAppId ||
-                    blockingError ||
-                    mutationPending
-                  }
-                  onClick={() => setSaveKeywordModalOpen(true)}
-                >
-                  {t("serper.saveButton")}
-                </Button>
-              </div>
             </div>
           ) : null}
         </CardContent>
       </Card>
 
-      {showAiSuggested ? (
-        <section
-          className="relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-gradient-to-b from-emerald-950/[0.28] via-[#0a0f14] to-[#060a0f] text-zinc-100 shadow-[0_0_0_1px_rgba(16,185,129,0.18),0_28px_56px_-28px_rgba(16,185,129,0.4)]"
-          aria-labelledby="ai-suggested-kw-heading"
-        >
-          <div
-            className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_85%_55%_at_100%_0%,rgba(16,185,129,0.16),transparent_52%)]"
-            aria-hidden
-          />
-          <div className="relative space-y-6 px-5 pb-6 pt-7 sm:px-8 sm:pb-7 sm:pt-8">
-            <div
-              className={cn(
-                "flex flex-col gap-4 border-b border-white/[0.06] pb-6 sm:items-start sm:justify-between",
-                isRtl ? "sm:flex-row-reverse" : "sm:flex-row",
-              )}
-            >
-              <div className="min-w-0 space-y-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-400/90">
-                  {t("sections.aiSuggestedKicker")}
-                </p>
-                <p className="inline-flex max-w-full items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-3 py-1 text-xs font-semibold tracking-wide text-emerald-50/95 ring-1 ring-emerald-500/25">
-                  <span className="size-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.95)]" aria-hidden />
-                  <span className="min-w-0 leading-snug">{t("aiSuggestedKeywords.sourceLabel")}</span>
-                </p>
-                <div className="space-y-2">
-                  <h2
-                    id="ai-suggested-kw-heading"
-                    className="text-xl font-semibold tracking-tight text-white sm:text-2xl"
-                  >
-                    {t("aiSuggestedKeywords.title")}
-                  </h2>
-                  <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">
-                    {t("aiSuggestedKeywords.subtitle")}
-                  </p>
-                </div>
-                <p className="text-[11px] leading-relaxed text-zinc-500">
-                  {t("aiSuggestedKeywords.pricingNote", {
-                    per: AI_CREDIT_COSTS.serper_preview_per_country,
-                  })}
-                </p>
-              </div>
-            </div>
-            <ul className="divide-y divide-white/[0.06] overflow-hidden rounded-xl border border-emerald-500/15 bg-[#04070a]/95 shadow-inner ring-1 ring-emerald-500/10 backdrop-blur-sm">
-              {aiSuggestedRows.map((kw) => (
-                <li
-                  key={kw}
-                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:flex-nowrap sm:gap-4 sm:px-5"
-                >
-                  <span className="min-w-0 flex-1 text-[15px] font-medium text-zinc-50">{kw}</span>
-                  <div className={cn("flex gap-2", isRtl && "flex-row-reverse")}>
-                    <KeywordTrackerStagingButton
-                      workspaceId={workspaceId}
-                      appId={scopeAppId}
-                      keyword={kw}
-                      market={selectedCountries[0] || "us"}
-                      language={locale}
-                      size="sm"
-                      variant="secondary"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={mutationPending || Boolean(trackingAiTerm) || blockingError}
-                      className="h-10 shrink-0 rounded-xl border border-emerald-300/35 bg-emerald-500 px-5 text-sm font-semibold text-white shadow-[0_0_0_1px_rgba(16,185,129,0.45),0_8px_24px_-6px_rgba(16,185,129,0.65)] transition hover:border-emerald-200/50 hover:bg-emerald-400 hover:text-emerald-950 hover:shadow-[0_0_0_1px_rgba(167,243,208,0.5),0_12px_32px_-8px_rgba(16,185,129,0.75)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/90 focus-visible:ring-offset-2 focus-visible:ring-offset-[#04070a] disabled:pointer-events-none disabled:opacity-40"
-                      onClick={() => void onTrackAiSuggested(kw)}
-                    >
-                      {trackingAiTerm === kw.trim()
-                        ? t("aiSuggestedKeywords.tracking")
-                        : t("aiSuggestedKeywords.track")}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
+      {showAiSuggested && scopeAppId && aiPack ? (
+        <DiscoveryKeywordsPanel
+          workspaceId={workspaceId}
+          appId={scopeAppId}
+          aiPack={aiPack}
+          suggestions={aiSuggestedRows}
+          trackedKeys={trackedTermKeysForApp}
+          market={selectedCountries[0] || "us"}
+          locale={locale}
+          isRtl={isRtl}
+          mutationPending={mutationPending}
+          trackingAiTerm={trackingAiTerm}
+          blockingError={blockingError}
+          onTrack={onTrackAiSuggested}
+          onWorkflowChange={() => refresh()}
+        />
       ) : null}
 
       {showAiSuggested ? (
@@ -1673,13 +1794,30 @@ export function KeywordTrackerClient({
         onOpenChange={(next) => !next && setHistoryFor(null)}
       />
 
-      <SaveKeywordModal
-        open={saveKeywordModalOpen}
-        onOpenChange={setSaveKeywordModalOpen}
+      <PreviewDismissDialog
+        open={previewDismissOpen}
+        onOpenChange={setPreviewDismissOpen}
+        onConfirm={hidePreview}
+        creditsUsed={previewCreditsUsed}
+        marketCount={previewMarketCodes.length}
+      />
+
+      <PreviewStartNewDialog
+        open={previewStartNewOpen}
+        onOpenChange={setPreviewStartNewOpen}
+        pending={previewPending}
+        onConfirm={() => void onConfirmStartNewSearch()}
+      />
+
+      <PreviewMarketsModal
+        open={previewMarketsModalOpen}
+        onOpenChange={setPreviewMarketsModalOpen}
         term={term}
-        results={previewResults ?? []}
-        pending={saveSerperPending}
-        onSave={(countries) => onSaveSerperPreview(countries)}
+        previewCountries={
+          countriesOutOfSync ? selectedCountries : previewMarketCodes
+        }
+        pending={previewMarketsPending}
+        onApply={(countries) => void onApplyPreviewMarkets(countries)}
       />
 
       {/* ── Serper Refresh Credit Confirmation Modal ─────────────────────── */}
@@ -1777,3 +1915,4 @@ export function KeywordTrackerClient({
     </div>
   );
 }
+

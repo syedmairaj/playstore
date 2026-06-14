@@ -24,6 +24,8 @@
  */
 
 import { SupabaseClient } from "@supabase/supabase-js";
+import { VaultCore } from "@/lib/staging-vault/vault-core";
+import type { VaultSignalSource, VaultSignalType } from "@/lib/staging-vault/vault-core.types";
 
 // ── Type Definitions ──────────────────────────────────────────────────
 export type SignalType =
@@ -141,6 +143,24 @@ function validateLanguageAndGetRTL(language: string): {
 }
 
 /**
+ * Normalize severity from module-specific enums (e.g. review analysis CRITICAL)
+ * into vault metadata values.
+ */
+function normalizeVaultSeverity(
+  value: unknown,
+): "critical" | "high" | "medium" | "low" | undefined {
+  if (typeof value !== "string") return undefined;
+  const key = value.trim().toLowerCase();
+  const aliases: Record<string, "critical" | "high" | "medium" | "low"> = {
+    critical: "critical",
+    high: "high",
+    medium: "medium",
+    low: "low",
+  };
+  return aliases[key];
+}
+
+/**
  * Validate metadata structure
  * Ensures metadata is a valid object with expected fields
  */
@@ -163,17 +183,18 @@ function validateMetadata(metadata: unknown): {
   }
 
   // Validate specific fields if present
-  const meta = metadata as Record<string, unknown>;
+  const meta = { ...(metadata as Record<string, unknown>) };
 
-  // severity: if present, must be valid enum
+  // severity: if present, must be valid enum (accept module uppercase variants)
   if ("severity" in meta && meta.severity) {
-    const validSeverities = ["critical", "high", "medium", "low"];
-    if (!validSeverities.includes(meta.severity as string)) {
+    const normalized = normalizeVaultSeverity(meta.severity);
+    if (!normalized) {
       return {
         valid: false,
-        error: `Invalid severity: "${meta.severity}". Must be one of: ${validSeverities.join(", ")}`,
+        error: `Invalid severity: "${meta.severity}". Must be one of: critical, high, medium, low`,
       };
     }
+    meta.severity = normalized;
   }
 
   // impactPercent: if present, must be 0-100
@@ -369,54 +390,54 @@ export async function stageSignal(
     );
   }
 
-  // ── Step 6: Insert Into Database ───────────────────────────────────
+  // ── Step 6: Persist via VaultCore (schema-aware legacy + universal) ─
   try {
-    const { data, error } = await supabase
-      .from("workspace_staging_vault")
-      .insert({
-        workspace_id,
-        signal_type,
-        source,
-        source_context,
-        source_context_id,
-        content: content.trim(),
-        language,
-        is_rtl: languageValidation.isRtl,
-        source_app_id,
-        metadata: metadataValidation.sanitized || {},
-        expires_at,
-        created_by_user_id: user.id,
-      })
-      .select("id, workspace_id, signal_type, content, language, is_rtl, source_context, source_context_id, created_at")
-      .single();
+    const vaultResult = await VaultCore.safeUpsert(supabase, {
+      type: "legacy_signal",
+      workspaceId: workspace_id,
+      signalType: signal_type as VaultSignalType,
+      content: content.trim(),
+      source: source as VaultSignalSource,
+      locale: language,
+      sourceAppId: source_app_id,
+      sourceContext: source_context,
+      sourceContextId: source_context_id,
+      metadata: metadataValidation.sanitized || {},
+      userId: user.id,
+      isRtl: languageValidation.isRtl,
+      expiresAt: expires_at,
+    });
 
-    if (error) {
-      throw new Error(`Database insert failed: ${error.message}`);
+    if (!vaultResult.ok) {
+      throw new Error(vaultResult.error ?? "VaultCore safeUpsert failed");
     }
 
+    const createdAt = vaultResult.createdAt ?? new Date().toISOString();
+
     console.info(`[StageSignal] Successfully staged ${signal_type}`, {
-      id: data.id,
+      id: vaultResult.id,
       workspace_id,
       source_context,
       source_context_id,
       language,
       is_rtl: languageValidation.isRtl,
+      writePath: vaultResult.writePath,
     });
 
     return {
-      id: data.id,
+      id: vaultResult.id!,
       success: true,
       message: `Signal staged successfully: ${signal_type} from ${source_context}`,
       signal: {
-        id: data.id,
-        workspace_id: data.workspace_id,
-        signal_type: data.signal_type as SignalType,
-        content: data.content,
-        language: data.language,
-        is_rtl: data.is_rtl,
-        source_context: data.source_context,
-        source_context_id: data.source_context_id,
-        created_at: data.created_at,
+        id: vaultResult.id!,
+        workspace_id,
+        signal_type: signal_type as SignalType,
+        content: content.trim(),
+        language,
+        is_rtl: languageValidation.isRtl,
+        source_context,
+        source_context_id,
+        created_at: createdAt,
       },
     };
   } catch (err) {

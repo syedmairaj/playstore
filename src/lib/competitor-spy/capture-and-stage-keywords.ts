@@ -19,6 +19,8 @@ export interface CompetitorAnalysisResult {
   keywords: string[];             // REQUIRED: ['fitness', 'tracker']
   vulnerabilities: string[];      // OPTIONAL: []
   workspaceId: string;            // REQUIRED: ws-123
+  /** Workspace app UUID — required for universal vault (state_en/state_ar). */
+  appId?: string;
   language: LanguageCode;         // REQUIRED: en | ar
   isRtl: boolean;                 // REQUIRED: false | true
 }
@@ -300,7 +302,8 @@ export async function stageCompetitorAnalysis(
       sourceContextId: sanitizedData.competitorId,
       language: sanitizedData.language,
       metadata: vaultPayload.metadata,
-      category: 'competitor_keyword',  // ✅ CATEGORIZE: Route keywords to correct section in Optimizer
+      category: 'competitor_keyword',
+      ...(sanitizedData.appId ? { sourceAppId: sanitizedData.appId } : {}),
     };
 
     console.log(

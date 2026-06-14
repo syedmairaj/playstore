@@ -30,6 +30,10 @@ export {
 // Vault router (request routing)
 export { VaultRouterService, vaultRouter } from "./vault-router";
 
+// Centralized vault writes (schema-aware)
+export { VaultCore } from "@/lib/staging-vault/vault-core";
+export type { VaultUpsertPayload, VaultUpsertResult } from "@/lib/staging-vault/vault-core.types";
+
 // Synthesis context builder (token-aware)
 export { SynthesisContextBuilder, synthesisContextBuilder } from "./synthesis-context-builder";
 

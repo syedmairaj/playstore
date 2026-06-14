@@ -60,12 +60,12 @@ function buildPillarsConfig(
     {
       ...state.reviewIssues,
       label: {
-        en: "Review Issues",
-        ar: "مشكلات المراجعات",
+        en: "Review Insights",
+        ar: "رؤى المراجعات",
       },
       description: {
-        en: "→ addressed in description + what's new",
-        ar: "← تُعالَج في الوصف + ما هو جديد",
+        en: "→ user pain points woven into description + what's new",
+        ar: "← نقاط ألم المستخدم تُنسج في الوصف + ما هو جديد",
       },
       icon: "AlertTriangle",
       color: {
@@ -96,12 +96,12 @@ function buildPillarsConfig(
     {
       ...state.competitorKeywords,
       label: {
-        en: "Competitor Keywords",
-        ar: "كلمات المنافسين",
+        en: "Competitor Strengths",
+        ar: "نقاط قوة المنافس",
       },
       description: {
-        en: "→ ASO optimization for title + short description",
-        ar: "← تحسين ASO للعنوان + الوصف القصير",
+        en: "→ positioning angles to counter in long description",
+        ar: "← زوايا تموضع للرد عليها في الوصف الطويل",
       },
       icon: "Shield",
       color: {

@@ -1,12 +1,19 @@
 "use client";
-import { useStaging } from "@/hooks/useStaging"; // Update path if needed
+import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import {
+  keywordGapsToQueueInputs,
+  reviewInsightsQueueDiff,
+} from "@/lib/client/optimization-queue-client";
+import {
+  validateAndQueue,
+  type ValidateAndQueueSource,
+} from "@/lib/client/validate-and-queue";
+import { ReviewInsightsSummary } from "@/components/competitor-spy/review-insights-summary";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
-import { KeywordSelectionProvider } from "@/contexts/KeywordSelectionContext";
-import { KeywordCurationModeProvider } from "@/contexts/KeywordCurationModeContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,11 +40,6 @@ import {
   writePersistedActiveCountry,
   writePersistedSelectedCountries,
 } from "@/lib/client/competitor-spy-country-storage";
-import {
-  navigateToListingOptimizer,
-  setPlaystoreInjectedKeywordContext,
-  setPlaystoreInjectedCompetitorVulnerabilities,
-} from "@/lib/client/listing-optimizer-keywords-prefill";
 import {
   buildCompetitorSpyInsightsForCountry,
   filterSerperPreviewByCountry,
@@ -296,7 +298,6 @@ export function CompetitorSpyClient({
   const router = useRouter();
   const isRtl = locale === "ar";
   const defaultMarket = (locale === "ar" ? "sa" : "us") as SupportedCountryCode;
-  const { stage } = useStaging();
   const rankLabels = useMemo(
     () => ({
       notInTop: tRanks("notInTop"),
@@ -319,6 +320,9 @@ export function CompetitorSpyClient({
   const [apps, setApps] = useState<WorkspaceAppListRow[]>(() => initialApps ?? []);
   const [appsLoadError, setAppsLoadError] = useState<string | null>(initialAppsLoadError);
   const [targetAppId, setTargetAppId] = useState(() => initialApps?.[0]?.id ?? "");
+  const vaultLocale = locale === "ar" ? "ar" : "en";
+  const { addItems: addToOptimizationQueue, items: optimizationQueueItems } =
+    useOptimizationQueue(workspaceId, vaultLocale, targetAppId || undefined);
   const [dismissedSharedKeywords, setDismissedSharedKeywords] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1194,33 +1198,57 @@ export function CompetitorSpyClient({
     router.refresh();
   }, [router]);
 
-  const pushListingOptimizer = useCallback(
-    (keywords: string | string[], vulnerabilities?: string[]) => {
-      const list = Array.isArray(keywords)
-        ? keywords
-        : keywords
-            .split(/[,;\n]+/u)
-            .map((s) => s.trim())
-            .filter(Boolean);
-      if (list.length) {
-        setPlaystoreInjectedKeywordContext(list.join(", "));
-      }
-      if (vulnerabilities?.length) {
-        setPlaystoreInjectedCompetitorVulnerabilities(vulnerabilities);
-      }
-      const appId = targetAppId || apps[0]?.id;
-      const ok = navigateToListingOptimizer(
-        router,
+  const queueAndNavigateToOptimizer = useCallback(
+    async (
+      items: ReturnType<typeof keywordGapsToQueueInputs>,
+      source: ValidateAndQueueSource,
+      options?: { navigate?: boolean },
+    ) => {
+      const result = await validateAndQueue({
+        source,
         workspaceId,
-        list.join(", "),
-        appId,
-        vulnerabilities,
-      );
-      if (!ok) {
-        toast.error(t("optimizerNavFailed"));
+        workspaceLocale: locale,
+        appId: targetAppId || apps[0]?.id,
+        items,
+        existingQueue: optimizationQueueItems,
+        addItems: async (batch) => {
+          const response = await addToOptimizationQueue(batch);
+          return {
+            addedCount: response.addedCount ?? 0,
+            skippedCount: response.skippedCount,
+          };
+        },
+        navigate: options?.navigate ?? true,
+        router,
+      });
+
+      if (!result.ok) {
+        toast.error(result.error ?? t("reviewSentiment.queueError"));
+        return false;
       }
+
+      if (result.alreadyQueued) {
+        toast.info(t("reviewSentiment.queueAlreadyAll"));
+        return true;
+      }
+
+      toast.success(t("reviewSentiment.queueSuccess"), {
+        description: t("reviewSentiment.queueSuccessDetail", {
+          count: result.addedCount,
+        }),
+      });
+      return true;
     },
-    [apps, router, targetAppId, workspaceId, t],
+    [
+      addToOptimizationQueue,
+      apps,
+      locale,
+      optimizationQueueItems,
+      router,
+      targetAppId,
+      t,
+      workspaceId,
+    ],
   );
 
   /** Executes after the credit confirm dialog is accepted. */
@@ -1241,7 +1269,9 @@ export function CompetitorSpyClient({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            appId: targetAppId || apps[0]?.id || "",
+            ...(targetAppId || apps[0]?.id
+              ? { appId: targetAppId || apps[0]?.id }
+              : {}),
             competitorPackageName: pkg,
             countryCode: activeCountry,
             seedKeywords,
@@ -1252,10 +1282,11 @@ export function CompetitorSpyClient({
         | { ok: true; result: SentimentResult; asoAudit?: AsoAuditData; creditsUsed: number }
         | { ok: false; error: { code: string; message: string } };
 
-      if (!data.ok) {
-        const errCode = (data as { ok: false; error: { code: string } }).error.code;
+      if (!res.ok || !("ok" in data) || !data.ok) {
+        const errCode =
+          "error" in data && data.error?.code ? data.error.code : `http_${res.status}`;
         setSentimentError(
-          errCode === "insufficient_credits"
+          errCode === "insufficient_credits" || res.status === 402
             ? t("reviewSentiment.errorInsufficient")
             : t("reviewSentiment.errorGeneral"),
         );
@@ -1886,8 +1917,6 @@ export function CompetitorSpyClient({
   const gridDir = isRtl ? "rtl" : "ltr";
 
   return (
-    <KeywordSelectionProvider>
-      <KeywordCurationModeProvider>
         <div className="mx-auto w-full max-w-[1600px] space-y-8" dir={gridDir}>
       <CompetitorSpyCreditsConfirmDialog
         open={creditsConfirmOpen}
@@ -2522,7 +2551,14 @@ export function CompetitorSpyClient({
                   className="w-full shrink-0 border border-emerald-400/35 bg-emerald-600 text-white hover:bg-emerald-500 sm:w-auto"
                   disabled={blockingError}
                   onClick={() =>
-                    pushListingOptimizer(gapRows.map((r) => r.keyword).filter(Boolean).slice(0, 24))
+                    void queueAndNavigateToOptimizer(
+                      keywordGapsToQueueInputs(
+                        gapRows.map((r) => r.keyword).filter(Boolean).slice(0, 24),
+                        activeCompetitor?.displayName,
+                        activeCompetitor?.packageId,
+                      ),
+                      "competitor_spy_gap",
+                    )
                   }
                 >
                   <span className="inline-flex items-center justify-center gap-2">
@@ -2596,7 +2632,16 @@ export function CompetitorSpyClient({
                           type="button"
                           className="mt-auto w-full border border-emerald-400/30 bg-emerald-600 text-white hover:bg-emerald-500"
                           disabled={!item.term}
-                          onClick={() => pushListingOptimizer([item.term])}
+                          onClick={() =>
+                            void queueAndNavigateToOptimizer(
+                              keywordGapsToQueueInputs(
+                                [item.term],
+                                activeCompetitor?.displayName,
+                                activeCompetitor?.packageId,
+                              ),
+                              "competitor_spy_quick_win",
+                            )
+                          }
                         >
                           <span className="inline-flex items-center justify-center gap-2">
                             <Sparkles className="size-4 opacity-90" aria-hidden />
@@ -2660,8 +2705,21 @@ export function CompetitorSpyClient({
                 .map((g) => g.keyword)
                 .slice(0, 3) ?? []),
             ].filter(Boolean);
-            // Legacy alias used by the CTA visibility guard below.
-            const exploitTerms = exploitKeywords;
+            const reviewQueueBundle = reviewInsightsQueueDiff(
+              {
+                painPoints: bugTerms,
+                featureRequests: requestTerms,
+                keywords: praiseTerms,
+                competitorName: activeCompetitor?.displayName,
+                competitorId: activeCompetitor?.packageId,
+              },
+              optimizationQueueItems,
+            );
+            const reviewQueueInputs = reviewQueueBundle.inputs;
+            const reviewQueueAllQueued = reviewQueueBundle.allQueued;
+            const reviewQueueEmpty = reviewQueueBundle.isEmpty;
+            const hasReviewInsightTerms =
+              praiseTerms.length > 0 || bugTerms.length > 0 || requestTerms.length > 0;
 
             return (
               <>
@@ -2806,126 +2864,108 @@ export function CompetitorSpyClient({
                         </Button>
                       </div>
 
-                      {/* Three chip buckets */}
-                      <div className="grid gap-4 sm:grid-cols-3">
-                        {/* Praise bucket — green */}
-                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
-                          <div className="mb-2 flex items-center gap-2">
-                            <span className="text-base" aria-hidden>✅</span>
-                            <span className="text-sm font-semibold text-emerald-300">
-                              {t("reviewSentiment.bucketPraiseTitle")}
-                            </span>
-                          </div>
-                          <p className="mb-3 text-xs text-emerald-300/60">
-                            {t("reviewSentiment.bucketPraiseSubtitle")}
-                          </p>
-                          {praiseTerms.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {praiseTerms.map((term, i) => (
-                                <span
-                                  key={`praise-${i}-${term}`}
-                                  className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-200 ring-1 ring-emerald-500/25"
-                                >
-                                  {term}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-zinc-600">—</p>
-                          )}
-                        </div>
-
-                        {/* Bugs bucket — red */}
-                        <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.06] p-4">
-                          <div className="mb-2 flex items-center gap-2">
-                            <span className="text-base" aria-hidden>🐛</span>
-                            <span className="text-sm font-semibold text-rose-300">
-                              {t("reviewSentiment.bucketBugsTitle")}
-                            </span>
-                          </div>
-                          <p className="mb-3 text-xs text-rose-300/60">
-                            {t("reviewSentiment.bucketBugsSubtitle")}
-                          </p>
-                          {bugTerms.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {bugTerms.map((term, i) => (
-                                <span
-                                  key={`bug-${i}-${term}`}
-                                  className="rounded-full bg-rose-500/15 px-2.5 py-1 text-xs font-medium text-rose-200 ring-1 ring-rose-500/25"
-                                >
-                                  {term}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-zinc-600">—</p>
-                          )}
-                        </div>
-
-                        {/* Feature requests bucket — indigo */}
-                        <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/[0.06] p-4">
-                          <div className="mb-2 flex items-center gap-2">
-                            <span className="text-base" aria-hidden>💡</span>
-                            <span className="text-sm font-semibold text-indigo-300">
-                              {t("reviewSentiment.bucketRequestsTitle")}
-                            </span>
-                          </div>
-                          <p className="mb-3 text-xs text-indigo-300/60">
-                            {t("reviewSentiment.bucketRequestsSubtitle")}
-                          </p>
-                          {requestTerms.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {requestTerms.map((term, i) => (
-                                <span
-                                  key={`req-${i}-${term}`}
-                                  className="rounded-full bg-indigo-500/15 px-2.5 py-1 text-xs font-medium text-indigo-200 ring-1 ring-indigo-500/25"
-                                >
-                                  {term}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-zinc-600">—</p>
-                          )}
-                        </div>
-                      </div>
+                      <ReviewInsightsSummary
+                        praiseTerms={praiseTerms}
+                        bugTerms={bugTerms}
+                        requestTerms={requestTerms}
+                        isRtl={isRtl}
+                      />
 
                       {/* Exploit with AI Optimizer CTA */}
-                      {exploitTerms.length > 0 ? (
-                        <OptimizerWorkspace workspaceId={workspaceId}>
+                      {hasReviewInsightTerms || reviewQueueInputs.length > 0 ? (
+                        <OptimizerWorkspace
+                          workspaceId={workspaceId}
+                          appId={targetAppId || undefined}
+                        >
                           <div className="flex flex-col gap-2">
-                          <p className="inline-flex items-center gap-1.5 self-start rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-300/80 ring-1 ring-amber-500/20">
-                            {t("reviewSentiment.exploitBadge")}
-                          </p>
-                          <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3">
-                            <p className="text-sm text-amber-200/80">
-                              {t("reviewSentiment.exploitTooltip")}
+                            <p className="inline-flex items-center gap-1.5 self-start rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-300/80 ring-1 ring-amber-500/20">
+                              {t("reviewSentiment.exploitBadge")}
                             </p>
-                            <TooltipProvider>
-                              <Tooltip
-                                content={t("reviewSentiment.exploitInfoTooltip")}
-                                side="top"
-                                className="max-w-[300px]"
-                                asChild
-                              >
-                                <Button
+                            <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3">
+                              <p className="text-sm text-amber-200/80">
+                                {reviewQueueEmpty
+                                  ? t("reviewSentiment.exploitEmptyHint")
+                                  : t("reviewSentiment.exploitTooltip")}
+                              </p>
+                              <TooltipProvider>
+                                <Tooltip
+                                  content={
+                                    reviewQueueAllQueued
+                                      ? t("reviewSentiment.queueAlreadyAll")
+                                      : reviewQueueEmpty
+                                        ? t("reviewSentiment.exploitEmptyHint")
+                                        : t("reviewSentiment.exploitInfoTooltip")
+                                  }
+                                  side="top"
+                                  className="max-w-[300px]"
+                                  asChild
+                                >
+                                  <Button
                                     type="button"
                                     size="sm"
-                                    className="shrink-0 border border-amber-400/30 bg-amber-500/80 text-white hover:bg-amber-400"
-                                    // Here we call the 'stage' function instead of the old pushListingOptimizer
-                                    onClick={() => stage({ 
-                                      action: "exploit_data", 
-                                      data: { keywords: exploitKeywords, vulnerabilities: exploitVulnerabilities } 
-                                    })}
+                                    disabled={reviewQueueEmpty || reviewQueueAllQueued}
+                                    className={cn(
+                                      "shrink-0 border text-white",
+                                      reviewQueueAllQueued
+                                        ? "cursor-default border-zinc-600 bg-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80"
+                                        : reviewQueueEmpty
+                                          ? "cursor-not-allowed border-zinc-700 bg-zinc-800/60 text-zinc-500 opacity-60"
+                                          : "border-amber-400/30 bg-amber-500/80 hover:bg-amber-400",
+                                    )}
+                                    onClick={() => {
+                                      if (reviewQueueEmpty || reviewQueueAllQueued) {
+                                        if (reviewQueueAllQueued) {
+                                          toast.info(t("reviewSentiment.queueAlreadyAll"));
+                                        }
+                                        return;
+                                      }
+                                      void validateAndQueue({
+                                        source: "competitor_spy_review",
+                                        workspaceId,
+                                        workspaceLocale: locale,
+                                        appId: targetAppId || apps[0]?.id,
+                                        items: reviewQueueInputs,
+                                        existingQueue: optimizationQueueItems,
+                                        addItems: async (batch) => {
+                                          const response = await addToOptimizationQueue(batch);
+                                          return {
+                                            addedCount: response.addedCount ?? 0,
+                                            skippedCount: response.skippedCount,
+                                          };
+                                        },
+                                        navigate: false,
+                                      }).then((result) => {
+                                        if (!result.ok) {
+                                          toast.error(
+                                            result.error ?? t("reviewSentiment.queueError"),
+                                          );
+                                          return;
+                                        }
+                                        if (result.alreadyQueued) {
+                                          toast.info(t("reviewSentiment.queueAlreadyAll"));
+                                          return;
+                                        }
+                                        toast.success(t("reviewSentiment.queueSuccess"), {
+                                          description: t("reviewSentiment.queueSuccessDetail", {
+                                            count: result.addedCount,
+                                          }),
+                                        });
+                                      });
+                                    }}
                                   >
-                                    <Sparkles className="me-1.5 size-3.5 shrink-0" aria-hidden />
-                                    {t("reviewSentiment.exploitCta")}
+                                    {reviewQueueAllQueued ? (
+                                      <CheckCircle2 className="me-1.5 size-3.5 shrink-0" aria-hidden />
+                                    ) : (
+                                      <Sparkles className="me-1.5 size-3.5 shrink-0" aria-hidden />
+                                    )}
+                                    {reviewQueueAllQueued
+                                      ? t("reviewSentiment.exploitCtaAlreadyQueued")
+                                      : t("reviewSentiment.exploitCta")}
                                     <Info className="ms-1.5 size-3 shrink-0 opacity-70" aria-hidden />
                                   </Button>
-                  
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
                           </div>
                         </OptimizerWorkspace>
                       ) : null}
@@ -3043,27 +3083,6 @@ export function CompetitorSpyClient({
                   manageCompetitorsLabel={t("manage.button")}
                   onManageCompetitors={() => setManageOpen(true)}
                   keywordSurfaces={competitorKeywords}
-                  onSendToOptimizer={() => {
-                    // Primary competitor seed (active)
-                    const activeSeed = [
-                      ...(countryInsights?.topKeywords ?? activeCompetitor.topKeywords),
-                      ...(countryInsights?.gaps ?? activeCompetitor.gaps).map((g) => g.keyword),
-                    ].filter(Boolean);
-                    // Merge second competitor's keywords when both rivals are tracked
-                    const inactiveSeed = inactiveCompetitor
-                      ? [
-                          ...inactiveCompetitor.topKeywords,
-                          ...inactiveCompetitor.gaps.map((g) => g.keyword),
-                        ].filter(Boolean)
-                      : [];
-                    // Deduplicate across both rivals, active competitor's terms take priority
-                    const seen = new Set(activeSeed.map((k) => k.trim().toLowerCase()));
-                    const merged = [
-                      ...activeSeed,
-                      ...inactiveSeed.filter((k) => !seen.has(k.trim().toLowerCase())),
-                    ];
-                    pushListingOptimizer(merged.slice(0, 15));
-                  }}
                 />
               );
             })()
@@ -3218,7 +3237,5 @@ export function CompetitorSpyClient({
         {t("disclaimer")}
       </p>
         </div>
-      </KeywordCurationModeProvider>
-    </KeywordSelectionProvider>
   );
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import type { SchemaType } from "@google-cloud/vertexai";
+import { SchemaType } from "@/lib/ai/schema-types";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 
@@ -401,7 +401,7 @@ export async function generateScreenshotPack(
 
   const prompt = buildPrompt(input, inferredMood);
   const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
+  const text = (result.text ?? "").trim();
 
   // Strip code fences if present
   const clean = text.startsWith("```")

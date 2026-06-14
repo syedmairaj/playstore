@@ -55,7 +55,7 @@ export interface GeminiRetryConfig extends RetryConfig {
  * );
  *
  * if (result.success) {
- *   const text = result.data.response.text();
+ *   const text = result.data.text;
  *   console.log(text);
  * }
  *

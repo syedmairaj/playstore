@@ -44,8 +44,8 @@ export function getStagingFlowMessages(locale: string) {
   return {
     // Success messages
     stagingSuccess: isArabic
-      ? "تم إرسال الكلمات إلى محسِّن القائمة بنجاح"
-      : "Keywords staged for AI Listing Optimizer",
+      ? "تمت الإضافة إلى طابور التحسين"
+      : "Added to Optimization Queue",
 
     stagingSuccessDetail: isArabic
       ? (count: number, competitorName: string) =>
@@ -54,8 +54,8 @@ export function getStagingFlowMessages(locale: string) {
           `Sent ${count} keywords from ${competitorName} analysis`,
 
     continueStagingHint: isArabic
-      ? "يمكنك إضافة المزيد من الإشارات (مشاكل المراجعات، فرص السوق) قبل الإنشاء"
-      : "You can add more signals (review issues, market opportunities) before generating",
+      ? "يمكنك إضافة المزيد من الإشارات إلى الطابور قبل التوليد"
+      : "You can add more signals to the queue before generating",
 
     // Error messages
     stagingFailed: isArabic
@@ -76,8 +76,8 @@ export function getStagingFlowMessages(locale: string) {
 
     // Confirmation messages
     navigateToOptimizer: isArabic
-      ? "انتقل إلى محسِّن القائمة لمراجعة والكلمات المُعدة"
-      : "Go to AI Listing Optimizer to review staged keywords",
+      ? "انتقل إلى محسِّن القائمة لمراجعة الطابور"
+      : "Go to Listing Optimizer to review the queue",
 
     generateNow: isArabic
       ? "إنشاء الآن"
@@ -168,44 +168,32 @@ export async function stageKeywordsNoNavigation(
   }
 
   try {
-    // ═════════════════════════════════════════════════════════════════════════
-    // STAGING: Import and call addSignalToVault
-    // ═════════════════════════════════════════════════════════════════════════
+    const { competitorKeywordsToQueueInputs, addToOptimizationQueueClient } =
+      await import("@/lib/client/optimization-queue-client");
 
-    const { addSignalToVault } = await import("@/lib/staging-vault/staging-vault-service");
+    const queueItems = competitorKeywordsToQueueInputs(
+      selectedKeywords,
+      competitorName,
+      competitorId,
+    );
 
-    const result = await addSignalToVault(supabase, workspaceId, {
-      signalType: "optimization_insight",
-      content: `Competitor Spy keyword selection from ${competitorName} (${selectedKeywords.length} keywords)`,
-      source: "competitor_spy",
-      sourceAppId: appId,
-      sourceContext: competitorId,
-      sourceContextId: competitorId,
-      language: isArabic ? "ar" : "en",
-      category: "competitor_keyword",  // ✅ CATEGORIZE: Route keywords to correct Optimizer bucket
-      metadata: {
-        competitor_id: competitorId,
-        competitor_name: competitorName,
-        category: "competitor_keyword",  // ✅ CATEGORIZE: Also in metadata for consistency
-        selected_keywords_count: selectedKeywords.length,
-        selected_at: timestamp,
-        app_id: appId,
-        locale: locale,
-        keywords: selectedKeywords, // ← CRITICAL: Keywords with category for UI extraction
-      },
-    });
+    const result = await addToOptimizationQueueClient(
+      workspaceId,
+      isArabic ? "ar" : "en",
+      queueItems,
+      appId,
+    );
 
-    console.log("[CompetitorSpyStagingFlow] ✅ STAGING SUCCESSFUL:", {
-      signalId: result.id,
+    console.log("[CompetitorSpyStagingFlow] ✅ QUEUE ADD SUCCESSFUL:", {
+      addedCount: result.addedCount,
       keywordCount: selectedKeywords.length,
       competitorName,
-      message: result.message,
       timestamp,
     });
 
     return {
       success: true,
-      signalId: result.id,
+      signalId: result.items[0]?.id,
       message: messages.stagingSuccess,
       timestamp,
       language: isArabic ? "ar" : "en",

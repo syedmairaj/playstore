@@ -126,19 +126,26 @@ export async function POST(request: Request, context: Ctx) {
     //   recommendation → recommendation (jsonb)
     //   monthlyInstalls→ estimated_monthly_installs (jsonb)
     // Columns not in schema (omitted): category, reasoning, tags, metadata
+    const scoreRow = {
+      workspace_id: workspaceId,
+      keyword_term: keyword,
+      language,
+      difficulty_score: viabilityScore.difficulty.difficulty,
+      search_volume: viabilityScore.difficulty.searchVolume,
+      top_app_count: viabilityScore.difficulty.competition,
+      confidence_percentage: viabilityScore.confidence,
+      recommendation: {
+        value: viabilityScore.recommendation,
+        reasoning: viabilityScore.reasoning,
+        tags: viabilityScore.tags,
+        category,
+      },
+      estimated_monthly_installs: viabilityScore.monthlyInstalls,
+    };
+
     const { error: dbError } = await supabase
       .from("keyword_viability_scores")
-      .insert({
-        workspace_id:                workspaceId,
-        keyword_term:                keyword,
-        language,
-        difficulty_score:            viabilityScore.difficulty.difficulty,
-        search_volume:               viabilityScore.difficulty.searchVolume,
-        top_app_count:               viabilityScore.difficulty.competition,
-        confidence_percentage:       viabilityScore.confidence,
-        recommendation:              { value: viabilityScore.recommendation, reasoning: viabilityScore.reasoning, tags: viabilityScore.tags, category },
-        estimated_monthly_installs:  viabilityScore.monthlyInstalls,
-      });
+      .upsert(scoreRow, { onConflict: "workspace_id,keyword_term,language" });
 
     if (dbError) {
       // Log but don't fail - still return result to user
