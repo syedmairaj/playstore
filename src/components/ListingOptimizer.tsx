@@ -29,7 +29,6 @@ import {
 } from "@/components/listing/optimizer/optimizer-stepper";
 import {
   OptimizerCreditsConfirmDialog,
-  type SynthesisSignalContext,
 } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
 import { AlertTriangle, Hash, Info, Loader2, Shield, Sparkles } from "lucide-react";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
@@ -45,6 +44,13 @@ import {
   STAGING_VAULT_CHANGED_EVENT,
   type StagingVaultChangedDetail,
 } from "@/lib/client/staging-vault-sync";
+import {
+  REVIEW_INSIGHT_ARCHIVED_EVENT,
+  REVIEW_INSIGHT_STAGED_EVENT,
+  type ReviewInsightArchivedDetail,
+  type ReviewInsightStagedDetail,
+} from "@/lib/client/review-insight-staging";
+import { mergeStagedQueueIntoAdopted } from "@/lib/review-insights/map-queue-to-staged-insight";
 import { precheckAddApp } from "@/lib/client/precheck-add-app";
 import {
   clearFinalListingCache,
@@ -103,7 +109,22 @@ import {
   partitionQueueItemsByCategory,
   partitionQueueItemsBySignalType,
 } from "@/lib/staging/optimizer-context-adapter";
+import { useArchiveReviewInsightFromContext } from "@/hooks/useArchiveReviewInsightFromContext";
+import {
+  ACTIVE_CONTEXT_TOAST_CLASS_NAMES,
+  ACTIVE_CONTEXT_TOAST_DURATION_MS,
+  ACTIVE_CONTEXT_TOAST_POSITION,
+} from "@/lib/client/active-context-toast";
 import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import {
+  OPTIMIZATION_QUEUE_KEY,
+} from "@/lib/client/optimization-queue-client";
+import {
+  getOptimizationQueueSnapshot,
+  optimizationQueueStoreKey,
+  optimisticallyRemoveOptimizationQueueItem,
+  patchOptimizationQueueStore,
+} from "@/lib/client/optimization-queue-store";
 import { buildSynthesisFromOptimizationQueue } from "@/lib/optimization-queue";
 import { KeywordValidatorCard } from "@/components/keyword-tracker/KeywordValidatorCard";
 import { useStagingWorkspace } from "@/hooks/useStagingWorkspace";
@@ -166,9 +187,7 @@ type ApiError = {
 
 type AutofillField = "keywords" | "features";
 
-type CreditConfirmPending =
-  | { kind: "listing_generation" }
-  | { kind: "autofill"; field: AutofillField };
+type CreditConfirmPending = { kind: "autofill"; field: AutofillField };
 
 type AutofillApiSuccess = {
   ok: true;
@@ -358,7 +377,7 @@ interface StagingWorkspaceSectionProps {
   locale: string;
   isRtl: boolean;
   loading: boolean;
-  onRemoveReviewIssue: (id: string) => void;
+  onArchiveReviewIssue: (id: string, title: string) => void;
   onRemoveMarketOpportunity: (id: string) => void;
   onRemoveCompetitorKeyword: (keywordId: string, signalId: string) => void;
   onRemoveCompetitorWeakness: (idx: number) => void;
@@ -379,7 +398,7 @@ function StagingWorkspaceSection({
   locale,
   isRtl,
   loading,
-  onRemoveReviewIssue,
+  onArchiveReviewIssue,
   onRemoveMarketOpportunity,
   onRemoveCompetitorKeyword,
   onRemoveCompetitorWeakness,
@@ -421,7 +440,8 @@ function StagingWorkspaceSection({
   // Create unified removal handler
   const handleRemoveSignal = async (signalId: string, source: string) => {
     if (source === "review_issue") {
-      onRemoveReviewIssue(signalId);
+      const pill = reviewQueuePills.find((p) => p.id === signalId);
+      onArchiveReviewIssue(signalId, pill?.label ?? "");
     } else if (source === "market_spotlight") {
       onRemoveMarketOpportunity(signalId);
     } else if (source === "competitor_keyword") {
@@ -574,6 +594,7 @@ export function ListingOptimizer({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [appName, setAppName] = useState("");
   const [category, setCategory] = useState("");
   const [keywords, setKeywords] = useState("");
@@ -647,6 +668,7 @@ export function ListingOptimizer({
     items: optimizationQueueItems,
     removeItem: removeQueueItem,
     isLoading: optimizationQueueLoading,
+    refetch: refetchOptimizationQueue,
   } = useOptimizationQueue(
     workspaceId,
     locale,
@@ -674,7 +696,15 @@ export function ListingOptimizer({
   });
 
   const pendingReviewInsights = reviewDerivedGate?.pendingInsights ?? [];
-  const adoptedReviewInsights = reviewDerivedGate?.adoptedInsights ?? [];
+  const adoptedReviewInsights = useMemo(
+    () =>
+      mergeStagedQueueIntoAdopted(
+        reviewDerivedGate?.adoptedInsights ?? [],
+        optimizationQueueItems,
+        workspaceId,
+      ),
+    [reviewDerivedGate?.adoptedInsights, optimizationQueueItems, workspaceId],
+  );
   const reviewAnalysisStatus = reviewDerivedGate?.analysisStatus ?? "NOT_FOUND";
   const reviewGateValid = reviewDerivedGate?.valid === true;
 
@@ -712,6 +742,20 @@ export function ListingOptimizer({
     [keywordSignals],
   );
 
+  const {
+    archiveReviewInsight,
+    isArchiveUndone,
+  } = useArchiveReviewInsightFromContext({
+    workspaceId,
+    locale,
+    selectedAppId,
+    refreshOptimizerContext,
+    refetchReviewDerived,
+    refetchOptimizationQueue: () => {
+      void refetchOptimizationQueue();
+    },
+  });
+
   useEffect(() => {
     const onStagingChanged = (event: Event) => {
       const detail = (event as CustomEvent<StagingVaultChangedDetail>).detail;
@@ -723,6 +767,113 @@ export function ListingOptimizer({
     window.addEventListener(STAGING_VAULT_CHANGED_EVENT, onStagingChanged);
     return () => window.removeEventListener(STAGING_VAULT_CHANGED_EVENT, onStagingChanged);
   }, [workspaceId, selectedAppId, locale, refreshOptimizerContext]);
+
+  useEffect(() => {
+    const onReviewStaged = (event: Event) => {
+      const detail = (event as CustomEvent<ReviewInsightStagedDetail>).detail;
+      if (!detail || detail.workspaceId !== workspaceId) return;
+
+      if (detail.queueItemId && detail.title) {
+        const appId = selectedAppId.trim() || undefined;
+        const storeKey = optimizationQueueStoreKey(workspaceId, locale, appId);
+        const queueKey = OPTIMIZATION_QUEUE_KEY(workspaceId, locale, appId);
+        const normTitle = detail.title.trim().toLowerCase();
+        const existingSnapshot = getOptimizationQueueSnapshot(storeKey);
+
+        if (
+          isArchiveUndone(detail.queueItemId, detail.title) ||
+          existingSnapshot.items.some(
+            (row) =>
+              (row.type === "review_pain_point" || row.type === "feature_request") &&
+              row.content.trim().toLowerCase() === normTitle,
+          )
+        ) {
+          return;
+        }
+
+        const now = new Date().toISOString();
+
+        patchOptimizationQueueStore(storeKey, (prev) => {
+          if (prev.some((i) => i.id === detail.queueItemId)) return prev;
+          const optimisticItem = {
+            id: detail.queueItemId,
+            type: "review_pain_point" as const,
+            category: "review" as const,
+            content: detail.title,
+            source: "review_analysis" as const,
+            sourceContext: "common_issues_theme",
+            sourceContextId: `restore_${detail.queueItemId}`,
+            language: locale,
+            stagedAt: now,
+            metadata: {
+              category: "review",
+              source_origin: "review_analysis",
+              explicitly_staged: true,
+              optimistic: true,
+            },
+          };
+          return [optimisticItem, ...prev];
+        });
+
+        queryClient.setQueryData(queueKey, (prev) => {
+          if (!prev) return prev;
+          if (prev.items.some((i) => i.id === detail.queueItemId)) return prev;
+          const optimisticItem = {
+            id: detail.queueItemId,
+            type: "review_pain_point" as const,
+            category: "review" as const,
+            content: detail.title,
+            source: "review_analysis" as const,
+            sourceContext: "common_issues_theme",
+            sourceContextId: `restore_${detail.queueItemId}`,
+            language: locale,
+            stagedAt: now,
+            metadata: {
+              category: "review",
+              source_origin: "review_analysis",
+              explicitly_staged: true,
+              optimistic: true,
+            },
+          };
+          return { ...prev, items: [optimisticItem, ...prev.items] };
+        });
+      }
+
+      void refetchReviewDerived();
+      void refetchOptimizationQueue();
+      void refreshOptimizerContext();
+    };
+    const onReviewArchived = (event: Event) => {
+      const detail = (event as CustomEvent<ReviewInsightArchivedDetail>).detail;
+      if (!detail || detail.workspaceId !== workspaceId) return;
+      if (isArchiveUndone(detail.queueItemId, detail.title)) {
+        return;
+      }
+      if (detail.queueItemId) {
+        const appId = selectedAppId.trim() || undefined;
+        const storeKey = optimizationQueueStoreKey(workspaceId, locale, appId);
+        optimisticallyRemoveOptimizationQueueItem(storeKey, detail.queueItemId);
+      }
+      void refetchReviewDerived();
+      void refetchOptimizationQueue();
+      void refreshOptimizerContext();
+    };
+    window.addEventListener(REVIEW_INSIGHT_STAGED_EVENT, onReviewStaged);
+    window.addEventListener(REVIEW_INSIGHT_ARCHIVED_EVENT, onReviewArchived);
+    return () => {
+      window.removeEventListener(REVIEW_INSIGHT_STAGED_EVENT, onReviewStaged);
+      window.removeEventListener(REVIEW_INSIGHT_ARCHIVED_EVENT, onReviewArchived);
+    };
+  }, [
+    workspaceId,
+    locale,
+    selectedAppId,
+    queryClient,
+    refetchReviewDerived,
+    refetchOptimizationQueue,
+    refreshOptimizerContext,
+    isArchiveUndone,
+  ]);
 
   const [validatorOpen, setValidatorOpen] = useState(false);
   const [validatorPrefillKeyword, setValidatorPrefillKeyword] = useState("");
@@ -836,7 +987,6 @@ export function ListingOptimizer({
     setEditedLong(result.fullDescription);
   }, [result]);
 
-  const queryClient = useQueryClient();
   const limits = useAppLimits(workspaceId, {
     initialData: initialAppLimits,
   });
@@ -1348,7 +1498,6 @@ export function ListingOptimizer({
     return () => { cancelled = true; };
   }, [workspaceId]);
 
-  // ── Queue item deletion ───────────────────────────────────────────────────
   const handleRemoveQueueItem = useCallback(
     (itemId: string) => {
       void removeQueueItem(itemId).then(() => {
@@ -1406,23 +1555,55 @@ export function ListingOptimizer({
   );
 
   // ── Remove signal from staging vault ──────────────────────────────────────
-  const handleRemoveFromStagingVault = useCallback(
-    (signalId: string) => {
-      void removeQueueItem(signalId).then(() => {
-        void refreshOptimizerContext();
+  const showActiveContextRemovedToast = useCallback(
+    (message: string, toastId: string) => {
+      toast.success(message, {
+        id: toastId,
+        duration: ACTIVE_CONTEXT_TOAST_DURATION_MS,
+        position: ACTIVE_CONTEXT_TOAST_POSITION,
+        classNames: ACTIVE_CONTEXT_TOAST_CLASS_NAMES,
       });
     },
-    [removeQueueItem, refreshOptimizerContext],
+    [],
+  );
+
+  const handleRemoveFromStagingVault = useCallback(
+    (signalId: string) => {
+      void removeQueueItem(signalId)
+        .then(() => {
+          showActiveContextRemovedToast(
+            t("activeContext.removeMarketToast"),
+            `active-context-removed-market-${signalId}`,
+          );
+          void refreshOptimizerContext();
+        })
+        .catch(() => {
+          toast.error(t("activeContext.removeFromContextFailed"), {
+            position: ACTIVE_CONTEXT_TOAST_POSITION,
+          });
+        });
+    },
+    [removeQueueItem, refreshOptimizerContext, showActiveContextRemovedToast, t],
   );
 
   // ── Remove individual keyword from optimization queue ─────────────────────
   const handleRemoveKeyword = useCallback(
     (_keywordId: string, signalId: string) => {
-      void removeQueueItem(signalId).then(() => {
-        void refreshOptimizerContext();
-      });
+      void removeQueueItem(signalId)
+        .then(() => {
+          showActiveContextRemovedToast(
+            t("activeContext.removeCompetitorToast"),
+            `active-context-removed-competitor-${signalId}`,
+          );
+          void refreshOptimizerContext();
+        })
+        .catch(() => {
+          toast.error(t("activeContext.removeFromContextFailed"), {
+            position: ACTIVE_CONTEXT_TOAST_POSITION,
+          });
+        });
     },
-    [removeQueueItem, refreshOptimizerContext],
+    [removeQueueItem, refreshOptimizerContext, showActiveContextRemovedToast, t],
   );
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -2696,27 +2877,21 @@ export function ListingOptimizer({
   }
 
   function requestListingGeneration() {
-    setCreditConfirmPending({ kind: "listing_generation" });
+    void runListingGeneration({ mode: "fresh" });
   }
 
   function handleCreditConfirm() {
     setCreditConfirmPending((pending) => {
       if (!pending) return null;
-      if (pending.kind === "listing_generation") {
-        void runListingGeneration({ mode: "fresh" });
-      } else {
-        void runAutofill(pending.field);
-      }
+      void runAutofill(pending.field);
       return null;
     });
   }
 
   const creditConfirmCredits =
-    creditConfirmPending?.kind === "listing_generation"
-      ? AI_CREDIT_COSTS.listing_generation
-      : creditConfirmPending?.kind === "autofill"
-        ? AI_CREDIT_COSTS.listing_optimizer_autofill
-        : 0;
+    creditConfirmPending?.kind === "autofill"
+      ? AI_CREDIT_COSTS.listing_optimizer_autofill
+      : 0;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -3092,30 +3267,9 @@ export function ListingOptimizer({
         isRtl={isRtl}
         onConfirm={handleCreditConfirm}
         showSpyTip={creditConfirmPending?.kind === "autofill"}
-        autofillField={creditConfirmPending?.kind === "autofill" ? creditConfirmPending.field : undefined}
+        autofillField={creditConfirmPending?.field}
         spyHref={workspaceId ? `/app/${workspaceId}/competitors` : undefined}
         onGoToSpy={() => setCreditConfirmPending(null)}
-        synthesisContext={
-          creditConfirmPending?.kind === "listing_generation"
-            ? ((): SynthesisSignalContext => {
-                const reviewItems = optimizationQueueItems
-                  .filter((i) => i.type === "review_pain_point")
-                  .map((i) => ({ label: i.content.slice(0, 60) }));
-                const marketItems = optimizationQueueItems
-                  .filter((i) => i.type === "market_keyword")
-                  .map((i) => ({
-                    keyword: i.content.replace(/^market_spotlight:/, "").trim(),
-                  }));
-                const competitorItems = [
-                  ...optimizationQueueItems
-                    .filter((i) => i.type === "competitor_keyword")
-                    .map((i) => i.content),
-                  ...queueCompetitorWeaknesses.slice(0, 3),
-                ];
-                return { reviewItems, marketItems, competitorItems };
-              })()
-            : undefined
-        }
       />
 
       <UpgradeModal
@@ -3685,7 +3839,10 @@ export function ListingOptimizer({
                       keywordTrackerCount={trackerKeywordSignals.length}
                       trackerKeywordSignals={trackerKeywordSignals}
                       vaultLocale={locale}
-                      onRemoveReviewIssue={handleRemoveQueueItem}
+                      onArchiveReviewIssue={(id, title) => {
+                        const queueItem = optimizationQueueItems.find((row) => row.id === id);
+                        void archiveReviewInsight(id, title, queueItem);
+                      }}
                       onRemoveMarketOpportunity={handleRemoveFromStagingVault}
                       onRemoveCompetitorKeyword={handleRemoveKeyword}
                       onRemoveCompetitorWeakness={(idx) => {
@@ -3694,7 +3851,20 @@ export function ListingOptimizer({
                             i.type === "competitor_weakness" ||
                             i.type === "competitor_strength",
                         )[idx];
-                        if (item) void removeQueueItem(item.id);
+                        if (!item) return;
+                        void removeQueueItem(item.id)
+                          .then(() => {
+                            showActiveContextRemovedToast(
+                              t("activeContext.removeCompetitorToast"),
+                              `active-context-removed-competitor-${item.id}`,
+                            );
+                            void refreshOptimizerContext();
+                          })
+                          .catch(() => {
+                            toast.error(t("activeContext.removeFromContextFailed"), {
+                              position: ACTIVE_CONTEXT_TOAST_POSITION,
+                            });
+                          });
                       }}
                       onOpenKeywordValidator={handleOpenKeywordValidator}
                     />

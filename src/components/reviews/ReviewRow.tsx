@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Copy, Loader2, Star } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { Copy, Loader2, Quote, Star } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import { COUNTRY_FLAG_EMOJI } from "@/lib/countries";
 import { cn } from "@/lib/utils";
+import { stageReviewIssueClient } from "@/lib/client/review-insight-staging";
 import { sentimentTagFromClassifications } from "@/components/reviews/review-improvements-queue";
 import {
   localeToCountryCode,
@@ -58,6 +59,9 @@ export type ReviewRowProps = {
   appName?: string;
   appId?: string;
   packageName?: string | null;
+  countryCode?: string;
+  langCode?: string;
+  competitorName?: string | null;
   /**
    * When true the review belongs to a competitor's listing:
    * - "Draft AI Reply" button is hidden (can't reply to competitor reviews)
@@ -65,7 +69,9 @@ export type ReviewRowProps = {
    */
   isCompetitorMode?: boolean;
   isAddedToQueue: boolean;
+  isStagedQuote?: boolean;
   onAddedToQueue: () => void;
+  onReviewStaged?: () => void;
   replyDraft: string | null;
   replyDraftVisible: boolean;
   onReplyDraftSuccess: (replyText: string) => void;
@@ -79,9 +85,14 @@ export function ReviewRow({
   appName,
   appId,
   packageName,
+  countryCode = "us",
+  langCode = "en",
+  competitorName,
   isCompetitorMode = false,
   isAddedToQueue,
+  isStagedQuote = false,
   onAddedToQueue,
+  onReviewStaged,
   replyDraft,
   replyDraftVisible,
   onReplyDraftSuccess,
@@ -89,8 +100,13 @@ export function ReviewRow({
   onShowReplyDraft,
 }: ReviewRowProps) {
   const t = useTranslations("reviews");
+  const locale = useLocale();
   const [loading, setLoading] = useState(false);
   const [addingToQueue, setAddingToQueue] = useState(false);
+  const [stagingQuote, setStagingQuote] = useState(false);
+  const [stagedQuote, setStagedQuote] = useState(isStagedQuote);
+
+  const canStageQuote = review.rating <= 2 && review.text.trim().length > 0;
 
   const country = localeToCountryCode(review.locale);
   const flag = COUNTRY_FLAG_EMOJI[country];
@@ -141,6 +157,69 @@ export function ReviewRow({
     review.rating,
     review.text,
     review.userName,
+    t,
+    workspaceId,
+  ]);
+
+  const onStageQuote = useCallback(async () => {
+    if (stagedQuote || stagingQuote || !canStageQuote) return;
+    const pkg = packageName?.trim();
+    if (!pkg) {
+      toast.error(t("row.stageQuoteError"));
+      return;
+    }
+
+    setStagingQuote(true);
+    try {
+      const quote = review.text.trim();
+      const title = quote.length > 60 ? `${quote.slice(0, 57)}…` : quote;
+      const impact = review.rating <= 1 ? 0.85 : 0.55;
+
+      const result = await stageReviewIssueClient(workspaceId, {
+        packageName: pkg,
+        countryCode,
+        langCode,
+        locale: locale === "ar" ? "ar" : "en",
+        appId,
+        competitorName: competitorName ?? null,
+        sourceType: "individual_review",
+        sourceContextId: review.id,
+        issue: {
+          title,
+          description: quote,
+          severity: review.rating <= 1 ? "CRITICAL" : "MEDIUM",
+          impact,
+          quote,
+        },
+      });
+
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+
+      setStagedQuote(true);
+      onReviewStaged?.();
+      toast.success(t("row.addedToActiveContext"));
+    } catch {
+      toast.error(t("row.stageQuoteError"));
+    } finally {
+      setStagingQuote(false);
+    }
+  }, [
+    appId,
+    canStageQuote,
+    competitorName,
+    countryCode,
+    langCode,
+    locale,
+    onReviewStaged,
+    packageName,
+    review.id,
+    review.rating,
+    review.text,
+    stagedQuote,
+    stagingQuote,
     t,
     workspaceId,
   ]);
@@ -295,6 +374,35 @@ export function ReviewRow({
               t("row.addToListing")
             )}
           </Button>
+
+          {canStageQuote ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={stagedQuote || stagingQuote}
+              className={cn(
+                "w-full md:w-auto",
+                stagedQuote
+                  ? "cursor-not-allowed border border-indigo-800/40 bg-indigo-950/50 text-indigo-300/80 hover:bg-indigo-950/50"
+                  : "border border-indigo-500/35 bg-indigo-500/10 font-medium text-indigo-200 hover:border-indigo-400/50 hover:bg-indigo-500/15",
+              )}
+              onClick={() => void onStageQuote()}
+            >
+              {stagingQuote ? (
+                <>
+                  <Loader2 className="me-1.5 size-3.5 animate-spin" aria-hidden />
+                  {t("row.stagingQuote")}
+                </>
+              ) : stagedQuote ? (
+                t("row.stagedQuote")
+              ) : (
+                <>
+                  <Quote className="me-1.5 size-3.5 shrink-0" aria-hidden />
+                  {t("row.stageQuote")}
+                </>
+              )}
+            </Button>
+          ) : null}
 
           {!isCompetitorMode && replyDraft && !replyDraftVisible ? (
             <p className="text-center text-xs text-zinc-500 md:text-end">{t("row.draftCachedHint")}</p>

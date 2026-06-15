@@ -30,20 +30,25 @@ export type ListingImprovementItem = {
   createdAt: string;
 };
 
-async function fetchListingImprovementsResponse(workspaceId: string): Promise<ListingImprovementItem[]> {
+async function fetchListingImprovementsResponse(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<ListingImprovementItem[]> {
+  if (!workspaceId.trim()) return [];
+
   try {
     const res = await fetch(
       `/api/workspaces/${workspaceId}/listing-improvements?unutilized=1`,
-      { credentials: "same-origin" },
+      { credentials: "same-origin", signal },
     );
 
-    // Handle network errors
     if (!res.ok) {
-      console.warn(`[ListingImprovements] API returned ${res.status}:`, res.statusText);
+      if (process.env.NODE_ENV === "development") {
+        console.warn(`[ListingImprovements] API returned ${res.status}:`, res.statusText);
+      }
       return [];
     }
 
-    // Handle JSON parsing errors
     let json;
     try {
       json = (await res.json()) as {
@@ -51,17 +56,22 @@ async function fetchListingImprovementsResponse(workspaceId: string): Promise<Li
         items?: ListingImprovementItem[];
       };
     } catch (parseError) {
-      console.warn('[ListingImprovements] Failed to parse JSON response:', parseError);
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[ListingImprovements] Failed to parse JSON response:", parseError);
+      }
       return [];
     }
 
-    // Validate response structure
     if (!json.ok || !Array.isArray(json.items)) {
-      console.warn('[ListingImprovements] Invalid response structure:', { ok: json.ok, hasItems: Array.isArray(json.items) });
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[ListingImprovements] Invalid response structure:", {
+          ok: json.ok,
+          hasItems: Array.isArray(json.items),
+        });
+      }
       return [];
     }
 
-    // Filter and validate items
     return json.items.filter(
       (item): item is ListingImprovementItem =>
         typeof item === "object" &&
@@ -71,22 +81,29 @@ async function fetchListingImprovementsResponse(workspaceId: string): Promise<Li
         typeof item.reviewText === "string",
     );
   } catch (error) {
-    // Catch network errors, timeout, etc.
-    console.error('[ListingImprovements] Fetch failed:', error instanceof Error ? error.message : error);
+    if (signal?.aborted) return [];
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        "[ListingImprovements] Fetch skipped:",
+        error instanceof Error ? error.message : error,
+      );
+    }
     return [];
   }
 }
 
 export async function fetchUnutilizedListingImprovements(
   workspaceId: string,
+  signal?: AbortSignal,
 ): Promise<ListingImprovementItem[]> {
-  return fetchListingImprovementsResponse(workspaceId);
+  return fetchListingImprovementsResponse(workspaceId, signal);
 }
 
 export async function fetchListingImprovementReviewIds(
   workspaceId: string,
+  signal?: AbortSignal,
 ): Promise<string[]> {
-  const items = await fetchListingImprovementsResponse(workspaceId);
+  const items = await fetchListingImprovementsResponse(workspaceId, signal);
   return items
     .map((item) => item.reviewId)
     .filter((id): id is string => typeof id === "string" && id.length > 0);

@@ -19,7 +19,9 @@ import {
   getOptimizationQueueSnapshot,
   hydrateOptimizationQueueStore,
   optimizationQueueStoreKey,
+  optimisticallyRemoveOptimizationQueueItem,
   patchOptimizationQueueStore,
+  restoreOptimizationQueueSnapshot,
   subscribeOptimizationQueue,
   type OptimizationQueueStoreSnapshot,
 } from "@/lib/client/optimization-queue-store";
@@ -171,11 +173,19 @@ export function useOptimizationQueue(
 
   const removeItem = useCallback(
     async (itemId: string) => {
-      const previousSnapshot = getOptimizationQueueSnapshot(storeKey);
+      const previousSnapshot: OptimizationQueueStoreSnapshot =
+        getOptimizationQueueSnapshot(storeKey);
+      const previousQuery = queryClient.getQueryData<typeof data>(key);
 
-      patchOptimizationQueueStore(storeKey, (prev) =>
-        prev.filter((i) => i.id !== itemId),
-      );
+      optimisticallyRemoveOptimizationQueueItem(storeKey, itemId);
+
+      queryClient.setQueryData(key, (prev: typeof data | undefined) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items.filter((i) => i.id !== itemId),
+        };
+      });
 
       try {
         await removeFromOptimizationQueueClient(workspaceId, locale, itemId, appId);
@@ -184,10 +194,15 @@ export function useOptimizationQueue(
           queryKey: ["optimizer-context", workspaceId, locale],
         });
       } catch (err) {
-        hydrateOptimizationQueueStore(storeKey, {
+        restoreOptimizationQueueSnapshot(storeKey, {
           items: previousSnapshot.items,
           stats: previousSnapshot.stats,
         });
+        if (previousQuery) {
+          queryClient.setQueryData(key, previousQuery);
+        } else {
+          void queryClient.invalidateQueries({ queryKey: key });
+        }
         const message = err instanceof Error ? err.message : "Failed to remove queue item";
         toast.error(message);
         throw err;

@@ -39,4 +39,34 @@ describe("optimization queue active context", () => {
     expect(partitioned.review_insights[0]?.payload.content).toBe("App crashes on login");
     expect(partitioned.feature_requests).toHaveLength(1);
   });
+
+  it("keeps user-staged review pain points visible (backlog_id / explicitly_staged)", () => {
+    const queueItems: OptimizationQueueItem[] = [
+      {
+        id: "staged-1",
+        type: "review_pain_point",
+        category: "review",
+        content: "Aggressive Paywall Blocks Features",
+        source: "review_analysis",
+        sourceContext: "common_issues_theme",
+        sourceContextId: "issue-1",
+        language: "en",
+        stagedAt: new Date().toISOString(),
+        metadata: {
+          category: "review",
+          review_derived: true,
+          from_review_insights: true,
+          backlog_id: "backlog-uuid-1",
+          explicitly_staged: true,
+          move_to_active_context: true,
+        },
+      },
+    ];
+
+    const partitioned = partitionQueueItemsBySignalType(queueItems);
+    expect(partitioned.review_insights).toHaveLength(1);
+    expect(partitioned.review_insights[0]?.payload.content).toBe(
+      "Aggressive Paywall Blocks Features",
+    );
+  });
 });

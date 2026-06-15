@@ -220,7 +220,12 @@ export default function StagingSignalChip({
           {/* Remove button */}
           {displayOptions.showRemoveButton && (
             <button
-              onClick={handleRemove}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleRemove();
+              }}
               disabled={isRemoving}
               className={`ml-1 p-1 rounded shrink-0 transition-all ${display.removeBtnColor} ${
                 isRemoving ? "opacity-50 cursor-not-allowed" : "hover:scale-110 active:scale-95"

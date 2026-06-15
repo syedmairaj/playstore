@@ -110,6 +110,8 @@ export async function adoptPendingReviewInsight(
             last_analysis_timestamp: gate.lastAnalysisTimestamp,
             analysis_status: REVIEW_ANALYSIS_STATUS_SUCCESS,
             pending_insight_id: pending.id,
+            explicitly_staged: true,
+            move_to_active_context: true,
           },
         },
       ],
