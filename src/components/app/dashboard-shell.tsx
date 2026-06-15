@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { DashboardNavbar } from "@/components/app/dashboard-navbar";
 import { DashboardSidebar } from "@/components/app/dashboard-sidebar";
 import { WorkspaceAppProviders } from "@/components/app/workspace-app-providers";
+import { WorkspaceQueryPrefetch } from "@/components/app/workspace-query-prefetch";
 import type { NavItem } from "@/components/dashboard/WorkspaceSidebarNav";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,7 @@ export function DashboardShell({
 
   return (
     <WorkspaceAppProviders>
+      <WorkspaceQueryPrefetch workspaceId={workspaceId} />
       <div className="flex h-full min-h-0 w-full overflow-x-hidden bg-[#090c11] text-zinc-100 antialiased">
         {mobileNavOpen ? (
           <button
@@ -69,6 +71,7 @@ export function DashboardShell({
             items={navItems}
             navAriaLabel={navAriaLabel}
             onNavigate={() => setMobileNavOpen(false)}
+            workspaceId={workspaceId}
             className="h-full"
           />
         </aside>

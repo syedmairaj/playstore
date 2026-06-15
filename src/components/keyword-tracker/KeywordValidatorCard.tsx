@@ -31,7 +31,7 @@
  * inset-inline-* on a fixed element is unreliable across browsers.
  */
 
-import { useState, useCallback, useId, useRef, useEffect } from 'react';
+import { useState, useCallback, useId, useRef, useEffect, useMemo } from 'react';
 import {
   X, Loader2, TrendingUp, Shield, Zap,
   CheckCircle2, Search, BarChart3, Sparkles, ArrowUpRight,
@@ -49,6 +49,8 @@ import {
   type VaultLocale,
 } from '@/hooks/useOptimizerSync';
 import { useOptimizationQueue } from '@/hooks/useOptimizationQueue';
+import { dispatchStagingVaultChanged } from '@/lib/client/staging-vault-sync';
+import { optimizationQueueQueryPrefix } from '@/lib/client/optimization-queue-cache-sync';
 import type { KeywordSignal } from '@/lib/staging/keyword-signals';
 
 // Query key used by useOptimizerSync — must match exactly so invalidation
@@ -65,6 +67,16 @@ const C = {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** Per-market viability slice shown in multi-market tabs. */
+export type MarketKeywordSlice = {
+  difficulty: number;
+  confidence: number;
+  searchVolume: number;
+  competition: number;
+  monthlyInstalls: { low: number; realistic: number; high: number };
+  recommendation: 'HIGH_CONFIDENCE' | 'MEDIUM_OPPORTUNITY' | 'SKIP';
+};
+
 /** Shape the component works with internally — flat, normalised. */
 export interface KeywordScore {
   keyword: string;
@@ -74,6 +86,9 @@ export interface KeywordScore {
   competition: number;      // 0-100
   monthlyInstalls: { low: number; realistic: number; high: number };
   recommendation: 'HIGH_CONFIDENCE' | 'MEDIUM_OPPORTUNITY' | 'SKIP';
+  primaryMarket?: string;
+  analyzedMarkets?: string[];
+  marketBreakdown?: Record<string, MarketKeywordSlice>;
   // Multi-market live rank results — keyed by market code, e.g. { us: { rank: 1 }, in: { rank: null } }
   liveRanks?: Record<string, {
     rank: number | null;
@@ -89,30 +104,70 @@ function countFetchedMarkets(score: KeywordScore): number {
   return Object.keys(score.liveRanks ?? {}).length;
 }
 
+interface RawApiMarketData {
+  keyword: string;
+  confidence: number;
+  recommendation: 'high_confidence' | 'medium_opportunity' | 'skip_this';
+  difficulty: {
+    difficulty: number;
+    searchVolume: number;
+    competition: number;
+    confidenceScore?: number;
+  };
+  monthlyInstalls: {
+    low: number;
+    medium?: number;
+    realistic?: number;
+    high: number;
+  };
+}
+
 /**
  * Raw shape returned by POST /api/…/validator/validate-keyword
- * recommendation comes as lowercase snake_case; difficulty is a nested object.
  */
 interface RawApiResponse {
   ok: boolean;
-  data?: {
-    keyword: string;
-    confidence: number;
-    recommendation: 'high_confidence' | 'medium_opportunity' | 'skip_this';
-    difficulty: {
-      difficulty: number;
-      searchVolume: number;
-      competition: number;
-      confidenceScore?: number;
-    };
-    monthlyInstalls: {
-      low: number;
-      medium?: number;   // API uses "medium", not "realistic"
-      realistic?: number;
-      high: number;
-    };
+  data?: RawApiMarketData & {
+    primaryMarket?: string;
+    markets?: Record<string, RawApiMarketData>;
   };
   error?: { message?: string };
+}
+
+const REC_MAP: Record<string, KeywordScore['recommendation']> = {
+  high_confidence:    'HIGH_CONFIDENCE',
+  medium_opportunity: 'MEDIUM_OPPORTUNITY',
+  skip_this:          'SKIP',
+  HIGH_CONFIDENCE:    'HIGH_CONFIDENCE',
+  MEDIUM_OPPORTUNITY: 'MEDIUM_OPPORTUNITY',
+  SKIP:               'SKIP',
+};
+
+function sliceFromRawMarket(d: RawApiMarketData): MarketKeywordSlice {
+  return {
+    difficulty: d.difficulty.difficulty,
+    confidence: d.confidence,
+    searchVolume: d.difficulty.searchVolume,
+    competition: d.difficulty.competition,
+    monthlyInstalls: {
+      low: d.monthlyInstalls.low,
+      realistic: d.monthlyInstalls.realistic ?? d.monthlyInstalls.medium ?? 0,
+      high: d.monthlyInstalls.high,
+    },
+    recommendation: REC_MAP[d.recommendation] ?? 'SKIP',
+  };
+}
+
+function scoreFromSlice(keyword: string, slice: MarketKeywordSlice): KeywordScore {
+  return {
+    keyword,
+    difficulty: slice.difficulty,
+    confidence: slice.confidence,
+    searchVolume: slice.searchVolume,
+    competition: slice.competition,
+    monthlyInstalls: slice.monthlyInstalls,
+    recommendation: slice.recommendation,
+  };
 }
 
 /** Maps the raw API response → internal KeywordScore. Throws on bad shape. */
@@ -120,31 +175,43 @@ function normaliseApiResponse(raw: RawApiResponse): KeywordScore {
   const d = raw?.data;
   if (!d) throw new Error('Empty response from validator');
 
-  // Map recommendation: API uses lowercase snake_case, TIER map uses SCREAMING_SNAKE
-  const recMap: Record<string, KeywordScore['recommendation']> = {
-    high_confidence:    'HIGH_CONFIDENCE',
-    medium_opportunity: 'MEDIUM_OPPORTUNITY',
-    skip_this:          'SKIP',
-    // Handle already-normalised values in case the API is updated
-    HIGH_CONFIDENCE:    'HIGH_CONFIDENCE',
-    MEDIUM_OPPORTUNITY: 'MEDIUM_OPPORTUNITY',
-    SKIP:               'SKIP',
-  };
-  const recommendation: KeywordScore['recommendation'] =
-    recMap[d.recommendation] ?? 'SKIP';
+  const marketEntries = Object.entries(d.markets ?? {});
+  const primaryMarket = (d.primaryMarket ?? marketEntries[0]?.[0] ?? 'us').toLowerCase();
+
+  const marketBreakdown: Record<string, MarketKeywordSlice> = {};
+  for (const [market, mdata] of marketEntries) {
+    marketBreakdown[market.toLowerCase()] = sliceFromRawMarket(mdata);
+  }
+
+  const primarySlice =
+    marketBreakdown[primaryMarket] ??
+    sliceFromRawMarket(d);
+
+  const base = scoreFromSlice(d.keyword, primarySlice);
 
   return {
-    keyword:      d.keyword,
-    difficulty:   d.difficulty.difficulty,        // unnest
-    confidence:   d.confidence,
-    searchVolume: d.difficulty.searchVolume,       // unnest
-    competition:  d.difficulty.competition,        // unnest
-    monthlyInstalls: {
-      low:       d.monthlyInstalls.low,
-      realistic: d.monthlyInstalls.realistic ?? d.monthlyInstalls.medium ?? 0,
-      high:      d.monthlyInstalls.high,
-    },
-    recommendation,
+    ...base,
+    primaryMarket,
+    analyzedMarkets:
+      marketEntries.length > 0
+        ? marketEntries.map(([m]) => m.toLowerCase())
+        : [primaryMarket],
+    marketBreakdown:
+      marketEntries.length > 0 ? marketBreakdown : { [primaryMarket]: primarySlice },
+  };
+}
+
+function resolveDisplayScore(score: KeywordScore, activeMarket: string): KeywordScore {
+  const market = activeMarket.toLowerCase();
+  const slice = score.marketBreakdown?.[market];
+  if (!slice) return score;
+  return {
+    ...score,
+    ...scoreFromSlice(score.keyword, slice),
+    primaryMarket: market,
+    analyzedMarkets: score.analyzedMarkets,
+    marketBreakdown: score.marketBreakdown,
+    liveRanks: score.liveRanks,
   };
 }
 
@@ -383,17 +450,32 @@ function ResultRow({
   score: KeywordScore;
   staged: 'pending' | 'done' | undefined;
   onStage: () => void;
-  /** Remove this individual result from the list */
   onRemove: () => void;
-  /** Called when user clicks Fetch Live Rank — server handles credit deduction */
   onFetchLiveRank?: (countries: string[]) => void;
   liveRankState?: 'pending' | 'done' | 'error';
-  /** Markets selected in the Keyword Tracker — drives cost display + fetch */
   selectedCountries?: string[];
 }) {
   const t = useTranslations('keywordValidator');
-  const tier    = TIER[score.recommendation];
+  const markets = useMemo(
+    () =>
+      score.analyzedMarkets?.length
+        ? score.analyzedMarkets
+        : (selectedCountries?.length ? selectedCountries.map((c) => c.toLowerCase()) : ['us']),
+    [score.analyzedMarkets, selectedCountries],
+  );
+  const [activeMarket, setActiveMarket] = useState(
+    () => score.primaryMarket ?? markets[0] ?? 'us',
+  );
+
+  const marketsKey = markets.join(",");
+  useEffect(() => {
+    setActiveMarket(score.primaryMarket ?? markets[0] ?? "us");
+  }, [score.keyword, score.primaryMarket, marketsKey, markets]);
+
+  const display = resolveDisplayScore(score, activeMarket);
+  const tier    = TIER[display.recommendation];
   const TierIcon = tier.Icon;
+  const showMarketTabs = markets.length > 1;
 
   return (
     <article
@@ -411,12 +493,57 @@ function ResultRow({
         aria-hidden
       />
 
+      {showMarketTabs ? (
+        <div
+          className="flex flex-wrap gap-1.5 border-b px-4 py-2.5"
+          style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+          role="tablist"
+          aria-label={t('marketsAnalyzed', {
+            markets: markets.map((m) => m.toUpperCase()).join(', '),
+          })}
+        >
+          {markets.map((market) => {
+            const active = market === activeMarket;
+            const slice = score.marketBreakdown?.[market];
+            const rec = slice?.recommendation ?? display.recommendation;
+            const accent = TIER[rec]?.accent ?? '#71717a';
+            return (
+              <button
+                key={market}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-label={t('marketTabAria', { market: market.toUpperCase() })}
+                onClick={() => setActiveMarket(market)}
+                className="rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200"
+                style={
+                  active
+                    ? {
+                        borderColor: `${accent}66`,
+                        backgroundColor: `${accent}22`,
+                        color: accent,
+                        boxShadow: `0 0 12px -4px ${accent}55`,
+                      }
+                    : {
+                        borderColor: 'rgba(255,255,255,0.08)',
+                        backgroundColor: 'rgba(255,255,255,0.03)',
+                        color: 'rgba(161,161,170,0.8)',
+                      }
+                }
+              >
+                {market.toUpperCase()}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {/* Top row */}
       <div className="flex items-start gap-4 p-4 pb-3">
         {/* Gauge + badge */}
         <div className="flex flex-col items-center gap-1 pt-0.5">
-          <ViabilityGauge value={score.difficulty} />
-          <DifficultyBadge value={score.difficulty} />
+          <ViabilityGauge value={display.difficulty} />
+          <DifficultyBadge value={display.difficulty} />
         </div>
 
         {/* Meta */}
@@ -425,7 +552,7 @@ function ResultRow({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <p className="truncate text-[15px] font-semibold text-white">{score.keyword}</p>
+                <p className="truncate text-[15px] font-semibold text-white">{display.keyword}</p>
                 {/* Per-card remove button */}
                 <button
                   type="button"
@@ -440,7 +567,7 @@ function ResultRow({
                 </button>
               </div>
               <p className="mt-0.5 flex items-center gap-1 text-xs" style={{ color: '#71717a' }}>
-                Search vol · {fmtVol(score.searchVolume)}/mo
+                {t('searchVolLabel', { volume: fmtVol(display.searchVolume) })}
                 <EstimatedTag />
               </p>
             </div>
@@ -465,9 +592,9 @@ function ResultRow({
                 <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
                   Conf. <EstimatedTag />
                 </span>
-                <ConfidenceRing pct={score.confidence} />
+                <ConfidenceRing pct={display.confidence} />
               </div>
-              <p className="text-xs font-semibold text-white">{score.confidence}%</p>
+              <p className="text-xs font-semibold text-white">{display.confidence}%</p>
             </div>
 
             {/* Competition */}
@@ -482,11 +609,11 @@ function ResultRow({
                 <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
                   <div
                     className="h-full rounded-full transition-all duration-700"
-                    style={{ width: `${score.competition}%`, backgroundColor: '#3b82f6' }}
+                    style={{ width: `${display.competition}%`, backgroundColor: '#3b82f6' }}
                     role="presentation"
                   />
                 </div>
-                <p className="text-xs font-semibold" style={{ color: '#93c5fd' }}>{score.competition}%</p>
+                <p className="text-xs font-semibold" style={{ color: '#93c5fd' }}>{display.competition}%</p>
               </div>
             </div>
 
@@ -499,11 +626,11 @@ function ResultRow({
                 Installs/mo <EstimatedTag />
               </span>
               <div className="flex items-center gap-1.5 text-xs">
-                <span style={{ color: '#a1a1aa' }}>{fmtVol(score.monthlyInstalls.low)}</span>
+                <span style={{ color: '#a1a1aa' }}>{fmtVol(display.monthlyInstalls.low)}</span>
                 <span style={{ color: '#52525b' }}>–</span>
-                <span className="font-bold text-white">{fmtVol(score.monthlyInstalls.realistic)}</span>
+                <span className="font-bold text-white">{fmtVol(display.monthlyInstalls.realistic)}</span>
                 <span style={{ color: '#52525b' }}>–</span>
-                <span className="font-semibold" style={{ color: '#fcd34d' }}>{fmtVol(score.monthlyInstalls.high)}</span>
+                <span className="font-semibold" style={{ color: '#fcd34d' }}>{fmtVol(display.monthlyInstalls.high)}</span>
               </div>
             </div>
           </div>
@@ -534,15 +661,14 @@ function ResultRow({
             </span>
             <span className="text-[11px] font-semibold uppercase tracking-[0.12em]"
               style={{ color: staged === 'done' ? '#6ee7b7' : 'rgba(255,255,255,0.35)' }}>
-              Stage to tracker
+              {t('stageStepLabel')}
             </span>
             <span className="ms-auto text-[10px]" style={{ color: 'rgba(113,113,122,0.8)' }}>Free</span>
           </div>
 
-          {/* What staging does — always visible, not a tooltip */}
           {staged !== 'done' && (
             <p className="text-[11px] leading-relaxed" style={{ color: 'rgba(161,161,170,0.7)' }}>
-              Saves this keyword to your Keyword Tracker watchlist. From there you can preview live Play Store ranks (1 credit/market) and build a rank history over time.
+              {t('stageStepHint')}
             </p>
           )}
 
@@ -550,10 +676,13 @@ function ResultRow({
             type="button"
             onClick={onStage}
             disabled={Boolean(staged)}
-            className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none"
+            className={cn(
+              'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-300 ease-out focus-visible:outline-none',
+              staged === 'done' && 'scale-[0.99]',
+            )}
             style={
               staged === 'done'
-                ? { backgroundColor: 'rgba(16,185,129,0.12)', color: '#6ee7b7', cursor: 'default' }
+                ? { backgroundColor: 'rgba(16,185,129,0.18)', color: '#6ee7b7', cursor: 'default', border: '1px solid rgba(16,185,129,0.35)' }
                 : staged === 'pending'
                 ? { backgroundColor: 'rgba(255,255,255,0.04)', color: '#52525b', cursor: 'not-allowed' }
                 : {
@@ -562,14 +691,14 @@ function ResultRow({
                     border: '1px solid rgba(16,185,129,0.3)',
                   }
             }
-            aria-label={staged === 'done' ? 'Already staged' : `Stage "${score.keyword}" to tracker`}
+            aria-label={staged === 'done' ? t('addedButton') : t('stageButton')}
           >
             {staged === 'pending' ? (
-              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Staging…</>
+              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t('stagingButton')}</>
             ) : staged === 'done' ? (
-              <><CheckCircle2 className="h-3.5 w-3.5" /> Staged to tracker</>
+              <><CheckCircle2 className="h-3.5 w-3.5" /> {t('addedButton')}</>
             ) : (
-              <><ArrowUpRight className="h-3.5 w-3.5" /> Stage to Keyword Tracker</>
+              <><ArrowUpRight className="h-3.5 w-3.5" /> {t('stageButton')}</>
             )}
           </button>
         </div>
@@ -742,7 +871,13 @@ function loadStagingState(workspaceId: string): Record<string, 'pending' | 'done
   try {
     const raw = localStorage.getItem(`${storageKey(workspaceId)}_staged`);
     if (!raw) return {};
-    return JSON.parse(raw) as Record<string, 'pending' | 'done'>;
+    const parsed = JSON.parse(raw) as Record<string, 'pending' | 'done'>;
+    // `pending` is ephemeral — never restore it (avoids permanent "Staging…" after refresh).
+    const out: Record<string, 'done'> = {};
+    for (const [kw, state] of Object.entries(parsed)) {
+      if (state === 'done') out[kw] = 'done';
+    }
+    return out;
   } catch {
     return {};
   }
@@ -750,7 +885,11 @@ function loadStagingState(workspaceId: string): Record<string, 'pending' | 'done
 
 function saveStagingState(workspaceId: string, state: Record<string, 'pending' | 'done'>) {
   try {
-    localStorage.setItem(`${storageKey(workspaceId)}_staged`, JSON.stringify(state));
+    const doneOnly: Record<string, 'done'> = {};
+    for (const [kw, value] of Object.entries(state)) {
+      if (value === 'done') doneOnly[kw] = 'done';
+    }
+    localStorage.setItem(`${storageKey(workspaceId)}_staged`, JSON.stringify(doneOnly));
   } catch {
     // fail silently
   }
@@ -769,7 +908,15 @@ export function KeywordValidatorCard({
   const headingId   = useId();
   const inputRef    = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
-  const { addItems: addToOptimizationQueue } = useOptimizationQueue(
+  const tKv = useTranslations('keywordValidator');
+  const validationMarkets = useMemo(
+    () =>
+      (selectedCountries?.length ? selectedCountries : ['us'])
+        .map((c) => c.toLowerCase())
+        .slice(0, 4),
+    [selectedCountries],
+  );
+  const { addItems: addToOptimizationQueue, refetch: refetchOptimizationQueue } = useOptimizationQueue(
     workspaceId,
     vaultLocale,
     appId,
@@ -824,22 +971,24 @@ export function KeywordValidatorCard({
       const res = await fetch(`/api/workspaces/${workspaceId}/validator/validate-keyword`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: q, language: 'en' }),
+        body: JSON.stringify({
+          keyword: q,
+          language: vaultLocale === 'ar' ? 'ar' : 'en',
+          countries: validationMarkets,
+        }),
       });
       const raw = (await res.json().catch(() => ({}))) as RawApiResponse;
       if (!res.ok) {
-        throw new Error(raw?.error?.message ?? 'Validation failed');
+        throw new Error(raw?.error?.message ?? tKv('toastValidationFailed'));
       }
-      // Normalise: flattens nested difficulty, maps recommendation casing
       return normaliseApiResponse(raw);
     },
     onSuccess: (data) => {
-      // Deduplicate by keyword so re-validating the same term replaces the old result
       setResults((prev) => [data, ...prev.filter((r) => r.keyword !== data.keyword)]);
       setKeyword('');
-      toast.success('Keyword validated');
+      toast.success(tKv('toastValidated'));
     },
-    onError: (err: Error) => toast.error(err.message ?? 'Validation failed'),
+    onError: (err: Error) => toast.error(err.message ?? tKv('toastValidationFailed')),
   });
 
   const handleValidate = useCallback(() => {
@@ -853,25 +1002,8 @@ export function KeywordValidatorCard({
     mutationFn: async (score: KeywordScore) => {
       if (!appId) throw new Error('Select an app before staging keywords');
 
-      await addToOptimizationQueue([
-        {
-          type: 'market_keyword',
-          category: 'tracker',
-          content: score.keyword,
-          source: 'keyword_tracker',
-          metadata: {
-            category: 'tracker',
-            source_origin: 'keyword_validator',
-            difficulty: score.difficulty,
-            confidence: score.confidence,
-            searchVolume: score.searchVolume,
-            competition: score.competition,
-            recommendation: score.recommendation,
-            monthlyInstalls: score.monthlyInstalls,
-          },
-        },
-      ]);
-
+      // Vault keyword signals are the Keyword Tracker SSOT — write first so UI can complete
+      // even if the optimization queue sync is slower.
       const res = await fetch(`/api/workspaces/${workspaceId}/staging-vault/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -891,6 +1023,30 @@ export function KeywordValidatorCard({
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? 'Staging failed');
       }
+
+      try {
+        await addToOptimizationQueue([
+          {
+            type: 'market_keyword',
+            category: 'tracker',
+            content: score.keyword,
+            source: 'keyword_tracker',
+            metadata: {
+              category: 'tracker',
+              source_origin: 'keyword_validator',
+              difficulty: score.difficulty,
+              confidence: score.confidence,
+              searchVolume: score.searchVolume,
+              competition: score.competition,
+              recommendation: score.recommendation,
+              monthlyInstalls: score.monthlyInstalls,
+            },
+          },
+        ]);
+      } catch (queueErr) {
+        console.warn('[KeywordValidator] optimization queue sync failed (vault staged):', queueErr);
+      }
+
       return score;
     },
     onMutate: (s) => {
@@ -912,10 +1068,20 @@ export function KeywordValidatorCard({
     onSuccess: (s) => {
       setStagingState((p) => ({ ...p, [s.keyword]: 'done' }));
       onKeywordStaged?.(s.keyword, s);
-      toast.success(`"${s.keyword}" staged to tracker`);
+      toast.success(tKv('toastStagedOptimizer'));
+      dispatchStagingVaultChanged({
+        workspaceId,
+        appId,
+        locale: vaultLocale,
+        keyword: s.keyword,
+      });
       void queryClient.invalidateQueries({
         queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
       });
+      void queryClient.invalidateQueries({
+        queryKey: optimizationQueueQueryPrefix(workspaceId, vaultLocale),
+      });
+      void refetchOptimizationQueue();
       if (appId) {
         void queryClient.invalidateQueries({
           queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId, vaultLocale),
@@ -929,7 +1095,11 @@ export function KeywordValidatorCard({
           queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId, vaultLocale),
         });
       }
-      toast.error(err.message ?? 'Staging failed');
+      toast.error(err.message ?? tKv('toastStagingFailed'));
+    },
+    onSettled: (_data, error, s) => {
+      if (error) return;
+      setStagingState((p) => ({ ...p, [s.keyword]: 'done' }));
     },
   });
 
@@ -1245,7 +1415,14 @@ export function KeywordValidatorCard({
             </div>
             {!validateMutation.isPending && (
               <p className="mt-1.5 px-1 text-[10px]" style={{ color: '#3f3f46' }}>
-                Press Enter to analyze
+                {tKv('enterHint')}
+                {validationMarkets.length > 1 ? (
+                  <span className="ms-1" style={{ color: '#52525b' }}>
+                    · {tKv('marketsAnalyzed', {
+                      markets: validationMarkets.map((m) => m.toUpperCase()).join(', '),
+                    })}
+                  </span>
+                ) : null}
               </p>
             )}
           </div>

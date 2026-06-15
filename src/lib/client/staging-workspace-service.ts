@@ -66,10 +66,10 @@ export function buildStagingWorkspaceState(
     },
     marketOpportunities: {
       id: "market_opportunities",
-      label: { en: "Market Opportunities", ar: "فرص السوق" },
+      label: { en: "Market Intelligence Signals", ar: "إشارات ذكاء السوق" },
       description: {
-        en: "→ woven into title + short description",
-        ar: "← تُنسج في العنوان + الوصف القصير",
+        en: "→ user-staged keywords from Market Intel",
+        ar: "← كلمات اختارها المستخدم من ذكاء السوق",
       },
       icon: "TrendingUp",
       color: {
@@ -176,7 +176,7 @@ export function formatSignalsForPrompt(
 
   // Market Opportunities section
   if (state.marketOpportunities.count > 0) {
-    const marketHeader = isArabic ? "فرص السوق:" : "Market Opportunities:";
+    const marketHeader = isArabic ? "إشارات ذكاء السوق:" : "Market Intelligence Signals:";
     const opportunities = state.marketOpportunities.signals
       .map((s) => `  - ${s.keyword}${s.searchVolume ? ` (${s.searchVolume} searches)` : ""}`)
       .join("\n");

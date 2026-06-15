@@ -63,6 +63,111 @@ export class KeywordViabilityService {
   };
 
   /**
+   * Validate a keyword across multiple Play Store markets in parallel.
+   * Applies per-market volume/competition adjustments on a shared base score.
+   */
+  async validateKeywordForMarkets(
+    keyword: string,
+    markets: string[],
+    category: string = "default",
+    language: "en" | "ar" = "en",
+  ): Promise<Record<string, KeywordViabilityScore>> {
+    const normalizedMarkets = [
+      ...new Set(
+        markets
+          .map((m) => m.trim().toLowerCase())
+          .filter((m) => m.length >= 2),
+      ),
+    ];
+    const targets = normalizedMarkets.length > 0 ? normalizedMarkets : ["us"];
+
+    const base = await this.validateKeyword(keyword, category, language);
+    const out: Record<string, KeywordViabilityScore> = {};
+    for (const market of targets) {
+      out[market] = this.applyMarketAdjustments(base, market);
+    }
+    return out;
+  }
+
+  /**
+   * Per-market heuristics — relative to US baseline.
+   */
+  private marketFactors(market: string): { volume: number; competition: number } {
+    const factors: Record<string, { volume: number; competition: number }> = {
+      us: { volume: 1, competition: 1 },
+      gb: { volume: 0.32, competition: 0.92 },
+      ca: { volume: 0.28, competition: 0.88 },
+      au: { volume: 0.22, competition: 0.85 },
+      in: { volume: 0.9, competition: 0.72 },
+      sa: { volume: 0.24, competition: 0.68 },
+      ae: { volume: 0.18, competition: 0.7 },
+      eg: { volume: 0.35, competition: 0.65 },
+      de: { volume: 0.38, competition: 0.9 },
+      fr: { volume: 0.34, competition: 0.88 },
+      br: { volume: 0.55, competition: 0.78 },
+      mx: { volume: 0.42, competition: 0.74 },
+      id: { volume: 0.62, competition: 0.7 },
+      pk: { volume: 0.48, competition: 0.66 },
+    };
+    return factors[market] ?? { volume: 0.4, competition: 0.8 };
+  }
+
+  private applyMarketAdjustments(
+    base: KeywordViabilityScore,
+    market: string,
+  ): KeywordViabilityScore {
+    const { volume, competition } = this.marketFactors(market);
+    const searchVolume = Math.max(
+      500,
+      Math.round(base.difficulty.searchVolume * volume),
+    );
+    const competitionPct = Math.max(
+      0,
+      Math.min(100, Math.round(base.difficulty.competition * competition)),
+    );
+    const difficulty = parseFloat(
+      Math.max(0, Math.min(10, base.difficulty.difficulty * (0.85 + competition * 0.15))).toFixed(1),
+    );
+
+    const monthlyInstalls = this.projectMonthlyInstalls(
+      difficulty,
+      searchVolume,
+      competitionPct,
+    );
+
+    const confidence = this.calculateConfidence(
+      difficulty,
+      searchVolume,
+      "default",
+    );
+
+    const recommendation = this.determineRecommendation(
+      difficulty,
+      confidence,
+      monthlyInstalls.medium,
+    );
+
+    const marketLabel = market.toUpperCase();
+
+    return {
+      ...base,
+      keyword: base.keyword,
+      difficulty: {
+        ...base.difficulty,
+        difficulty,
+        searchVolume,
+        competition: competitionPct,
+        confidenceScore: confidence,
+      },
+      monthlyInstalls,
+      recommendation,
+      confidence,
+      reasoning: `${base.reasoning} Market focus: ${marketLabel}.`,
+      tags: [...new Set([...base.tags, `market-${market}`])],
+    };
+  }
+
+  /**
    * Validate a keyword and return viability score
    */
   async validateKeyword(

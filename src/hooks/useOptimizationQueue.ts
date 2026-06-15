@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type {
@@ -25,6 +26,19 @@ import {
   subscribeOptimizationQueue,
   type OptimizationQueueStoreSnapshot,
 } from "@/lib/client/optimization-queue-store";
+import {
+  STAGING_VAULT_CHANGED_EVENT,
+  type StagingVaultChangedDetail,
+} from "@/lib/client/staging-vault-sync";
+import {
+  buildQueueDeltaFromResponse,
+} from "@/lib/client/active-context-delta";
+import { dispatchStagingVaultDelta } from "@/lib/client/staging-vault-sync";
+import {
+  optimizationQueueQueryPrefix,
+  patchAllOptimizationQueueStores,
+  syncOptimizationQueueCaches,
+} from "@/lib/client/optimization-queue-cache-sync";
 
 function buildOptimisticItems(
   prev: OptimizationQueueItem[],
@@ -86,11 +100,12 @@ export function useOptimizationQueue(
   const key = OPTIMIZATION_QUEUE_KEY(workspaceId, locale, appId);
   const storeKey = optimizationQueueStoreKey(workspaceId, locale, appId);
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
+  const { data, isFetching, error, refetch, isPending } = useQuery({
     queryKey: key,
     queryFn: () => fetchOptimizationQueue(workspaceId, locale, appId),
     enabled: Boolean(workspaceId),
-    staleTime: 3000,
+    placeholderData: keepPreviousData,
+    ...queryDefaultsFor("activeContext"),
   });
 
   useEffect(() => {
@@ -100,6 +115,19 @@ export function useOptimizationQueue(
       stats: data.stats,
     });
   }, [data, storeKey]);
+
+  useEffect(() => {
+    const onVaultChanged = (event: Event) => {
+      const detail = (event as CustomEvent<StagingVaultChangedDetail>).detail;
+      if (!detail || detail.workspaceId !== workspaceId) return;
+      if (detail.locale && detail.locale !== locale) return;
+      void queryClient.invalidateQueries({
+        queryKey: optimizationQueueQueryPrefix(workspaceId, locale),
+      });
+    };
+    window.addEventListener(STAGING_VAULT_CHANGED_EVENT, onVaultChanged);
+    return () => window.removeEventListener(STAGING_VAULT_CHANGED_EVENT, onVaultChanged);
+  }, [workspaceId, locale, queryClient]);
 
   const storeSnapshot = useSyncExternalStore(
     useCallback((onStoreChange) => subscribeOptimizationQueue(storeKey, onStoreChange), [storeKey]),
@@ -116,22 +144,29 @@ export function useOptimizationQueue(
         getOptimizationQueueSnapshot(storeKey);
       const previousQuery = queryClient.getQueryData<typeof data>(key);
 
-      patchOptimizationQueueStore(storeKey, (prev) =>
+      patchAllOptimizationQueueStores(workspaceId, locale, (prev) =>
         buildOptimisticItems(prev, inputs, locale),
       );
 
-      queryClient.setQueryData(key, (prev: typeof data | undefined) => {
-        if (!prev) {
+      queryClient.setQueriesData(
+        { queryKey: optimizationQueueQueryPrefix(workspaceId, locale) },
+        (prev: typeof data | undefined) => {
+          if (!prev) {
+            return {
+              items: buildOptimisticItems([], inputs, locale),
+              stats: {
+                total: inputs.length,
+                byType: {} as never,
+                lastSyncAt: new Date().toISOString(),
+              },
+            };
+          }
           return {
-            items: buildOptimisticItems([], inputs, locale),
-            stats: { total: inputs.length, byType: {} as never, lastSyncAt: new Date().toISOString() },
+            ...prev,
+            items: buildOptimisticItems(prev.items, inputs, locale),
           };
-        }
-        return {
-          ...prev,
-          items: buildOptimisticItems(prev.items, inputs, locale),
-        };
-      });
+        },
+      );
 
       try {
         const result = await addToOptimizationQueueClient(
@@ -141,13 +176,19 @@ export function useOptimizationQueue(
           appId,
         );
 
-        hydrateOptimizationQueueStore(storeKey, {
-          items: result.items,
-          stats: result.stats,
-        });
-        queryClient.setQueryData(key, result);
+        syncOptimizationQueueCaches(queryClient, workspaceId, locale, result);
 
-        await queryClient.invalidateQueries({
+        dispatchStagingVaultDelta(
+          buildQueueDeltaFromResponse({
+            workspaceId,
+            locale,
+            appId,
+            items: result.items,
+            operation: "upsert",
+          }),
+        );
+
+        void queryClient.invalidateQueries({
           queryKey: ["optimizer-context", workspaceId, locale],
         });
 
@@ -160,7 +201,9 @@ export function useOptimizationQueue(
         if (previousQuery) {
           queryClient.setQueryData(key, previousQuery);
         } else {
-          void queryClient.invalidateQueries({ queryKey: key });
+          void queryClient.invalidateQueries({
+            queryKey: optimizationQueueQueryPrefix(workspaceId, locale),
+          });
         }
 
         const message = err instanceof Error ? err.message : "Failed to add to optimization queue";
@@ -189,7 +232,9 @@ export function useOptimizationQueue(
 
       try {
         await removeFromOptimizationQueueClient(workspaceId, locale, itemId, appId);
-        await queryClient.invalidateQueries({ queryKey: key });
+        await queryClient.invalidateQueries({
+          queryKey: optimizationQueueQueryPrefix(workspaceId, locale),
+        });
         await queryClient.invalidateQueries({
           queryKey: ["optimizer-context", workspaceId, locale],
         });
@@ -201,7 +246,9 @@ export function useOptimizationQueue(
         if (previousQuery) {
           queryClient.setQueryData(key, previousQuery);
         } else {
-          void queryClient.invalidateQueries({ queryKey: key });
+          void queryClient.invalidateQueries({
+            queryKey: optimizationQueueQueryPrefix(workspaceId, locale),
+          });
         }
         const message = err instanceof Error ? err.message : "Failed to remove queue item";
         toast.error(message);
@@ -225,7 +272,8 @@ export function useOptimizationQueue(
     items,
     stats: storeSnapshot.stats ?? data?.stats,
     storeVersion: storeSnapshot.version,
-    isLoading,
+    /** True only on first load with no cached data (not background refetch). */
+    isLoading: isPending && !data,
     isFetching,
     error,
     refetch,

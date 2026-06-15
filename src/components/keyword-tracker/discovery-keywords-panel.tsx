@@ -5,11 +5,11 @@ import { ArrowRight, Check } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { AiSuggestedKeywordsGrid, AiSuggestedKeywordsGridEmpty } from "@/components/keyword-tracker/ai-suggested-keywords-grid";
-import type { LatestAiListingKeywordsRow } from "@/lib/keywords/latest-ai-listing-by-app";
 import {
   addIgnoredDiscoveryKeyword,
   readIgnoredDiscoveryKeywords,
 } from "@/lib/keywords/discovery-keyword-preferences";
+import type { DiscoveryKeywordSuggestion } from "@/lib/keywords/discovery-ai-suggestions";
 import type { ListingAssetTarget } from "@/lib/keywords/discovery-listing-asset";
 import {
   fetchStagedDiscoveryKeywords,
@@ -26,8 +26,11 @@ import { cn } from "@/lib/utils";
 export type DiscoveryKeywordsPanelProps = {
   workspaceId: string;
   appId: string;
-  aiPack: LatestAiListingKeywordsRow;
-  suggestions: string[];
+  appName: string;
+  appCategory?: string | null;
+  generationId: string;
+  hasAiListingSource?: boolean;
+  suggestions: DiscoveryKeywordSuggestion[];
   trackedKeys: Set<string>;
   market: string;
   locale: string;
@@ -42,7 +45,10 @@ export type DiscoveryKeywordsPanelProps = {
 export function DiscoveryKeywordsPanel({
   workspaceId,
   appId,
-  aiPack,
+  appName,
+  appCategory,
+  generationId,
+  hasAiListingSource = false,
   suggestions,
   trackedKeys,
   market,
@@ -58,7 +64,7 @@ export function DiscoveryKeywordsPanel({
   const tAi = useTranslations("keywordTracker.aiSuggestedKeywords");
 
   const [ignoredKeys, setIgnoredKeys] = useState<Set<string>>(() =>
-    readIgnoredDiscoveryKeywords(workspaceId, appId, aiPack.generationId),
+    readIgnoredDiscoveryKeywords(workspaceId, appId, generationId),
   );
   const [vaultStaged, setVaultStaged] = useState<Map<string, ListingAssetTarget>>(
     () => new Map(),
@@ -84,8 +90,8 @@ export function DiscoveryKeywordsPanel({
   }, [refreshStaged]);
 
   const visibleSuggestions = useMemo(() => {
-    return suggestions.filter((kw) => {
-      const keys = keywordTrackingMatchKeys(kw);
+    return suggestions.filter((item) => {
+      const keys = keywordTrackingMatchKeys(item.keyword);
       return !keys.some((k) => ignoredKeys.has(k));
     });
   }, [suggestions, ignoredKeys]);
@@ -95,14 +101,14 @@ export function DiscoveryKeywordsPanel({
       const next = addIgnoredDiscoveryKeyword(
         workspaceId,
         appId,
-        aiPack.generationId,
+        generationId,
         keyword,
         ignoredKeys,
       );
       setIgnoredKeys(next);
       toast.message(tAi("ignoredToast", { term: keyword }));
     },
-    [workspaceId, appId, aiPack.generationId, ignoredKeys, tAi],
+    [workspaceId, appId, generationId, ignoredKeys, tAi],
   );
 
   const handleStage = useCallback(
@@ -117,7 +123,7 @@ export function DiscoveryKeywordsPanel({
           targetAsset: asset,
           market,
           language: locale,
-          generationId: aiPack.generationId,
+          generationId,
         });
         if (!result.ok) {
           toast.error(tAi("stageError"));
@@ -148,7 +154,7 @@ export function DiscoveryKeywordsPanel({
       workspaceId,
       market,
       locale,
-      aiPack.generationId,
+      generationId,
       localStaged,
       refreshStaged,
       onWorkflowChange,
@@ -163,6 +169,10 @@ export function DiscoveryKeywordsPanel({
     { id: "staging", label: tAi("workflow.staging"), active: true, done: localStaged.size > 0 || vaultStaged.size > 0 },
     { id: "tracking", label: tAi("workflow.tracking"), active: true, done: false },
   ] as const;
+
+  const contextLine = appCategory?.trim()
+    ? tAi("contextWithCategory", { app: appName, category: appCategory.trim() })
+    : tAi("contextAppOnly", { app: appName });
 
   return (
     <section
@@ -189,16 +199,19 @@ export function DiscoveryKeywordsPanel({
                 className="size-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.95)]"
                 aria-hidden
               />
-              <span className="min-w-0 leading-snug">{tAi("sourceLabel")}</span>
+              <span className="min-w-0 leading-snug">
+                {hasAiListingSource ? tAi("sourceLabel") : tAi("sourceContextual")}
+              </span>
             </p>
             <div className="space-y-2">
               <h2
                 id="ai-suggested-kw-heading"
                 className="text-xl font-semibold tracking-tight text-white sm:text-2xl"
               >
-                {tAi("title")}
+                {tAi("titleForApp", { app: appName })}
               </h2>
-              <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">{tAi("subtitleWorkflow")}</p>
+              <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">{contextLine}</p>
+              <p className="max-w-2xl text-sm leading-relaxed text-zinc-500">{tAi("subtitleWorkflow")}</p>
             </div>
             <ol
               className={cn(
@@ -236,7 +249,7 @@ export function DiscoveryKeywordsPanel({
           <AiSuggestedKeywordsGridEmpty message={tAi("allIgnored")} isRtl={isRtl} />
         ) : (
           <AiSuggestedKeywordsGrid
-            keywords={visibleSuggestions}
+            suggestions={visibleSuggestions}
             isRtl={isRtl}
             disabled={mutationPending || blockingError}
             loading={vaultLoading && vaultStaged.size === 0}
@@ -252,8 +265,7 @@ export function DiscoveryKeywordsPanel({
             onViewSearchVolumeHistory={(kw, isTracked) => {
               if (isTracked) {
                 toast.info(tAi("menuViewSearchVolume"), {
-                  description:
-                    "Open the tracked keywords table below to view rank history for this term.",
+                  description: tAi("searchVolumeHistoryTrackedHint"),
                 });
                 return;
               }

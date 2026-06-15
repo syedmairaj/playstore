@@ -6,10 +6,15 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { Hash, KeyRound, Loader2, X } from "lucide-react";
+import { Hash, Loader2, X } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
+import {
+  ActiveContextSlot,
+  ActiveContextSlotEmpty,
+} from "@/components/staging-workspace/active-context-slot";
+import { ActiveContextSignalList } from "@/components/staging-workspace/active-context-signal-list";
 import {
   difficultyBadge,
   type KeywordSignal,
@@ -29,7 +34,6 @@ const T = {
 } as const;
 
 const ROW_H = 30;
-const MAX_VISIBLE = 6;
 
 export interface KeywordTrackerPanelProps {
   workspaceId: string;
@@ -219,86 +223,70 @@ export default function KeywordTrackerPanel({
     },
   });
 
-  const loading = externalLoading || isLoading || isFetching;
   const hasSignals = total > 0;
 
   return (
-    <div
-      className={`space-y-2 ${isRtl ? "text-right" : ""}`}
-      dir={isRtl ? "rtl" : "ltr"}
-      lang={vaultLocale}
-    >
-      {/* Header — matches other Active Context pillars */}
-      <div
-        className={`flex items-center gap-2 border-b pb-2 ${isRtl ? "flex-row-reverse" : ""}`}
-        style={{ borderColor: "rgba(129, 140, 248, 0.18)" }}
+    <div dir={isRtl ? "rtl" : "ltr"} lang={vaultLocale}>
+      <ActiveContextSlot
+        id="active-context-keyword-tracker"
+        icon={Hash}
+        title={t("keywordTracker")}
+        description={t("keywordTrackerHelp")}
+        count={total}
+        isRtl={isRtl}
+        headerBorderClass="border-indigo-400/20"
+        iconClassName="text-indigo-300/80"
+        bodyClassName="bg-white/[0.02]"
       >
-        <Hash className="h-4 w-4 shrink-0" style={{ color: T.accent }} aria-hidden />
-        <h3
-          className={`flex-1 text-[11px] font-semibold text-white/90 ${
-            isRtl ? "font-arabic" : "uppercase tracking-[0.12em]"
-          }`}
-        >
-          {t("keywordTracker")}
-        </h3>
-        <span className="text-[10px] font-medium text-white/40 tabular-nums">
-          {hasSignals ? total : "—"}
-        </span>
-      </div>
-
-      <p
-        className={`text-[8px] leading-relaxed ${isRtl ? "font-arabic" : ""}`}
-        style={{ color: T.help }}
-      >
-        {t("keywordTrackerHelp")}
-      </p>
-
-      {loading && !hasSignals ? (
-        <div className="flex justify-center py-4">
-          <Loader2 className="h-4 w-4 animate-spin text-white/25" />
-        </div>
-      ) : !hasSignals ? (
-        <div className="flex flex-col items-center gap-3 py-5 text-center">
-          <KeyRound className="h-5 w-5 text-white/20" aria-hidden />
-          <p
-            className={`max-w-[220px] text-[10px] leading-relaxed ${isRtl ? "font-arabic" : ""}`}
-            style={{ color: "rgba(148, 163, 184, 0.45)" }}
-          >
-            {t("keywordTrackerEmpty")}
-          </p>
-          <button
-            type="button"
-            onClick={() => onOpenValidator("")}
-            className={`text-[10px] font-medium underline-offset-2 hover:underline ${
-              isRtl ? "font-arabic" : ""
-            }`}
-            style={{ color: T.accent }}
-          >
-            {t("openValidatorCta")}
-          </button>
-        </div>
-      ) : (
-        <div
-          className="space-y-0.5 overflow-y-auto rounded-lg border px-2 py-1.5"
-          style={{
-            borderColor: T.border,
-            maxHeight: MAX_VISIBLE * (ROW_H + 2),
-          }}
-        >
-          {sortedSignals.map((signal) => (
-            <KeywordRow
-              key={signal.keyword}
-              signal={signal}
-              isRtl={isRtl}
-              isRemoving={removingKeyword === signal.keyword}
-              difficultyText={difficultyText(signal.difficulty)}
-              onRowClick={() => onOpenValidator(signal.keyword, signal)}
-              onRemove={() => removeMutation.mutate(signal.keyword)}
-              removeLabel={t("removeKeyword", { keyword: signal.keyword })}
-            />
-          ))}
-        </div>
-      )}
+        {!hasSignals ? (
+          <ActiveContextSlotEmpty
+            message={t("noActiveSignals")}
+            ctaLabel={t("openValidatorCta")}
+            onCtaClick={() => onOpenValidator("")}
+            ctaClassName="border-indigo-500/20 bg-indigo-500/[0.06] text-indigo-200/70 hover:border-indigo-400/35 hover:bg-indigo-500/10 hover:text-indigo-100/90"
+            isRtl={isRtl}
+          />
+        ) : (
+          <ActiveContextSignalList rowHeight={ROW_H}>
+            {sortedSignals.map((signal) => (
+              <KeywordRow
+                key={signal.keyword}
+                signal={signal}
+                isRtl={isRtl}
+                isRemoving={removingKeyword === signal.keyword}
+                difficultyText={difficultyText(signal.difficulty)}
+                onRowClick={() => onOpenValidator(signal.keyword, signal)}
+                onRemove={() => removeMutation.mutate(signal.keyword)}
+                removeLabel={t("removeKeyword", { keyword: signal.keyword })}
+              />
+            ))}
+          </ActiveContextSignalList>
+        )}
+      </ActiveContextSlot>
     </div>
+  );
+}
+
+/** Persistent Keyword Tracker slot when no app is selected. */
+export function KeywordTrackerEmptySlot({ isRtl = false }: { isRtl?: boolean }) {
+  const t = useTranslations("optimizer.activeContext");
+
+  return (
+    <ActiveContextSlot
+      id="active-context-keyword-tracker"
+      icon={Hash}
+      title={t("keywordTracker")}
+      description={t("keywordTrackerHelp")}
+      count={0}
+      isRtl={isRtl}
+      headerBorderClass="border-indigo-400/20"
+      iconClassName="text-indigo-300/80"
+      bodyClassName="bg-white/[0.02]"
+    >
+      <ActiveContextSlotEmpty
+        message={t("noActiveSignals")}
+        isRtl={isRtl}
+      />
+    </ActiveContextSlot>
   );
 }

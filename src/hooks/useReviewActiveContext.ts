@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo } from "react";
+import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
 import type { OptimizationQueueItem, OptimizationQueueLocale } from "@/lib/optimization-queue";
 import { fetchOptimizationQueue } from "@/lib/client/optimization-queue-client";
 import {
@@ -36,7 +37,7 @@ export function useReviewActiveContext(
   const queryClient = useQueryClient();
   const key = REVIEW_ACTIVE_CONTEXT_KEY(workspaceId, locale, appId);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, refetch, isPending } = useQuery({
     queryKey: key,
     queryFn: async () => {
       const res = await fetchOptimizationQueue(workspaceId, locale, appId);
@@ -50,7 +51,8 @@ export function useReviewActiveContext(
       };
     },
     enabled: Boolean(workspaceId),
-    staleTime: 2000,
+    placeholderData: keepPreviousData,
+    ...queryDefaultsFor("activeContext"),
   });
 
   const invalidate = useCallback(() => {
@@ -93,7 +95,7 @@ export function useReviewActiveContext(
     items: data?.items ?? [],
     activeTitles,
     activeReviewIds,
-    isLoading,
+    isLoading: isPending && !data,
     refetch,
     invalidate,
   };

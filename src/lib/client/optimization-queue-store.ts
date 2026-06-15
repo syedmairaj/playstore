@@ -30,6 +30,11 @@ type StoreEntry = {
 
 const stores = new Map<string, StoreEntry>();
 
+/** Keys of stores touched this session — used for cross-appId cache sync. */
+export function getOptimizationQueueStoreRegistryKeys(): string[] {
+  return [...stores.keys()];
+}
+
 /** Singleton for keys with no store entry yet — never allocate per getSnapshot call. */
 const EMPTY_SNAPSHOT: OptimizationQueueStoreSnapshot = { items: [], version: 0 };
 

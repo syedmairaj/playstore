@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { isAdmin as isAdminPredicate } from "@/lib/profile/is-admin";
 import type { ProfileResponse } from "@/app/api/profile/route";
+import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
 
 export const profileQueryKey = ["profile"] as const;
 
@@ -46,6 +47,6 @@ export function useProfile() {
         isAdmin: isAdminPredicate(json.profile),
       };
     },
-    staleTime: 60_000,
+    ...queryDefaultsFor("userProfile"),
   });
 }

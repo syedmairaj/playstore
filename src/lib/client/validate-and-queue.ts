@@ -12,7 +12,8 @@ export type ValidateAndQueueSource =
   | "competitor_spy_quick_win"
   | "competitor_spy_review"
   | "competitor_spy_keywords"
-  | "competitor_spy_snapshot";
+  | "competitor_spy_snapshot"
+  | "market_intel_spotlight";
 
 export type ValidateAndQueueResult = {
   ok: boolean;

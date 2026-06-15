@@ -80,12 +80,8 @@ export function resetStagingVaultSchemaCache(): void {
 export async function hasUniversalVaultColumns(
   supabase: SupabaseClient,
 ): Promise<boolean> {
-  const { error } = await supabase
-    .from("workspace_staging_vault")
-    .select("state_en, state_ar, app_id")
-    .limit(0);
-
-  return !error;
+  const mode = await detectStagingVaultSchemaMode(supabase);
+  return mode === "universal_vault";
 }
 
 /** Probe whether legacy signal-log columns (signal_type / content) are deployed. */

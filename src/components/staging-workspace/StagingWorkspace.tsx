@@ -26,6 +26,7 @@
  */
 
 import React, { useMemo, useCallback, useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { AlertTriangle, TrendingUp, Shield } from "lucide-react";
 import type {
   StagingWorkspaceState,
@@ -45,8 +46,14 @@ interface StagingWorkspaceProps {
   onSignalsUpdate?: (totalSignals: number) => void;
   /** Rendered after the Active Context header, before the three pillars. */
   topSection?: React.ReactNode;
+  /** Rendered after Keyword Tracker (e.g. Review Insights curation panel). */
+  middleSection?: React.ReactNode;
+  /** Pillars to hide from the stack (signals still count toward the badge). */
+  hiddenPillarIds?: Array<StagingPillar["id"]>;
   /** Keyword Tracker count — included in global Signals badge. */
   keywordTrackerCount?: number;
+  workspaceId?: string;
+  locale?: "en" | "ar";
 }
 
 /**
@@ -78,12 +85,12 @@ function buildPillarsConfig(
     {
       ...state.marketOpportunities,
       label: {
-        en: "Market Opportunities",
-        ar: "فرص السوق",
+        en: "Market Intelligence Signals",
+        ar: "إشارات ذكاء السوق",
       },
       description: {
-        en: "→ woven into title + short description",
-        ar: "← تُنسج في العنوان + الوصف القصير",
+        en: "→ user-staged keywords from Market Intel · woven into title + short description",
+        ar: "← كلمات اختارها المستخدم من ذكاء السوق · تُنسج في العنوان + الوصف القصير",
       },
       icon: "TrendingUp",
       color: {
@@ -120,9 +127,15 @@ export default function StagingWorkspace({
   onRemoveSignal,
   onSignalsUpdate,
   topSection,
+  middleSection,
+  hiddenPillarIds = [],
   keywordTrackerCount = 0,
+  workspaceId,
+  locale: localeProp,
 }: StagingWorkspaceProps) {
+  const t = useTranslations("optimizer.activeContext");
   const [removingSignalId, setRemovingSignalId] = useState<string | null>(null);
+  const unifiedStack = middleSection != null;
 
   const combinedSignalCount = state.totalSignals + keywordTrackerCount;
 
@@ -132,10 +145,12 @@ export default function StagingWorkspace({
   }, [combinedSignalCount, onSignalsUpdate]);
 
   // Build pillar configs
-  const pillars = useMemo(
-    () => buildPillarsConfig(state, config.locale),
-    [state, config.locale]
-  );
+  const pillars = useMemo(() => {
+    const all = buildPillarsConfig(state, config.locale);
+    if (hiddenPillarIds.length === 0) return all;
+    const hidden = new Set(hiddenPillarIds);
+    return all.filter((pillar) => !hidden.has(pillar.id));
+  }, [state, config.locale, hiddenPillarIds]);
 
   // Handle signal removal with visual feedback
   const handleRemoveSignal: RemovalHandler = useCallback(
@@ -152,15 +167,15 @@ export default function StagingWorkspace({
 
   return (
     <div
-      className={`space-y-6 p-4 rounded-lg bg-gradient-to-b from-white/3 to-white/1 border border-white/5 ${
+      className={`space-y-6 scroll-smooth p-4 rounded-lg bg-gradient-to-b from-white/3 to-white/1 border border-white/5 ${
         config.isRtl ? "dir-rtl" : "dir-ltr"
       }`}
     >
-      {/* Header with Signal Counter */}
+      {/* Header with Signal Counter — sticky while scrolling the unified stack */}
       <div
-        className={`flex items-start justify-between gap-4 ${
+        className={`sticky top-0 z-10 -mx-4 mb-2 border-b border-white/[0.06] bg-gradient-to-b from-[#0a0e14] via-[#0a0e14]/98 to-[#0a0e14]/90 px-4 py-3 backdrop-blur-md ${
           config.isRtl ? "flex-row-reverse" : ""
-        }`}
+        } flex items-start justify-between gap-4`}
       >
         <div className={`flex-1 ${config.isRtl ? "text-right" : "text-left"}`}>
           <h2 className="text-sm font-bold text-white flex items-center gap-2">
@@ -168,9 +183,11 @@ export default function StagingWorkspace({
             {config.locale === "ar" ? "السياق النشط" : "Active Context"}
           </h2>
           <p className="text-[11px] text-white/50 mt-1">
-            {config.locale === "ar"
-              ? "سيتم دمج جميع الإشارات أدناه تلقائياً في القائمة. اضغط × لإزالة أي إشارة."
-              : "All signals below will be woven into your listing automatically. Click × to remove any signal."}
+            {unifiedStack
+              ? t("unifiedStackHint")
+              : config.locale === "ar"
+                ? "سيتم دمج جميع الإشارات أدناه تلقائياً في القائمة. اضغط × لإزالة أي إشارة."
+                : "All signals below will be woven into your listing automatically. Click × to remove any signal."}
           </p>
         </div>
 
@@ -191,10 +208,20 @@ export default function StagingWorkspace({
         </div>
       )}
 
-      {/* Keyword Tracker — first panel in Active Context */}
-      {topSection}
+      {/* Persistent module slots — always mounted to prevent layout shift */}
+      <div className="flex flex-col gap-6" data-active-context-slots>
+        <div data-slot="keyword-tracker" className="shrink-0">
+          {topSection}
+        </div>
 
-      {/* Three Pillars */}
+        {unifiedStack ? (
+          <div data-slot="review-insights" className="shrink-0">
+            {middleSection}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Market Intelligence + Competitor Strengths pillars */}
       <div className="space-y-6">
         {pillars.map((pillar) => (
           <StagingWorkspacePillar
@@ -204,6 +231,8 @@ export default function StagingWorkspace({
             isRtl={config.isRtl}
             isLoading={state.isLoading && pillar.count === 0}
             onRemoveSignal={handleRemoveSignal}
+            workspaceId={workspaceId}
+            localeOverride={localeProp}
             chipDisplayOptions={{
               showRemoveButton: config.enableInlineRemoval,
               showCategory: true,
@@ -221,7 +250,7 @@ export default function StagingWorkspace({
         </div>
       )}
 
-      {combinedSignalCount === 0 && !state.isLoading && (
+      {combinedSignalCount === 0 && !state.isLoading && !unifiedStack && (
         <div className={`p-3 rounded-lg bg-white/3 text-[11px] text-white/40 ${
           config.isRtl ? "text-right" : "text-left"
         }`}>

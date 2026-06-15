@@ -16,10 +16,12 @@ import type {
   OptimizationQueueStats,
 } from "@/lib/optimization-queue/optimization-queue.types";
 import {
+  assertQueueCategory,
   inferCategoryForInput,
   resolveQueueItemCategory,
   sectionDedupeKey,
 } from "@/lib/optimization-queue/queue-routing";
+import { enrichStagingVaultMetadata } from "@/lib/staging-vault/staging-vault-metadata";
 
 const QUEUE_FEATURE = "optimization_queue";
 /** Keep queue bounded so state_en/state_ar JSON stays index-friendly. */
@@ -65,6 +67,13 @@ const ALLOWED_METADATA_KEYS = new Set([
   "explicitly_staged",
   "move_to_active_context",
   "archived_at",
+  // Market Intel / Active Context canonical fields
+  "origin_module",
+  "user_selected_boolean",
+  "from_keyword_spotlight",
+  "active_context_section",
+  "confidence_score",
+  "data_origin",
 ]);
 
 function slimMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -125,12 +134,28 @@ function normalizeQueueItem(
   locale: OptimizationQueueLocale,
   now: string,
 ): OptimizationQueueItem {
-  const category: OptimizationQueueCategory = inferCategoryForInput(input);
+  const enriched = enrichStagingVaultMetadata({
+    signalType: input.type,
+    source: input.source,
+    sourceContext: input.sourceContext,
+    category: input.category,
+    metadata: input.metadata,
+    userSelected:
+      input.metadata?.user_selected_boolean === true ||
+      input.metadata?.from_keyword_spotlight === true ||
+      input.metadata?.from_keyword_curation === true,
+  });
+
+  const category: OptimizationQueueCategory = assertQueueCategory(
+    enriched.active_context_section ?? inferCategoryForInput(input),
+  );
+
   const metadata = {
-    ...(input.metadata ?? {}),
+    ...enriched,
     category,
-    source_origin: input.metadata?.source_origin ?? input.source,
+    source_origin: enriched.origin_module ?? input.source,
   };
+
   const stagedAt =
     typeof input.metadata?.staged_date === "string" && input.metadata.staged_date.trim()
       ? input.metadata.staged_date

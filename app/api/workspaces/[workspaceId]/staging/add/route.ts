@@ -16,6 +16,7 @@ import { addSignalToVault } from "@/lib/staging-vault/staging-vault-service";
 import { StagingVaultSchemaError } from "@/lib/staging-vault/staging-vault-schema";
 import { addToOptimizationQueue } from "@/lib/optimization-queue";
 import { mapStagingPayloadToQueueInputs } from "@/lib/optimization-queue/map-staging-to-queue";
+import { enrichStagingVaultMetadata } from "@/lib/staging-vault/staging-vault-metadata";
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/staging/add";
 
@@ -148,19 +149,48 @@ export async function POST(request: Request, context: Ctx) {
     console.log(`  message: ${result.message}`);
 
     const queueInputs = mapStagingPayloadToQueueInputs(body);
+    let queueItems: Awaited<ReturnType<typeof addToOptimizationQueue>>["items"] | undefined;
     if (queueInputs.length > 0) {
       const locale = String(body.language).startsWith("ar") ? "ar" : "en";
-      await addToOptimizationQueue(supabase, workspaceId, locale, queueInputs, {
+      const queueResult = await addToOptimizationQueue(supabase, workspaceId, locale, queueInputs, {
         appId: body.sourceAppId,
         userId: user.id,
       });
+      queueItems = queueResult.items;
     }
+
+    const vaultLocale = String(body.language).startsWith("ar") ? "ar" : "en";
+    const enrichedMeta = enrichStagingVaultMetadata({
+      signalType: body.signalType,
+      source: body.source,
+      sourceContext: body.sourceContext,
+      metadata: body.metadata as Record<string, unknown> | undefined,
+    });
 
     return NextResponse.json({
       ok: true,
       data: {
         id: result.id,
         message: result.message,
+        vaultDelta: {
+          operation: "upsert" as const,
+          workspaceId,
+          locale: vaultLocale,
+          appId: body.sourceAppId,
+          origin_module: enrichedMeta.origin_module,
+          active_context_section: enrichedMeta.active_context_section,
+          items: [
+            {
+              id: result.id,
+              content: body.content,
+              signalType: body.signalType,
+              source: body.source,
+              category: enrichedMeta.active_context_section,
+              metadata: enrichedMeta,
+            },
+          ],
+          queueItems,
+        },
       },
     });
   } catch (error) {

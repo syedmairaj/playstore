@@ -5,8 +5,12 @@
  * using React Query for automatic revalidation on staging events.
  */
 
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
+import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
+import {
+  fetchOptimizerContext,
+} from "@/lib/client/workspace-query-fetchers";
 import {
   groupKeywordSignals,
   type GroupedKeywordSignals,
@@ -129,12 +133,12 @@ export function useKeywordSignals(
   appId: string | undefined,
   vaultLocale: VaultLocale = "en"
 ) {
-  const { data, isLoading, isFetching, error } = useQuery<KeywordSignalsResponse>({
+  const { data, isLoading, isFetching, error, isPending } = useQuery<KeywordSignalsResponse>({
     queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId ?? "", vaultLocale),
     queryFn: () => fetchKeywordSignals(workspaceId, appId!, vaultLocale),
     enabled: Boolean(workspaceId && appId),
-    staleTime: 3000,
-    gcTime: 10 * 60 * 1000,
+    placeholderData: keepPreviousData,
+    ...queryDefaultsFor("workspaceContext"),
     retry: 2,
   });
 
@@ -142,7 +146,7 @@ export function useKeywordSignals(
     signals: data?.signals ?? [],
     grouped: data?.grouped,
     total: data?.total ?? 0,
-    isLoading,
+    isLoading: isPending && !data,
     isFetching,
     error,
   };
@@ -154,31 +158,29 @@ export function useOptimizerSync(
 ) {
   const {
     enabled = true,
-    staleTime = 5000,
-    gcTime = 10 * 60 * 1000,
+    staleTime,
+    gcTime,
     onError,
     appId,
     vaultLocale = "en",
   } = options;
 
+  const contextCache = queryDefaultsFor("workspaceContext");
+  const resolvedStaleTime = staleTime ?? contextCache.staleTime;
+  const resolvedGcTime = gcTime ?? contextCache.gcTime;
+
   const queryClient = useQueryClient();
 
-  const { data, isLoading, error } = useQuery<OptimizerContext>({
+  const { data, isLoading, error, isPending, isFetching } = useQuery<OptimizerContext>({
     queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
-    queryFn: async () => {
-      const params = new URLSearchParams({ locale: vaultLocale });
-      if (appId) params.set("appId", appId);
-      const response = await fetch(
-        `/api/workspaces/${workspaceId}/optimizer/context?${params.toString()}`
-      );
-      if (!response.ok) {
-        throw new Error(`Failed to fetch optimizer context: ${response.status}`);
-      }
-      return response.json();
-    },
+    queryFn: () => fetchOptimizerContext(workspaceId, vaultLocale, appId),
     enabled,
-    staleTime,
-    gcTime,
+    placeholderData: keepPreviousData,
+    staleTime: resolvedStaleTime,
+    gcTime: resolvedGcTime,
+    refetchOnWindowFocus: contextCache.refetchOnWindowFocus,
+    refetchOnMount: contextCache.refetchOnMount,
+    structuralSharing: contextCache.structuralSharing,
     retry: 2,
   });
 
@@ -211,7 +213,8 @@ export function useOptimizerSync(
     keywordSignalsTotal: keywordSignals.total,
     keywordSignalsLoading: keywordSignals.isLoading,
 
-    isLoading,
+    isLoading: isPending && !data,
+    isFetching,
     isError: !!error,
     error,
 

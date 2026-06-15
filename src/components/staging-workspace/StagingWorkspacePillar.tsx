@@ -16,6 +16,9 @@
 
 import React from "react";
 import { motion } from "framer-motion";
+import { useTranslations } from "next-intl";
+import { marketIntelSignalsSectionId } from "@/lib/client/market-intel-signals";
+import { ActiveContextSlotEmpty } from "@/components/staging-workspace/active-context-slot";
 import type {
   StagingPillar,
   StagingSignal,
@@ -31,6 +34,8 @@ interface StagingWorkspacePillarProps {
   isLoading?: boolean;
   onRemoveSignal: RemovalHandler;
   chipDisplayOptions?: ChipDisplayOptions;
+  workspaceId?: string;
+  localeOverride?: "en" | "ar";
 }
 
 const pillarIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -52,45 +57,42 @@ export default function StagingWorkspacePillar({
     showMetadata: true,
     animateOnRemove: true,
   },
+  workspaceId,
+  localeOverride,
 }: StagingWorkspacePillarProps) {
-  const label = pillar.label[locale];
-  const description = pillar.description[locale];
+  const tSlot = useTranslations("optimizer.activeContext");
+  const resolvedLocale = localeOverride ?? locale;
+  const label = pillar.label[resolvedLocale];
+  const description = pillar.description[resolvedLocale];
   const IconComponent = pillarIcons[pillar.icon];
+  const isMarketIntelPillar = pillar.id === "market_opportunities";
+  const sectionId = isMarketIntelPillar ? marketIntelSignalsSectionId() : undefined;
 
   return (
-    <motion.div
-      layout
-      className="space-y-2"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.2 }}
-    >
+    <div id={sectionId} className="space-y-2 scroll-mt-24">
       {/* Pillar Header - Always Visible */}
       <div
-        className={`flex items-center gap-2 pb-2 border-b ${pillar.color.header} ${
+        className={`flex items-center gap-2 border-b pb-2 ${pillar.color.header} ${
           isRtl ? "flex-row-reverse" : ""
         }`}
       >
-        {/* Icon */}
-        <div className="shrink-0 flex items-center">
-          {IconComponent ? (
-            <IconComponent className={`size-4 ${pillar.color.icon}`} />
-          ) : (
-            <div className={`size-4 rounded-full ${pillar.color.icon}`} />
-          )}
-        </div>
+        {IconComponent ? (
+          <IconComponent className={`size-4 shrink-0 ${pillar.color.icon}`} />
+        ) : (
+          <div className={`size-4 shrink-0 rounded-full ${pillar.color.icon}`} />
+        )}
 
-        {/* Title and count */}
-        <div className={`flex-1 ${isRtl ? "text-right" : "text-left"}`}>
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/90">
-            {label}
-          </h3>
-        </div>
+        <h3
+          className={`flex-1 text-[11px] font-semibold text-white/90 ${
+            isRtl ? "font-arabic text-right" : "uppercase tracking-[0.12em]"
+          }`}
+        >
+          {label}
+        </h3>
 
-        {/* Signal count badge */}
-        <div className={`text-[10px] font-medium text-white/50`}>
+        <span className="shrink-0 text-[10px] font-medium text-white/50 tabular-nums">
           {pillar.count > 0 ? `(${pillar.count})` : "—"}
-        </div>
+        </span>
       </div>
 
       {/* Pillar Description */}
@@ -100,9 +102,9 @@ export default function StagingWorkspacePillar({
 
       {/* Signals Container */}
       <div
-        className={`flex flex-wrap gap-2 p-3 rounded-lg ${pillar.color.chip} border border-white/5 min-h-[60px] flex items-center justify-${
-          isRtl ? "start" : "start"
-        } ${isRtl ? "flex-row-reverse" : ""}`}
+        className={`flex flex-wrap gap-2 rounded-lg border border-white/5 bg-white/[0.02] p-3 min-h-[60px] ${
+          isRtl ? "flex-row-reverse" : ""
+        }`}
       >
         {isLoading ? (
           // Loading state
@@ -118,16 +120,20 @@ export default function StagingWorkspacePillar({
             </div>
           </div>
         ) : pillar.isEmpty ? (
-          // Empty state
-          <div
-            className={`flex-1 text-[10px] italic text-white/25 ${
-              isRtl ? "text-right" : "text-left"
-            }`}
-          >
-            {locale === "ar"
-              ? "لا توجد إشارات مرحلة حالياً"
-              : "No signals staged yet"}
-          </div>
+          isMarketIntelPillar && workspaceId ? (
+            <ActiveContextSlotEmpty
+              message={tSlot("noActiveSignals")}
+              ctaLabel={tSlot("openMarketIntelCta")}
+              ctaHref={`/app/${workspaceId}/market`}
+              ctaClassName="border-emerald-500/25 bg-emerald-500/10 text-emerald-200/80 hover:border-emerald-400/45 hover:bg-emerald-500/18 hover:text-emerald-100"
+              isRtl={isRtl}
+            />
+          ) : (
+            <ActiveContextSlotEmpty
+              message={tSlot("noActiveSignals")}
+              isRtl={isRtl}
+            />
+          )
         ) : (
           // Signal chips
           <motion.div
@@ -142,7 +148,7 @@ export default function StagingWorkspacePillar({
                     : signal.id
                 }
                 signal={signal}
-                locale={locale}
+                locale={resolvedLocale}
                 isRtl={isRtl}
                 onRemove={onRemoveSignal}
                 displayOptions={chipDisplayOptions}
@@ -151,6 +157,6 @@ export default function StagingWorkspacePillar({
           </motion.div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }

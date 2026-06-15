@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { KeywordTrackerClient } from "@/components/keyword-tracker/KeywordTrackerClient";
+import { KeywordTrackerPageActions } from "@/components/keyword-tracker/KeywordTrackerPageActions";
 import { loadLatestAiListingKeywordsByApp } from "@/lib/keywords/latest-ai-listing-by-app";
 import { loadWorkspaceKeywords } from "@/lib/keywords/load-workspace-keywords";
 import { createClient } from "@/lib/supabase/server";
@@ -30,10 +31,13 @@ export default async function KeywordsPage({
   ]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">{t("title")}</h1>
-        <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">{t("subheadline")}</p>
+    <div className="mx-auto max-w-6xl space-y-6">
+      <header className="flex flex-col gap-4 border-b border-white/[0.06] pb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+        <div className="min-w-0 space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight text-white">{t("title")}</h1>
+          <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">{t("subheadline")}</p>
+        </div>
+        <KeywordTrackerPageActions workspaceId={workspaceId} apps={appsResult.rows} />
       </header>
       <KeywordTrackerClient
         workspaceId={workspaceId}

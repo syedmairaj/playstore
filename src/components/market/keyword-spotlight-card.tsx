@@ -4,10 +4,17 @@ import { Lightbulb, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { KeywordSpotlightResult } from "@/app/api/market/keyword-spotlight/route";
 
+type CurationState = {
+  selected: Set<string>;
+  staged: Set<string>;
+  onToggle: (keyword: string) => void;
+};
+
 type Props = {
   spotlight: KeywordSpotlightResult | null;
   loading?: boolean;
   isRtl?: boolean;
+  curation?: CurationState;
 };
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
@@ -39,7 +46,12 @@ function SpotlightSkeleton({ isRtl }: { isRtl: boolean }) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function KeywordSpotlightCard({ spotlight, loading = false, isRtl = false }: Props) {
+export function KeywordSpotlightCard({
+  spotlight,
+  loading = false,
+  isRtl = false,
+  curation,
+}: Props) {
   return (
     <div
       dir={isRtl ? "rtl" : "ltr"}
@@ -71,28 +83,73 @@ export function KeywordSpotlightCard({ spotlight, loading = false, isRtl = false
               {isRtl ? "الكلمات المفتاحية الرائجة" : "Trending keywords"}
             </p>
             <div className={cn("flex flex-wrap gap-1.5", isRtl && "flex-row-reverse")}>
-              {spotlight.trendingKeywords.map((kw, i) => (
-                <span
-                  key={`${i}-${kw}`}
-                  className={cn(
-                    "inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
-                    i < 3
-                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
-                      : "border-zinc-700/60 bg-zinc-800/60 text-zinc-300",
-                  )}
-                >
-                  {i < 3 && (
-                    <span
-                      className={cn(
-                        "inline-block size-1.5 rounded-full bg-emerald-400 shrink-0",
-                        isRtl ? "ms-1.5" : "me-1.5",
-                      )}
-                      aria-hidden
-                    />
-                  )}
-                  {kw}
-                </span>
-              ))}
+              {spotlight.trendingKeywords.map((kw, i) => {
+                const isStaged = curation?.staged.has(kw) ?? false;
+                const isSelected = curation?.selected.has(kw) ?? false;
+                const isTopTrend = i < 3;
+                const interactive = Boolean(curation);
+
+                const chipClass = cn(
+                  "inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
+                  isStaged
+                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200/90 cursor-default"
+                    : interactive
+                      ? isSelected
+                        ? "border-sky-500/45 bg-sky-500/15 text-sky-200 cursor-pointer ring-1 ring-sky-400/35"
+                        : isTopTrend
+                          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 cursor-pointer hover:border-emerald-400/45 hover:bg-emerald-500/18"
+                          : "border-zinc-700/60 bg-zinc-800/60 text-zinc-300 cursor-pointer hover:border-zinc-600 hover:bg-zinc-800"
+                      : isTopTrend
+                        ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                        : "border-zinc-700/60 bg-zinc-800/60 text-zinc-300",
+                );
+
+                const chipInner = (
+                  <>
+                    {(isTopTrend || isStaged) && (
+                      <span
+                        className={cn(
+                          "inline-block size-1.5 rounded-full shrink-0",
+                          isStaged ? "bg-emerald-300" : "bg-emerald-400",
+                          isRtl ? "ms-1.5" : "me-1.5",
+                        )}
+                        aria-hidden
+                      />
+                    )}
+                    {kw}
+                    {isStaged && (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300/80",
+                          isRtl ? "me-1.5" : "ms-1.5",
+                        )}
+                      >
+                        {isRtl ? "مُضاف" : "Staged"}
+                      </span>
+                    )}
+                  </>
+                );
+
+                if (interactive && !isStaged) {
+                  return (
+                    <button
+                      key={`${i}-${kw}`}
+                      type="button"
+                      onClick={() => curation?.onToggle(kw)}
+                      aria-pressed={isSelected}
+                      className={chipClass}
+                    >
+                      {chipInner}
+                    </button>
+                  );
+                }
+
+                return (
+                  <span key={`${i}-${kw}`} className={chipClass}>
+                    {chipInner}
+                  </span>
+                );
+              })}
             </div>
           </div>
 

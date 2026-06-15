@@ -190,7 +190,14 @@ export function resolveSourceTag(args: {
 export function resolveTargetWidget(
   sourceTag: ActiveContextSourceTag,
   signalType: string,
+  metadata?: Record<string, unknown>,
 ): ActiveContextWidget {
+  const section = metadata?.active_context_section ?? metadata?.category;
+  if (section === "review") return "review_issues";
+  if (section === "opportunity") return "market_opportunities";
+  if (section === "tracker") return "keyword_tracker";
+  if (section === "strength") return "competitor_keywords";
+
   if (sourceTag === "keyword_tracker") return "keyword_tracker";
 
   if (sourceTag === "market_intel" || sourceTag === "keyword_spotlight") {
@@ -225,7 +232,7 @@ function enrichItem(
     sourceContext: partial.sourceContext,
     metadata: partial.metadata,
   });
-  const targetWidget = resolveTargetWidget(sourceTag, partial.signalType);
+  const targetWidget = resolveTargetWidget(sourceTag, partial.signalType, partial.metadata);
   return {
     ...partial,
     sourceTag,
@@ -272,6 +279,26 @@ export function deduplicateActiveContextItems(
   const seenByWidget = new Map<ActiveContextWidget, Set<string>>();
 
   return items.filter((item) => {
+    // Strict isolation: review insights never merge into market opportunities.
+    if (
+      item.targetWidget === "market_opportunities" &&
+      (item.signalType === "review_issue" ||
+        item.sourceTag === "review_analysis" ||
+        item.metadata?.active_context_section === "review" ||
+        item.metadata?.origin_module === "review_analysis")
+    ) {
+      return false;
+    }
+
+    if (
+      item.targetWidget === "review_issues" &&
+      (item.sourceTag === "market_intel" ||
+        item.metadata?.active_context_section === "opportunity" ||
+        item.metadata?.origin_module === "market_intel")
+    ) {
+      return false;
+    }
+
     if (
       item.targetWidget === "market_opportunities" &&
       item.signalType === "keyword" &&

@@ -12,6 +12,7 @@ import {
   serialiseStagingVaultContent,
   type StagingVaultContentPayload,
 } from "@/lib/staging-vault/staging-vault-content";
+import { enrichStagingVaultMetadata } from "@/lib/staging-vault/staging-vault-metadata";
 import {
   hasLegacySignalColumns,
   hasUniversalVaultColumns,
@@ -103,14 +104,19 @@ export class VaultCore {
         ? serialiseStagingVaultContent(contentPayload)
         : payload.content.trim();
 
-    const finalMetadata: Record<string, unknown> = {
-      ...(payload.metadata ?? {}),
-      content_payload: contentPayload,
-      targetAsset: contentPayload.targetAsset,
-      descriptionDraft: contentPayload.descriptionDraft,
-      signal_created_at: createdAt,
-    };
-    if (payload.category) finalMetadata.category = payload.category;
+    const finalMetadata: Record<string, unknown> = enrichStagingVaultMetadata({
+      signalType: payload.signalType,
+      source: payload.source,
+      sourceContext: payload.sourceContext,
+      category: payload.category,
+      metadata: {
+        ...(payload.metadata ?? {}),
+        content_payload: contentPayload,
+        targetAsset: contentPayload.targetAsset,
+        descriptionDraft: contentPayload.descriptionDraft,
+        signal_created_at: createdAt,
+      },
+    });
 
     const legacyAvailable = await hasLegacySignalColumns(supabase);
     const universalAvailable = await hasUniversalVaultColumns(supabase);
