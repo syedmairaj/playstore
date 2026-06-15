@@ -147,16 +147,14 @@ export type ReviewsTabProps = {
   appId?: string;
   packageName?: string | null;
   reviews?: ReviewRowData[];
-  /**
-   * When true, `reviews` contains real live data from the Play Store.
-   * When false/undefined, own-app mode shows an empty state; competitor mode
-   * falls back to the demo dataset.
-   */
   hasLiveReviews?: boolean;
-  /** "my-app" | packageId of the active competitor tab */
   selectedAppFilter?: string;
-  /** Package name of the active competitor (null when my-app is selected) */
   activeCompetitorPackageName?: string | null;
+  countryCode?: string;
+  langCode?: string;
+  competitorName?: string | null;
+  stagedReviewIds?: ReadonlySet<string>;
+  onReviewStaged?: () => void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,6 +170,11 @@ export function ReviewsTab({
   hasLiveReviews = false,
   selectedAppFilter = "my-app",
   activeCompetitorPackageName = null,
+  countryCode = "us",
+  langCode = "en",
+  competitorName = null,
+  stagedReviewIds,
+  onReviewStaged,
 }: ReviewsTabProps) {
   const t = useTranslations("reviews");
 
@@ -209,16 +212,26 @@ export function ReviewsTab({
   const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraftState>>({});
 
   useEffect(() => {
+    if (!workspaceId.trim()) return;
+
+    const controller = new AbortController();
     let cancelled = false;
+
     void (async () => {
-      const ids = await fetchListingImprovementReviewIds(workspaceId);
+      const ids = await fetchListingImprovementReviewIds(
+        workspaceId,
+        controller.signal,
+      );
       if (!cancelled) setQueueAddedIds(new Set(ids));
     })();
+
     setReplyDrafts(
       loadReplyDraftsFromSession(resolvedReviews.map((r) => r.id)),
     );
+
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [resolvedReviews, workspaceId]);
 
@@ -465,9 +478,14 @@ export function ReviewsTab({
                         ? activeCompetitorPackageName ?? packageName
                         : packageName
                     }
+                    countryCode={countryCode}
+                    langCode={langCode}
+                    competitorName={competitorName}
                     isCompetitorMode={isCompetitorMode}
                     isAddedToQueue={queueAddedIds.has(review.id)}
+                    isStagedQuote={stagedReviewIds?.has(review.id) ?? false}
                     onAddedToQueue={() => markAddedToQueue(review.id)}
+                    onReviewStaged={onReviewStaged}
                     replyDraft={draftState?.text ?? null}
                     replyDraftVisible={draftState?.visible ?? false}
                     onReplyDraftSuccess={(replyText) =>

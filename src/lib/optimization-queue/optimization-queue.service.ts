@@ -55,6 +55,16 @@ const ALLOWED_METADATA_KEYS = new Set([
   "analysis_status",
   "insight_category",
   "pending_insight_id",
+  "staged_date",
+  "original_staged_at",
+  "queue_index",
+  "original_impact_score",
+  "backlog_id",
+  "archive_reason",
+  "source_type",
+  "explicitly_staged",
+  "move_to_active_context",
+  "archived_at",
 ]);
 
 function slimMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -121,6 +131,13 @@ function normalizeQueueItem(
     category,
     source_origin: input.metadata?.source_origin ?? input.source,
   };
+  const stagedAt =
+    typeof input.metadata?.staged_date === "string" && input.metadata.staged_date.trim()
+      ? input.metadata.staged_date
+      : typeof input.metadata?.original_staged_at === "string" &&
+          input.metadata.original_staged_at.trim()
+        ? input.metadata.original_staged_at
+        : now;
 
   return slimQueueItem(
     {
@@ -132,12 +149,61 @@ function normalizeQueueItem(
       sourceContext: input.sourceContext,
       sourceContextId: input.sourceContextId,
       language: locale,
-      stagedAt: now,
+      stagedAt,
       metadata,
     },
     locale,
     now,
   );
+}
+
+function mergeItemsAtIndex(
+  existing: OptimizationQueueItem[],
+  added: OptimizationQueueItem[],
+  locale: OptimizationQueueLocale,
+  now: string,
+  insertAtIndex?: number,
+): OptimizationQueueItem[] {
+  const slimmed = existing.map((i) => slimQueueItem(i, locale, now));
+  if (insertAtIndex === undefined) {
+    return [...added, ...slimmed].slice(0, MAX_ITEMS);
+  }
+  const insertAt = Math.min(Math.max(insertAtIndex, 0), slimmed.length);
+  return [...slimmed.slice(0, insertAt), ...added, ...slimmed.slice(insertAt)].slice(
+    0,
+    MAX_ITEMS,
+  );
+}
+
+function repositionExistingQueueItem(
+  items: OptimizationQueueItem[],
+  input: AddOptimizationQueueInput,
+  locale: OptimizationQueueLocale,
+  now: string,
+  insertAtIndex: number,
+): { items: OptimizationQueueItem[]; changed: boolean; itemId?: string } {
+  const candidate = normalizeQueueItem(input, locale, now);
+  const key = sectionDedupeKey(candidate);
+  const existingIdx = items.findIndex((item) => sectionDedupeKey(item) === key);
+  if (existingIdx === -1) return { items, changed: false };
+
+  const slimmed = items.map((i) => slimQueueItem(i, locale, now));
+  const [existing] = slimmed.splice(existingIdx, 1);
+  const restored: OptimizationQueueItem = {
+    ...existing,
+    stagedAt: candidate.stagedAt,
+    metadata: {
+      ...(existing.metadata ?? {}),
+      ...candidate.metadata,
+    },
+  };
+  const insertAt = Math.min(Math.max(insertAtIndex, 0), slimmed.length);
+  slimmed.splice(insertAt, 0, restored);
+  return {
+    items: slimmed,
+    changed: existingIdx !== insertAt || restored.stagedAt !== existing.stagedAt,
+    itemId: restored.id,
+  };
 }
 
 function parseQueueState(raw: unknown): OptimizationQueueState {
@@ -190,11 +256,30 @@ async function loadVaultRow(
   };
 }
 
+/**
+ * Auto-bridged review pain points (unpaid sync bridge) are hidden from the public
+ * optimization queue read. User-initiated MoveToActiveContext / Stage Issue /
+ * Adopt flows are always visible in Active Context.
+ */
 function isReviewDerivedQueueItem(item: OptimizationQueueItem): boolean {
-  return (
-    item.type === "review_pain_point" &&
-    (item.metadata.review_derived === true || item.metadata.from_review_insights === true)
-  );
+  if (item.type !== "review_pain_point") return false;
+
+  const meta = item.metadata ?? {};
+
+  if (meta.explicitly_staged === true || meta.move_to_active_context === true) {
+    return false;
+  }
+  if (typeof meta.backlog_id === "string" && meta.backlog_id.length > 0) {
+    return false;
+  }
+  if (typeof meta.pending_insight_id === "string" && meta.pending_insight_id.length > 0) {
+    return false;
+  }
+  if (item.sourceContext === "review_curation_adopt") {
+    return false;
+  }
+
+  return meta.review_derived === true || meta.from_review_insights === true;
 }
 
 export async function readOptimizationQueue(
@@ -247,7 +332,12 @@ export async function addSignalToQueue(
   workspaceId: string,
   locale: OptimizationQueueLocale,
   inputs: AddOptimizationQueueInput[],
-  options?: { appId?: string | null; userId?: string },
+  options?: {
+    appId?: string | null;
+    userId?: string;
+    /** Restore flows — insert at prior queue index instead of prepending. */
+    insertAtIndex?: number;
+  },
 ): Promise<{ items: OptimizationQueueItem[]; addedCount: number; skippedCount: number }> {
   const resolvedAppId = await resolveVaultAppId(supabase, workspaceId, options?.appId);
   if (!resolvedAppId) {
@@ -281,12 +371,50 @@ export async function addSignalToQueue(
   }
 
   if (added.length === 0) {
+    if (options?.insertAtIndex !== undefined && inputs.length === 1) {
+      const repositioned = repositionExistingQueueItem(
+        queue.items,
+        inputs[0]!,
+        locale,
+        now,
+        options.insertAtIndex,
+      );
+      if (repositioned.changed) {
+        const nextItems = repositioned.items.slice(0, MAX_ITEMS);
+        features[QUEUE_FEATURE] = { items: nextItems, updatedAt: now };
+        const nextState = {
+          ...row.branch,
+          features,
+          metadata: {
+            ...(row.branch.metadata as Record<string, unknown>),
+            last_producer: "optimization_queue",
+            last_producer_timestamp: now,
+          },
+        };
+        const activeFeatures = new Set(row.activeFeatures);
+        activeFeatures.add(QUEUE_FEATURE);
+        const { error } = await supabase
+          .from("workspace_staging_vault")
+          .update({
+            [row.stateKey]: nextState,
+            active_features: [...activeFeatures],
+            updated_at: now,
+            last_modified_by: options?.userId ?? null,
+          })
+          .eq("id", row.id);
+        throwIfVaultUpdateError(error);
+        return { items: nextItems, addedCount: 0, skippedCount };
+      }
+    }
     return { items: queue.items, addedCount: 0, skippedCount };
   }
 
-  const nextItems = [...added, ...queue.items.map((i) => slimQueueItem(i, locale, now))].slice(
-    0,
-    MAX_ITEMS,
+  const nextItems = mergeItemsAtIndex(
+    queue.items,
+    added,
+    locale,
+    now,
+    options?.insertAtIndex,
   );
   features[QUEUE_FEATURE] = { items: nextItems, updatedAt: now };
 

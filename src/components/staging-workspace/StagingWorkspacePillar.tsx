@@ -136,7 +136,11 @@ export default function StagingWorkspacePillar({
           >
             {pillar.signals.map((signal) => (
               <StagingSignalChip
-                key={signal.id}
+                key={
+                  signal.source === "review_issue"
+                    ? `review-${signal.content.trim().toLowerCase()}`
+                    : signal.id
+                }
                 signal={signal}
                 locale={locale}
                 isRtl={isRtl}

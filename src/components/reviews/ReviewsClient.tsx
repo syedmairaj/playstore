@@ -12,6 +12,15 @@ import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/toolti
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReviewsTab } from "@/components/reviews/ReviewsTab";
 import { IssueCard } from "@/components/reviews/IssueCard";
+import {
+  deleteStagedReviewClient,
+  restoreStagedReviewClient,
+  REVIEW_INSIGHT_ARCHIVED_EVENT,
+  REVIEW_INSIGHT_STAGED_EVENT,
+  type ReviewInsightArchivedDetail,
+  type ReviewInsightStagedDetail,
+} from "@/lib/client/review-insight-staging";
+import { useReviewActiveContext } from "@/hooks/useReviewActiveContext";
 import { SyncInsightsCta } from "@/components/reviews/sync-insights-cta";
 import { AiCreditsModal } from "@/components/ui/ai-credits-modal";
 import { AppSourceSelector, type AppSourceOption } from "@/components/reviews/AppSourceSelector";
@@ -133,27 +142,22 @@ type CommonIssuesPanelProps = {
    */
   isSyncLoading: boolean;
   /**
-   * Titles of backlog items that are staged (isImplemented=false).
-   * Drives IssueCard.added — if the title is in this set the card shows
-   * "Open in Listing Optimizer →" instead of "Add to Optimization Backlog".
-   * Derived from backlogItems (DB) so it is always correct after page refresh.
-   * Optimistic adds are reflected here via the parent's stagedTitles memo.
+   * Titles currently in Active Context (optimization queue).
    */
-  stagedTitles: ReadonlySet<string>;
+  activeContextTitles: ReadonlySet<string>;
   /**
-   * appId of the workspace's own app — passed to IssueCard so the "Open in
-   * Listing Optimizer" deep-link appends ?appId= and pre-selects the app.
+   * appId of the workspace's own app — passed to IssueCard for deep-link.
    */
   appId?: string;
+  /** Competitor display name when viewing a competitor tab. */
+  competitorName?: string | null;
   /**
    * Titles of ALL backlog items (staged + archived).
-   * IssueCards whose title matches are hidden from Active Insights entirely —
-   * they live in the queue or history archive, not here.
+   * IssueCards whose title matches are hidden from Active Insights entirely.
    */
   excludeTitles?: ReadonlySet<string>;
-  /** Called with the dedup key AND the full IssueItem so the parent can POST to the backlog API.
-   *  Returns true on success so IssueCard can advance its pipeline state. */
-  onAddImprovement: (id: string, issue: IssueItem) => Promise<boolean>;
+  /** Called after a successful Stage Issue — parent reloads backlog. */
+  onIssueStaged: () => void;
 };
 
 /** Flat shape returned by both GET and POST /reviews/analyze */
@@ -230,10 +234,11 @@ function CommonIssuesPanel({
   reviewTexts,
   rawReviewCount,
   isSyncLoading,
-  stagedTitles,
+  activeContextTitles,
   appId,
+  competitorName,
   excludeTitles,
-  onAddImprovement,
+  onIssueStaged,
 }: CommonIssuesPanelProps) {
   const tSync = useTranslations("reviews.syncInsights");
   const locale = useLocale();
@@ -671,8 +676,12 @@ function CommonIssuesPanel({
               issue={issue}
               workspaceId={workspaceId}
               appId={appId}
-              added={stagedTitles.has(issue.title)}
-              onAdd={() => onAddImprovement(issueId, issue)}
+              packageName={packageName}
+              countryCode={countryCode}
+              langCode={langCode}
+              competitorName={competitorName}
+              isStaged={activeContextTitles.has(issue.title)}
+              onStaged={onIssueStaged}
             />
           );
         })}
@@ -925,7 +934,19 @@ export type ReviewsClientProps = {
 
 export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClientProps) {
   const t = useTranslations("reviews");
+  const locale = useLocale();
   const router = useRouter();
+  const primaryAppId = apps[0]?.id;
+
+  const {
+    activeTitles: activeContextTitles,
+    activeReviewIds,
+    invalidate: invalidateActiveContext,
+  } = useReviewActiveContext(
+    workspaceId,
+    locale === "ar" ? "ar" : "en",
+    primaryAppId,
+  );
   const [hydrated, setHydrated] = useState(false);
 
   // ── Backlog queue state ──────────────────────────────────────────────────
@@ -937,10 +958,20 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     issueTitle: string;
     issueDescription: string;
     severity: "CRITICAL" | "MEDIUM" | "LOW";
-    impact: number;        // 0.0–1.0
+    impact: number;
     isImplemented: boolean;
     createdAt: string;
     updatedAt: string;
+    metadata?: {
+      competitor_name?: string | null;
+      staged_at?: string;
+      original_impact_score?: number;
+      quote?: string;
+      archive_reason?: string;
+      source_type?: string;
+      review_id?: string;
+      archived_at?: string;
+    };
   };
   const [backlogItems, setBacklogItems] = useState<BacklogItem[]>([]);
   const [backlogLoading, setBacklogLoading] = useState(false);
@@ -1143,12 +1174,15 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
         severity: "CRITICAL" | "MEDIUM" | "LOW";
         impact: number;
         is_implemented: boolean;
+        metadata?: BacklogItem["metadata"];
         created_at: string;
         updated_at: string;
       }> }) => {
         if (cancelled) return;
         if (json.success) {
-          setBacklogItems((json.items ?? []).map((i) => ({
+          setBacklogItems((json.items ?? [])
+            .filter((i) => i.is_implemented)
+            .map((i) => ({
             id: i.id,
             packageName: i.package_name,
             countryCode: i.country_code,
@@ -1157,6 +1191,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
             severity: i.severity,
             impact: i.impact,
             isImplemented: i.is_implemented,
+            metadata: i.metadata,
             createdAt: i.created_at,
             updatedAt: i.updated_at,
           })));
@@ -1179,14 +1214,40 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     return cancel;
   }, [loadBacklog]);
 
+  useEffect(() => {
+    const onStaged = (event: Event) => {
+      const detail = (event as CustomEvent<ReviewInsightStagedDetail>).detail;
+      if (!detail || detail.workspaceId !== workspaceId) return;
+      invalidateActiveContext();
+      loadBacklog();
+    };
+    const onArchived = (event: Event) => {
+      const detail = (event as CustomEvent<ReviewInsightArchivedDetail>).detail;
+      if (!detail || detail.workspaceId !== workspaceId) return;
+      invalidateActiveContext();
+      loadBacklog();
+    };
+    window.addEventListener(REVIEW_INSIGHT_STAGED_EVENT, onStaged);
+    window.addEventListener(REVIEW_INSIGHT_ARCHIVED_EVENT, onArchived);
+    return () => {
+      window.removeEventListener(REVIEW_INSIGHT_STAGED_EVENT, onStaged);
+      window.removeEventListener(REVIEW_INSIGHT_ARCHIVED_EVENT, onArchived);
+    };
+  }, [workspaceId, loadBacklog, invalidateActiveContext]);
+
 
   // ── Dismiss item (permanently delete from backlog) ───────────────────────
-  //
-  // Used by the "Dismiss" trash button in the Active Optimization Queue.
-  // Deletes the row from the DB so the issue reappears in Active Insights.
-  const dismissItem = useCallback(async (itemId: string) => {
+  const dismissItem = useCallback(async (itemId: string, fromArchive = false) => {
     setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
     try {
+      if (fromArchive) {
+        const ok = await deleteStagedReviewClient(workspaceId, itemId);
+        if (ok) {
+          setBacklogItems((prev) => prev.filter((i) => i.id !== itemId));
+        }
+        return;
+      }
+
       const res = await fetch(
         `/api/workspaces/${workspaceId}/backlog/${itemId}`,
         { method: "DELETE", credentials: "same-origin" },
@@ -1202,36 +1263,27 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     }
   }, [workspaceId]);
 
-  // ── Revert item back to active (history → active) ────────────────────────
-  //
-  // On success:
-  //   On success: isImplemented → false (item moves from History Archive back
-  //   to active queue). stagedTitles and archivedTitles update reactively
-  //   since both are derived from backlogItems. No improvementIds to clean up.
+  // ── Restore archived insight → Active Context ────────────────────────────
   const revertToActive = useCallback(async (itemId: string) => {
     setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
     try {
-      const res = await fetch(
-        `/api/workspaces/${workspaceId}/backlog/${itemId}`,
-        {
-          method: "PATCH",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ is_implemented: false }),
-        },
-      );
-      const json = (await res.json()) as { success: boolean };
-      if (json.success) {
-        setBacklogItems((prev) =>
-          prev.map((i) => (i.id === itemId ? { ...i, isImplemented: false } : i)),
-        );
+      const result = await restoreStagedReviewClient(workspaceId, itemId, {
+        locale: locale === "ar" ? "ar" : "en",
+        appId: apps[0]?.id,
+      });
+      if (result.ok) {
+        setBacklogItems((prev) => prev.filter((i) => i.id !== itemId));
+        invalidateActiveContext();
+        toast.success(t("insightsTabs.restoreSuccess"));
+      } else {
+        toast.error(result.error ?? t("insightsTabs.restoreFailed"));
       }
     } catch {
-      // silent
+      toast.error(t("insightsTabs.restoreFailed"));
     } finally {
       setBacklogBusy((prev) => ({ ...prev, [itemId]: false }));
     }
-  }, [workspaceId]);
+  }, [workspaceId, locale, apps, t, invalidateActiveContext]);
 
   const refresh = useCallback(() => {
     router.refresh();
@@ -1288,72 +1340,8 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     return { avgRating, totalReviews: total, positivePct, trendPoints };
   }, [reviewsBySource, selectedAppFilter, loadingBySource]);
 
-  /**
-   * addImprovement — persists an IssueCard entry to workspace_listing_backlog.
-   *
-   * Flow:
-   *   1. POST to /api/workspaces/[id]/backlog with the full issue payload.
-   *      button toggles to "Added to queue ✓" without waiting for the network.
-   *   2. POST to /api/workspaces/[id]/backlog with the full issue payload.
-   *   3. On success: reload backlog — stagedTitles and archivedTitles update
-   *      reactively, card disappears from Active Insights and STAGED state is
-   *      driven by DB truth, not sessionStorage.
-   *   4. On failure: toast error; no optimistic state to roll back.
-   *
-   * Duplicate guard: IssueCard.added is driven by stagedTitles.has(issue.title)
-   * so the button is already hidden/STAGED before this fires again. The DB
-   * upsert is also idempotent via the unique index.
-   */
-  const addImprovement = useCallback(
-    async (issueId: string, issue: IssueItem): Promise<boolean> => {
-      // ── Persist to DB ───────────────────────────────────────────────────────
-      // Derive packageName inline — avoids a forward-reference to activePackageName
-      // which is declared later in the component body.
-      const packageName =
-        selectedAppFilter === "my-app"
-          ? (apps[0]?.package_name?.trim() ?? "")
-          : selectedAppFilter;
-
-      try {
-        const res = await fetch(
-          `/api/workspaces/${workspaceId}/backlog`,
-          {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              packageName,
-              countryCode,
-              title:        issue.title,
-              description:  issue.description,
-              severity:     issue.severity,
-              impact:       issue.impact,
-            }),
-          },
-        );
-
-        const json = (await res.json()) as { success?: boolean; error?: { message?: string } };
-
-        if (!json.success) {
-          throw new Error(json.error?.message ?? "Backlog write failed");
-        }
-
-        // ── Success — reload backlog; stagedTitles/archivedTitles update reactively ──
-        toast.success(t("commonIssues.addedToast"));
-        loadBacklog();
-        return true;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        toast.error(`Could not save to backlog — ${msg}. Please try again.`);
-        return false;
-      }
-    },
-    [workspaceId, selectedAppFilter, apps, countryCode, t, loadBacklog],
-  );
-
   const primaryApp = apps[0];
   const primaryAppName = primaryApp?.name ?? undefined;
-  const primaryAppId = primaryApp?.id;
   const primaryPackageName = primaryApp?.package_name ?? null;
 
   // Active-tab derived values
@@ -1474,24 +1462,26 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   );
 
   /**
-   * Titles of staged (not-yet-implemented) backlog items.
-   * Drives IssueCard.added — the card shows "Open in Listing Optimizer →"
-   * instead of "Add to Optimization Backlog" when its title is here.
-   * DB-driven so it survives page refresh without any sessionStorage dependency.
-   */
-  const stagedTitles = useMemo(
-    () => new Set(backlogItems.filter((i) => !i.isImplemented).map((i) => i.issueTitle)),
-    [backlogItems],
-  );
-
-  /**
-   * Set of issue titles that should be hidden from Active Insights.
-   * Covers BOTH staged and archived — once in the backlog it leaves Active Insights.
+   * Titles in Optimization History Archive only.
    */
   const archivedTitles = useMemo(
     () => new Set(backlogItems.map((i) => i.issueTitle)),
     [backlogItems],
   );
+
+  /** Hide from Active Insights when in Active Context or Archive. */
+  const hiddenInsightTitles = useMemo(() => {
+    const hidden = new Set(archivedTitles);
+    for (const title of activeContextTitles) hidden.add(title);
+    return hidden;
+  }, [archivedTitles, activeContextTitles]);
+
+  const stagedReviewIds = activeReviewIds;
+
+  const activeCompetitorName = useMemo(() => {
+    if (selectedAppFilter === "my-app") return null;
+    return competitorOptions.find((c) => c.packageId === selectedAppFilter)?.label ?? null;
+  }, [selectedAppFilter, competitorOptions]);
 
   if (blockingError) {
     return (
@@ -1776,6 +1766,11 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
             activeCompetitorPackageName={
               selectedAppFilter !== "my-app" ? selectedAppFilter : null
             }
+            countryCode={countryCode}
+            langCode={primaryLang}
+            competitorName={activeCompetitorName}
+            stagedReviewIds={stagedReviewIds}
+            onReviewStaged={loadBacklog}
           />
 
           {/* Per-tab loading indicator */}
@@ -1860,15 +1855,6 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
             {/* ── ACTIVE INSIGHTS TAB ──────────────────────────────────────── */}
             {insightsTab === "active" && (
               <div className="space-y-6">
-
-                {/* Gemini Common Issues panel — the IssueCard grid */}
-                {stagedTitles.size > 0 ? (
-                  <p className="flex items-center gap-2 text-xs text-emerald-400/85">
-                    <Sparkles className="size-3.5 shrink-0" aria-hidden />
-                    {t("commonIssues.queueHint", { count: stagedTitles.size })}
-                  </p>
-                ) : null}
-
                 <CommonIssuesPanel
                   key={selectedAppFilter}
                   workspaceId={workspaceId}
@@ -1879,152 +1865,20 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                   reviewTexts={activeLowRatingTexts}
                   rawReviewCount={activeLowRatingTexts.length}
                   isSyncLoading={activeLoading}
-                  stagedTitles={stagedTitles}
-                  excludeTitles={archivedTitles}
-                  onAddImprovement={addImprovement}
+                  activeContextTitles={activeContextTitles}
+                  competitorName={activeCompetitorName}
+                  excludeTitles={hiddenInsightTitles}
+                  onIssueStaged={() => {
+                    invalidateActiveContext();
+                    loadBacklog();
+                  }}
                 />
-
-                {/* ── Active Optimization Queue ────────────────────────────────
-                    Shows issues the user has queued for listing optimization.
-                    Two actions only:
-                      • "Open in Listing Optimizer →" — navigate to generate listing
-                      • Trash icon — dismiss (delete from DB, reappears in Active Insights)
-                    Items move to History Archive automatically when a listing is generated. */}
-                {(backlogLoading || backlogError || backlogItems.filter((i) => !i.isImplemented).length > 0) && (
-                  <div className="space-y-3 border-t border-white/[0.06] pt-4">
-
-                    {/* Section label + Optimize All Insights CTA */}
-                    {!backlogLoading && backlogItems.filter((i) => !i.isImplemented).length > 0 && (
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
-                          {t("insightsTabs.queueSectionLabel")}
-                        </p>
-                        {/* Unified deep-link: pulls ALL queued insights into the optimizer
-                            as exploit_targets so the user doesn't need to queue individually.
-                            Capped at 40 items to stay within the Listing Optimizer's schema max.
-                            URLSearchParams.set() handles the encoding — do NOT pre-encode titles
-                            individually (double-encoding breaks the optimizer's URL parser). */}
-                        {(() => {
-                          const activeItems = backlogItems.filter((i) => !i.isImplemented);
-                          const capped = activeItems.slice(0, 40);
-                          const count = capped.length;
-                          return (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!count) return;
-                                const targets = capped.map((i) => i.issueTitle).join(",");
-                                const params = new URLSearchParams();
-                                params.set("exploit_targets", targets);
-                                if (primaryAppId) params.set("appId", primaryAppId);
-                                router.push(`/app/${workspaceId}/listing-optimizer?${params.toString()}`);
-                              }}
-                              className="group flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/[0.08] px-3.5 py-2 text-xs font-semibold text-emerald-300 transition-all hover:border-emerald-500/55 hover:bg-emerald-500/[0.14] hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50"
-                            >
-                              <Zap className="size-3.5 shrink-0 text-emerald-400" aria-hidden />
-                              {t("insightsTabs.optimizeAllInsights")}
-                              {/* Count badge — shows how many insights are being pushed */}
-                              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-300 ring-1 ring-emerald-500/30">
-                                {count}
-                              </span>
-                              <ArrowRight className="size-3.5 shrink-0 text-emerald-400/70 transition-transform group-hover:translate-x-0.5" aria-hidden />
-                            </button>
-                          );
-                        })()}
-                      </div>
-                    )}
-
-                    {backlogLoading && (
-                      <div className="flex items-center gap-2 text-xs text-zinc-500">
-                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                        <span>{t("loading")}</span>
-                      </div>
-                    )}
-                    {backlogError && !backlogLoading && (
-                      <p className="text-xs text-red-400">{t("insightsTabs.loadError")}</p>
-                    )}
-
-                    {!backlogLoading && backlogItems.filter((i) => !i.isImplemented).length > 0 && (
-                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {backlogItems.filter((i) => !i.isImplemented).map((item) => {
-                          const severityBadge: Record<string, string> = {
-                            CRITICAL: "bg-red-500/10 text-red-500 border border-red-500/20",
-                            MEDIUM:   "bg-amber-500/10 text-amber-500 border border-amber-500/20",
-                            LOW:      "bg-blue-500/10 text-blue-500 border border-blue-500/20",
-                          };
-                          const accentBar: Record<string, string> = {
-                            CRITICAL: "bg-red-500",
-                            MEDIUM:   "bg-amber-500",
-                            LOW:      "bg-blue-500",
-                          };
-                          const severityLabel: Record<string, string> = {
-                            CRITICAL: "Critical",
-                            MEDIUM:   "Medium",
-                            LOW:      "Low",
-                          };
-                          const isBusy = backlogBusy[item.id] ?? false;
-                          const qs = primaryAppId ? `?appId=${encodeURIComponent(primaryAppId)}` : "";
-                          return (
-                            <div
-                              key={item.id}
-                              className="relative overflow-visible rounded-xl border border-zinc-800 bg-zinc-900/50 shadow-[0_0_0_1px_rgba(16,185,129,0.06)] transition-shadow hover:shadow-[0_0_0_1px_rgba(16,185,129,0.14)]"
-                            >
-                              {/* Left accent stripe */}
-                              <div
-                                className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${accentBar[item.severity] ?? "bg-zinc-500"}`}
-                                aria-hidden
-                              />
-                              {/* Impact % — top-right */}
-                              <span className="absolute right-3 top-3 text-[11px] font-medium tabular-nums whitespace-nowrap text-amber-400">
-                                {t("insightsTabs.impact", { pct: Math.round(item.impact * 100) })}
-                              </span>
-                              {/* Card body */}
-                              <div className="space-y-2 pb-3 pl-6 pr-12 pt-3">
-                                {/* Severity badge + dismiss */}
-                                <div className="flex items-center justify-between">
-                                  <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${severityBadge[item.severity] ?? ""}`}>
-                                    {severityLabel[item.severity] ?? item.severity}
-                                  </span>
-                                  {/* Dismiss — removes from queue, reappears in Active Insights */}
-                                  <button
-                                    type="button"
-                                    aria-label={t("insightsTabs.dismissItem")}
-                                    disabled={isBusy}
-                                    onClick={() => void dismissItem(item.id)}
-                                    className="text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-40"
-                                  >
-                                    <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden>
-                                      <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                                    </svg>
-                                  </button>
-                                </div>
-                                {/* Title + description */}
-                                <p className="text-sm font-semibold leading-snug text-white">{item.issueTitle}</p>
-                                <p className="text-xs leading-relaxed text-zinc-400">{item.issueDescription}</p>
-                                {/* Primary CTA — open listing optimizer pre-loaded with this app */}
-                                <button
-                                  type="button"
-                                  disabled={isBusy}
-                                  onClick={() => router.push(`/app/${workspaceId}/listing-optimizer${qs}`)}
-                                  className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-800/80 border border-zinc-700 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-zinc-700/80 hover:text-blue-300 transition-colors disabled:opacity-50"
-                                >
-                                  <ArrowRight className="size-3.5 shrink-0" aria-hidden />
-                                  {t("insightsTabs.openInOptimizer")}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
             {/* ── OPTIMIZATION HISTORY ARCHIVE TAB ─────────────────────────── */}
             {insightsTab === "archive" && (() => {
-              const doneItems = backlogItems.filter((i) => i.isImplemented);
+              const doneItems = backlogItems;
               return (
                 <div className="space-y-4">
                   {/* Header row */}
@@ -2074,6 +1928,10 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                           LOW:      "Low",
                         };
                         const isBusy = backlogBusy[item.id] ?? false;
+                        const displayImpact = Math.round(item.impact * 100);
+                        const originalImpact = item.metadata?.original_impact_score;
+                        const showOriginalImpact =
+                          originalImpact != null && originalImpact !== displayImpact;
 
                         // ── Source label for competitor pill ──────────────────
                         const ownPackage = apps[0]?.package_name?.trim() ?? "";
@@ -2115,17 +1973,17 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                               {/* Description */}
                               <p className="text-xs leading-relaxed text-zinc-400">{item.issueDescription}</p>
 
-                              {/* Metadata row — source pill + counter-attacked badge */}
+                              {/* Metadata row — status badge + single source pill */}
                               <div className="flex flex-wrap items-center gap-1.5">
-                                {/* Counter-attacked badge */}
                                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
                                   <svg viewBox="0 0 20 20" fill="currentColor" className="size-3 shrink-0" aria-hidden>
                                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
                                   </svg>
-                                  {t("insightsTabs.counterAttacked")}
+                                  {item.metadata?.archive_reason === "archived"
+                                    ? t("insightsTabs.archivedBadge")
+                                    : t("insightsTabs.counterAttacked")}
                                 </span>
 
-                                {/* Source pill */}
                                 {sourceLabel && (
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${isCompetitorSource ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "bg-sky-500/10 border border-sky-500/20 text-sky-400"}`}>
                                     {isCompetitorSource ? (
@@ -2138,19 +1996,38 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                                         <path d="M8 8a3 3 0 100-6 3 3 0 000 6zm-5 6s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3z"/>
                                       </svg>
                                     )}
-                                    <span className="max-w-[90px] truncate">{sourceLabel}</span>
+                                    <span className="max-w-[140px] truncate">{sourceLabel}</span>
                                   </span>
                                 )}
                               </div>
 
-                              {/* Optimized-on date */}
-                              {item.updatedAt && (
+                              {/* Date line — staged vs exploited, no duplicate dates */}
+                              {item.metadata?.archived_at || item.metadata?.staged_at ? (
+                                <p className="text-[10px] text-zinc-600">
+                                  {t("insightsTabs.archivedOn", {
+                                    date: new Date(
+                                      (item.metadata.archived_at ?? item.metadata.staged_at) as string,
+                                    ).toLocaleDateString(undefined, {
+                                      day: "numeric",
+                                      month: "short",
+                                      year: "numeric",
+                                    }),
+                                  })}
+                                  {showOriginalImpact
+                                    ? ` · ${t("insightsTabs.originalImpact", { pct: originalImpact })}`
+                                    : null}
+                                </p>
+                              ) : item.updatedAt ? (
                                 <p className="text-[10px] text-zinc-600">
                                   {t("insightsTabs.exploitedOn", {
-                                    date: new Date(item.updatedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }),
+                                    date: new Date(item.updatedAt).toLocaleDateString(undefined, {
+                                      day: "numeric",
+                                      month: "short",
+                                      year: "numeric",
+                                    }),
                                   })}
                                 </p>
-                              )}
+                              ) : null}
 
                               {/* Action row — Restore + Delete */}
                               <div className="mt-1 flex items-center gap-2">
@@ -2181,7 +2058,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                                   type="button"
                                   disabled={isBusy}
                                   aria-label={t("insightsTabs.deleteFromArchive")}
-                                  onClick={() => void dismissItem(item.id)}
+                                  onClick={() => void dismissItem(item.id, true)}
                                   className="flex size-7 shrink-0 items-center justify-center rounded-md border border-zinc-700 bg-zinc-800/80 text-zinc-500 transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-50"
                                 >
                                   <Trash2 className="size-3.5" aria-hidden />

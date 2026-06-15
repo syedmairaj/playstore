@@ -45,6 +45,19 @@ export type ReviewInsightsCreditGateResult = {
 };
 
 function isReviewDerivedItem(item: OptimizationQueueItem): boolean {
+  const meta = item.metadata ?? {};
+  if (meta.explicitly_staged === true || meta.move_to_active_context === true) {
+    return false;
+  }
+  if (typeof meta.backlog_id === "string" && meta.backlog_id.length > 0) {
+    return false;
+  }
+  if (typeof meta.pending_insight_id === "string" && meta.pending_insight_id.length > 0) {
+    return false;
+  }
+  if (item.sourceContext === "review_curation_adopt") {
+    return false;
+  }
   return (
     item.type === "review_pain_point" &&
     (item.metadata.review_derived === true || item.metadata.from_review_insights === true)
