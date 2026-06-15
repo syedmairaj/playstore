@@ -34,3 +34,15 @@ export type {
 
 export { stageSignal } from "@/lib/staging-vault/stageSignal";
 export { syncKeywordToUniversalVault } from "@/lib/staging-vault/sync-keyword-universal-vault";
+
+export {
+  enrichStagingVaultMetadata,
+  resolveOriginModule,
+  resolveActiveContextSection,
+  enforceActiveContextSectionBoundary,
+} from "@/lib/staging-vault/staging-vault-metadata";
+export type {
+  StagingVaultOriginModule,
+  ActiveContextSection,
+  EnrichedStagingVaultMetadata,
+} from "@/lib/staging-vault/staging-vault-metadata";

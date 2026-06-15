@@ -1,15 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Coins, Lock, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { StageButtonRefactored } from "@/components/staging/StageButtonRefactored";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
 import type { KeywordSpotlightResult } from "@/app/api/market/keyword-spotlight/route";
 import { SELECTABLE_CATEGORIES, getCategoryLabel } from "@/lib/market/category-labels";
 import { TopChartRow, TopChartRowSkeleton } from "@/components/market/top-chart-row";
+import { SpotlightKeywordCuration } from "@/components/market/spotlight-keyword-curation";
 import { KeywordSpotlightCard } from "@/components/market/keyword-spotlight-card";
+import { workspaceAppsQueryKey } from "@/hooks/use-app-limits";
+import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
+import { fetchWorkspaceApps } from "@/lib/client/workspace-query-fetchers";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -134,46 +138,6 @@ function SpotlightLockedCard({
   );
 }
 
-// ── Stage Keywords to Vault button ────────────────────────────────────────────
-
-function OptimizeWithSpotlightButton({
-  spotlight,
-  workspaceId,
-  ownAppId,
-  isRtl,
-}: {
-  spotlight: KeywordSpotlightResult;
-  workspaceId: string;
-  ownAppId?: string | null;
-  isRtl: boolean;
-}) {
-  return (
-    <StageButtonRefactored
-      module="market_intel"
-      signalType="keyword"
-      content={spotlight.trendingKeywords.slice(0, 5).join(", ")}
-      source="keyword_spotlight"
-      sourceContext="keyword_spotlight"
-      sourceContextId={spotlight.category || "spotlight"}
-      workspaceId={workspaceId}
-      sourceAppId={ownAppId}
-      language={isRtl ? "ar" : "en"}
-      metadata={{
-        allTrendingKeywords: spotlight.trendingKeywords,
-        asoTip: spotlight.asoTip,
-        keywordCount: spotlight.trendingKeywords.length,
-      }}
-      variant="primary"
-      size="lg"
-      label={
-        isRtl
-          ? "إضافة إلى الخزنة"
-          : "Stage Keywords to Vault"
-      }
-    />
-  );
-}
-
 // ── Component ──────────────────────────────────────────────────────────────────
 
 // ── Spotlight sessionStorage cache helpers ────────────────────────────────────
@@ -254,6 +218,22 @@ export function MarketIntelligenceClient({
   const [fetchedAt,     setFetchedAt]     = useState<string | null>(null);
   const [fromCache,     setFromCache]     = useState(false);
   const [error,         setError]         = useState<string | null>(null);
+
+  const { data: workspaceApps } = useQuery({
+    queryKey: workspaceAppsQueryKey(workspaceId),
+    queryFn: () => fetchWorkspaceApps(workspaceId),
+    ...queryDefaultsFor("workspaceMeta", { reconcileOnMount: true }),
+  });
+
+  const targetAppId = useMemo(() => {
+    const apps = workspaceApps ?? [];
+    if (apps.length === 0) return undefined;
+    if (ownAppId) {
+      const match = apps.find((app) => app.package_name === ownAppId);
+      if (match?.id) return match.id;
+    }
+    return apps[0]?.id;
+  }, [workspaceApps, ownAppId]);
 
   // ── Restore spotlight from sessionStorage on mount / market change ───────────
   // When category or country changes: check cache first, then lock if nothing cached.
@@ -496,10 +476,23 @@ export function MarketIntelligenceClient({
             />
           ) : (
             <>
-              <KeywordSpotlightCard
-                spotlight={spotlight}
-                loading={loadingSpot}
-              />
+              {loadingSpot ? (
+                <KeywordSpotlightCard spotlight={spotlight} loading isRtl={isRtl} />
+              ) : spotlight ? (
+                <SpotlightKeywordCuration
+                  spotlight={spotlight}
+                  workspaceId={workspaceId}
+                  appId={targetAppId}
+                  isRtl={isRtl}
+                  context={{
+                    category,
+                    categoryLabel: getCategoryLabel(category),
+                    country,
+                    countryLabel:
+                      COUNTRY_OPTIONS.find((c) => c.code === country)?.label ?? country.toUpperCase(),
+                  }}
+                />
+              ) : null}
               {/* Refresh spotlight — costs credits again */}
               {spotlight && !loadingSpot && (
                 <button
@@ -521,15 +514,7 @@ export function MarketIntelligenceClient({
 
           {/* What to do next — shown after unlock */}
           {!spotlightLocked && spotlight && !loadingSpot && (
-            <div className="space-y-3 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-              {/* Primary CTA — stage keywords to vault */}
-              <OptimizeWithSpotlightButton
-                spotlight={spotlight}
-                workspaceId={workspaceId}
-                ownAppId={ownAppId}
-                isRtl={isRtl}
-              />
-
+            <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
               {/* Secondary guidance */}
               <div className="rounded-2xl border border-zinc-800 bg-white/[0.02] p-4">
                 <p className={cn(

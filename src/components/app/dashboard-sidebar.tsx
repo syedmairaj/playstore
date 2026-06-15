@@ -11,9 +11,16 @@ type Props = {
   navAriaLabel: string;
   onNavigate?: () => void;
   className?: string;
+  workspaceId: string;
 };
 
-export function DashboardSidebar({ items, navAriaLabel, onNavigate, className }: Props) {
+export function DashboardSidebar({
+  items,
+  navAriaLabel,
+  onNavigate,
+  className,
+  workspaceId,
+}: Props) {
   return (
     <div
       className={cn(
@@ -32,7 +39,12 @@ export function DashboardSidebar({ items, navAriaLabel, onNavigate, className }:
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain py-3">
-        <WorkspaceSidebarNav items={items} navAriaLabel={navAriaLabel} onItemClick={onNavigate} />
+        <WorkspaceSidebarNav
+          items={items}
+          navAriaLabel={navAriaLabel}
+          onItemClick={onNavigate}
+          workspaceId={workspaceId}
+        />
       </div>
 
       <div className="shrink-0 border-t border-white/[0.07] bg-[#060910]/90 p-4 backdrop-blur-sm">

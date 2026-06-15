@@ -11,6 +11,10 @@ import type {
   OptimizationQueueItemType,
   OptimizationQueueSource,
 } from "@/lib/optimization-queue/optimization-queue.types";
+import {
+  enforceActiveContextSectionBoundary,
+  isReviewInsightMetadata,
+} from "@/lib/staging-vault/staging-vault-metadata";
 
 export type { OptimizationQueueCategory };
 
@@ -25,7 +29,7 @@ export const OPTIMIZATION_QUEUE_CATEGORIES: readonly OptimizationQueueCategory[]
 export const ACTIVE_CONTEXT_SECTION_LABELS: Record<OptimizationQueueCategory, string> = {
   tracker: "# KEYWORD TRACKER",
   review: "REVIEW INSIGHTS",
-  opportunity: "MARKET OPPORTUNITIES",
+  opportunity: "MARKET INTELLIGENCE SIGNALS",
   strength: "COMPETITOR STRENGTHS",
 };
 
@@ -76,13 +80,55 @@ export function inferCategoryFromType(type: OptimizationQueueItemType): Optimiza
 export function resolveQueueItemCategory(
   item: Pick<OptimizationQueueItem, "type" | "category" | "metadata" | "source">,
 ): OptimizationQueueCategory {
-  if (isQueueCategory(item.category)) return item.category;
+  const metaSection = item.metadata?.active_context_section;
+  if (isQueueCategory(metaSection)) {
+    return enforceActiveContextSectionBoundary({
+      signalType: item.type,
+      source: item.source,
+      proposedSection: metaSection,
+      metadata: item.metadata,
+    });
+  }
+
+  if (isQueueCategory(item.category)) {
+    return enforceActiveContextSectionBoundary({
+      signalType: item.type,
+      source: item.source,
+      proposedSection: item.category,
+      metadata: item.metadata,
+    });
+  }
+
   const metaCat = item.metadata?.category;
-  if (isQueueCategory(metaCat)) return metaCat;
+  if (isQueueCategory(metaCat)) {
+    return enforceActiveContextSectionBoundary({
+      signalType: item.type,
+      source: item.source,
+      proposedSection: metaCat,
+      metadata: item.metadata,
+    });
+  }
+
+  // Strict isolation: review-derived items never land in opportunity.
+  if (
+    item.type === "review_pain_point" ||
+    item.type === "feature_request" ||
+    item.source === "review_analysis" ||
+    isReviewInsightMetadata(item.metadata)
+  ) {
+    return "review";
+  }
+
   if (item.type === "market_keyword" && item.source === "keyword_tracker") {
     return "tracker";
   }
-  return inferCategoryFromType(item.type);
+
+  return enforceActiveContextSectionBoundary({
+    signalType: item.type,
+    source: item.source,
+    proposedSection: inferCategoryFromType(item.type),
+    metadata: item.metadata,
+  });
 }
 
 /**

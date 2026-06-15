@@ -615,6 +615,8 @@
       "same": "دون تغيير"
     },
     "actions": {
+      "groupLabel": "إجراءات الصفحة",
+      "validateKeyword": "التحقق من كلمة رئيسية",
       "refreshSerperHint": "يستهلك {per} رصيدًا لكل دولة تُحدَّث.",
       "refreshSerper": "تحديث الترتيب",
       "refreshSerperPending": "جارٍ التحديث…",

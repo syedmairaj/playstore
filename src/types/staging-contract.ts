@@ -103,8 +103,12 @@ export interface UnifiedStagingPayload {
   workspaceId?: string;
 
   /**
-   * Optional: Additional metadata
-   * Stored as JSONB in DB for flexible querying
+   * Optional: Additional metadata (JSONB)
+   * Stored in DB — MUST include enriched fields via enrichStagingVaultMetadata():
+   * - origin_module: 'market_intel' | 'review_analysis' | 'competitor_spy' | ...
+   * - confidence_score: 0–1 (nullable)
+   * - user_selected_boolean: true when user explicitly curated the signal
+   * - active_context_section: 'tracker' | 'review' | 'opportunity' | 'strength'
    * Examples:
    *   - { competitorName: 'FitTrack Pro', bestRank: 42, categoryLabel: 'Health & Fitness' }
    *   - { severity: 'critical', impactPercent: 45 }

@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { KeywordPayload } from "@/hooks/useKeywordSelection";
 import { VaultCore } from "@/lib/staging-vault/vault-core";
+import { enrichStagingVaultMetadata } from "@/lib/staging-vault/staging-vault-metadata";
 import type { VaultSignalType } from "@/lib/staging-vault/vault-core.types";
 import { hasLegacySignalColumns } from "@/lib/staging-vault/staging-vault-schema";
 
@@ -111,10 +112,16 @@ export async function addSignalToVault(
     sourceAppId: payload.sourceAppId,
     sourceContext: payload.sourceContext,
     sourceContextId: payload.sourceContextId,
-    metadata: {
-      ...payload.metadata,
-      keywords: payload.keywords ?? [],
-    },
+    metadata: enrichStagingVaultMetadata({
+      signalType: payload.signalType,
+      source: payload.source,
+      sourceContext: payload.sourceContext,
+      category: payload.category,
+      metadata: {
+        ...payload.metadata,
+        keywords: payload.keywords ?? [],
+      },
+    }),
     category: payload.category,
     userId: options?.userId,
   });

@@ -1,29 +1,8 @@
 /**
  * POST /api/workspaces/[workspaceId]/validator/validate-keyword
  *
- * Validates a keyword and returns viability score.
- * Powers the Quick Win Keyword Validator feature.
- *
- * Request:
- * {
- *   "keyword": string,
- *   "category": string (optional, defaults to "default"),
- *   "language": "en" | "ar" (optional)
- * }
- *
- * Response:
- * {
- *   "ok": true,
- *   "data": {
- *     "keyword": string,
- *     "difficulty": {...},
- *     "monthlyInstalls": {...},
- *     "recommendation": "high_confidence" | "medium_opportunity" | "skip_this",
- *     "confidence": number,
- *     "reasoning": string,
- *     "tags": string[]
- *   }
- * }
+ * Validates a keyword and returns viability score(s).
+ * When `countries` is provided, runs parallel per-market scoring.
  */
 
 import { NextResponse } from "next/server";
@@ -33,11 +12,17 @@ import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { KeywordViabilityService } from "@/lib/validator/keyword-viability-service";
 
 const ROUTE = "POST /api/workspaces/[workspaceId]/validator/validate-keyword";
+const MAX_MARKETS = 4;
 
 const bodySchema = z.object({
   keyword: z.string().min(1).max(100),
   category: z.string().default("default"),
   language: z.enum(["en", "ar"]).default("en"),
+  countries: z
+    .array(z.string().min(2).max(4).toLowerCase().trim())
+    .min(1)
+    .max(MAX_MARKETS)
+    .optional(),
 });
 
 type Ctx = { params: Promise<{ workspaceId: string }> };
@@ -53,20 +38,18 @@ export async function POST(request: Request, context: Ctx) {
   if (!user) {
     return NextResponse.json(
       { ok: false, error: { code: "unauthorized", message: "Sign in required" } },
-      { status: 401 }
+      { status: 401 },
     );
   }
 
-  // Verify workspace membership
   const role = await getWorkspaceRole(supabase, workspaceId, user.id);
   if (!role) {
     return NextResponse.json(
       { ok: false, error: { code: "forbidden", message: "Not a workspace member" } },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
-  // Parse request body
   let body: z.infer<typeof bodySchema>;
   try {
     body = bodySchema.parse(await request.json());
@@ -80,52 +63,47 @@ export async function POST(request: Request, context: Ctx) {
             message: err.errors[0]?.message ?? "Invalid request",
           },
         },
-        { status: 422 }
+        { status: 422 },
       );
     }
     return NextResponse.json(
       { ok: false, error: { code: "bad_request", message: "Could not parse request" } },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   try {
     const { keyword, category, language } = body;
+    const countries = body.countries?.length ? body.countries : ["us"];
+    const primaryMarket = countries[0]!;
 
-    console.log(`[${ROUTE}] 🔍 VALIDATION REQUEST:`, {
+    console.log(`[${ROUTE}] VALIDATION REQUEST:`, {
       keyword,
       category,
       language,
+      countries,
       workspaceId,
       userId: user.id,
       timestamp: new Date().toISOString(),
     });
 
-    // Validate keyword using service
     const validatorService = new KeywordViabilityService();
-    const viabilityScore = await validatorService.validateKeyword(
+    const marketScores = await validatorService.validateKeywordForMarkets(
       keyword,
+      countries,
       category,
-      language
+      language,
     );
 
-    console.log(`[${ROUTE}] ✅ VALIDATION COMPLETE:`, {
+    const viabilityScore = marketScores[primaryMarket] ?? Object.values(marketScores)[0]!;
+
+    console.log(`[${ROUTE}] VALIDATION COMPLETE:`, {
       keyword,
+      countries: Object.keys(marketScores),
       recommendation: viabilityScore.recommendation,
       confidence: viabilityScore.confidence,
-      difficulty: viabilityScore.difficulty.difficulty,
     });
 
-    // Save score to database for future reference.
-    // Column mapping verified against live schema (information_schema.columns):
-    //   keyword        → keyword_term
-    //   difficulty     → difficulty_score
-    //   searchVolume   → search_volume
-    //   competition    → top_app_count (closest match; no competition column exists)
-    //   confidence     → confidence_percentage
-    //   recommendation → recommendation (jsonb)
-    //   monthlyInstalls→ estimated_monthly_installs (jsonb)
-    // Columns not in schema (omitted): category, reasoning, tags, metadata
     const scoreRow = {
       workspace_id: workspaceId,
       keyword_term: keyword,
@@ -139,6 +117,7 @@ export async function POST(request: Request, context: Ctx) {
         reasoning: viabilityScore.reasoning,
         tags: viabilityScore.tags,
         category,
+        markets: Object.keys(marketScores),
       },
       estimated_monthly_installs: viabilityScore.monthlyInstalls,
     };
@@ -148,16 +127,19 @@ export async function POST(request: Request, context: Ctx) {
       .upsert(scoreRow, { onConflict: "workspace_id,keyword_term,language" });
 
     if (dbError) {
-      // Log but don't fail - still return result to user
-      console.warn(`[${ROUTE}] ⚠️ Could not save score to database:`, dbError.message);
+      console.warn(`[${ROUTE}] Could not save score to database:`, dbError.message);
     }
 
     return NextResponse.json({
       ok: true,
-      data: viabilityScore,
+      data: {
+        ...viabilityScore,
+        primaryMarket,
+        markets: marketScores,
+      },
     });
   } catch (error) {
-    console.error(`[${ROUTE}] ❌ Error:`, error);
+    console.error(`[${ROUTE}] Error:`, error);
 
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
@@ -169,7 +151,7 @@ export async function POST(request: Request, context: Ctx) {
           message: errorMessage,
         },
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

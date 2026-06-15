@@ -18,6 +18,8 @@ import { useState, useCallback } from 'react';
 import { useLocale } from 'next-intl';
 import { ChevronDown, BadgeCheck, AlertCircle, Eye, Plus } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { queryDefaultsFor } from '@/lib/client/query-cache-policy';
+import { OptimizerShimmerBar } from '@/components/listing/optimizer/optimizer-shimmer-bar';
 import { KeywordValidatorDrawer } from './keyword-validator-drawer';
 
 interface KeywordTrackerProps {
@@ -60,6 +62,7 @@ export function KeywordTrackerRefactored({ workspaceId }: KeywordTrackerProps) {
   // Fetch keywords
   const { isLoading } = useQuery({
     queryKey: ['keywords', workspaceId],
+    ...queryDefaultsFor('workspaceContext'),
     queryFn: async () => {
       const res = await fetch(
         `/api/workspaces/${workspaceId}/keywords/tracked`
@@ -154,9 +157,17 @@ export function KeywordTrackerRefactored({ workspaceId }: KeywordTrackerProps) {
       </div>
 
       {/* Keywords List */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-emerald-500" />
+      {isLoading && keywords.length === 0 ? (
+        <div className="space-y-3" aria-busy="true">
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3"
+            >
+              <OptimizerShimmerBar className="mb-2 h-4 w-40 max-w-full rounded-md" delayS={i * 0.05} />
+              <OptimizerShimmerBar className="h-3 w-28 rounded-md opacity-70" delayS={i * 0.05 + 0.04} />
+            </div>
+          ))}
         </div>
       ) : sortedKeywords.length === 0 ? (
         <div className="text-center py-12 border border-dashed border-zinc-700 rounded-lg">

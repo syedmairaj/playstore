@@ -17,6 +17,9 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertTriangle, TrendingUp, Shield } from "lucide-react";
+import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
+import { formatMarketDataOriginTooltip } from "@/lib/client/market-spotlight-staging";
+import { resolveOriginModuleLabel } from "@/lib/client/market-intel-signals";
 import type {
   StagingSignal,
   ReviewIssueSignal,
@@ -57,6 +60,10 @@ function getSignalDisplay(signal: StagingSignal, locale: "en" | "ar") {
 
   if (signal.source === "market_spotlight") {
     const market = signal as MarketOpportunitySignal;
+    const sourceLabel = resolveOriginModuleLabel(
+      market.metadata as Record<string, unknown> | undefined,
+      locale,
+    );
     return {
       icon: TrendingUp,
       iconColor: "text-emerald-400/80",
@@ -66,6 +73,7 @@ function getSignalDisplay(signal: StagingSignal, locale: "en" | "ar") {
       hoverColor: "hover:bg-emerald-500/20",
       removeBtnColor: "text-emerald-400/50 hover:bg-emerald-500/20 hover:text-emerald-300",
       mainText: market.keyword,
+      sourceLabel,
       metadata: market.searchVolume
         ? `${market.searchVolume.toLocaleString()} ${isArabic ? "عمليات بحث" : "searches"}`
         : market.trend
@@ -179,71 +187,97 @@ export default function StagingSignalChip({
     }
   };
 
+  const dataOriginTooltip =
+    signal.source === "market_spotlight"
+      ? formatMarketDataOriginTooltip(
+          (signal.metadata?.data_origin ?? signal.metadata?.dataOrigin) as
+            | Record<string, unknown>
+            | undefined,
+          locale,
+        )
+      : null;
+
+  const chipBody = (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.8 }}
+      transition={{ duration: 0.15 }}
+      className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${display.bgColor} ${display.borderColor} ${display.textColor} ${display.hoverColor}`}
+    >
+      {/* Icon */}
+      <div className="shrink-0 flex items-center">
+        <IconComponent className={`size-3.5 ${display.iconColor}`} />
+      </div>
+
+      {/* Main content */}
+      <div className={`flex flex-col gap-0.5 min-w-0 ${isRtl ? "text-right" : "text-left"}`}>
+        <span className="text-[12px] font-medium leading-tight truncate">
+          {display.mainText}
+        </span>
+
+        {"sourceLabel" in display && display.sourceLabel && (
+          <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-400/70">
+            {locale === "ar" ? "المصدر:" : "Source:"} {display.sourceLabel}
+          </span>
+        )}
+
+        {/* Metadata row (severity, search volume, trend) */}
+        {(display.severity || display.metadata) && (
+          <span className="text-[10px] opacity-60 leading-tight">
+            {display.severity || display.metadata}
+          </span>
+        )}
+      </div>
+
+      {/* Category badge for keywords */}
+      {displayOptions.showCategory && display.category && (
+        <div
+          className={`ml-1 px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${display.categoryColor?.bg} ${display.categoryColor?.text}`}
+        >
+          {display.category}
+        </div>
+      )}
+
+      {/* Remove button */}
+      {displayOptions.showRemoveButton && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            void handleRemove();
+          }}
+          disabled={isRemoving}
+          className={`ml-1 p-1 rounded shrink-0 transition-all ${display.removeBtnColor} ${
+            isRemoving ? "opacity-50 cursor-not-allowed" : "hover:scale-110 active:scale-95"
+          }`}
+          aria-label={locale === "ar" ? "إزالة الإشارة" : "Remove signal"}
+          title={locale === "ar" ? "إزالة الإشارة" : "Remove signal"}
+        >
+          {isRemoving ? (
+            <div className="size-3.5 animate-spin border-1 border-current border-t-transparent rounded-full" />
+          ) : (
+            <X className="size-3.5" />
+          )}
+        </button>
+      )}
+    </motion.div>
+  );
+
   return (
     <AnimatePresence>
       {!isRemoving && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.8 }}
-          transition={{ duration: 0.15 }}
-          className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${display.bgColor} ${display.borderColor} ${display.textColor} ${display.hoverColor}`}
-        >
-          {/* Icon */}
-          <div className="shrink-0 flex items-center">
-            <IconComponent className={`size-3.5 ${display.iconColor}`} />
-          </div>
-
-          {/* Main content */}
-          <div className={`flex flex-col gap-0.5 min-w-0 ${isRtl ? "text-right" : "text-left"}`}>
-            <span className="text-[12px] font-medium leading-tight truncate">
-              {display.mainText}
-            </span>
-
-            {/* Metadata row (severity, search volume, trend) */}
-            {(display.severity || display.metadata) && (
-              <span className="text-[10px] opacity-60 leading-tight">
-                {display.severity || display.metadata}
-              </span>
-            )}
-          </div>
-
-          {/* Category badge for keywords */}
-          {displayOptions.showCategory && display.category && (
-            <div
-              className={`ml-1 px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${display.categoryColor?.bg} ${display.categoryColor?.text}`}
-            >
-              {display.category}
-            </div>
-          )}
-
-          {/* Remove button */}
-          {displayOptions.showRemoveButton && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                void handleRemove();
-              }}
-              disabled={isRemoving}
-              className={`ml-1 p-1 rounded shrink-0 transition-all ${display.removeBtnColor} ${
-                isRemoving ? "opacity-50 cursor-not-allowed" : "hover:scale-110 active:scale-95"
-              }`}
-              aria-label={isArabic ? "إزالة الإشارة" : "Remove signal"}
-              title={isArabic ? "إزالة الإشارة" : "Remove signal"}
-            >
-              {isRemoving ? (
-                <div className="size-3.5 animate-spin border-1 border-current border-t-transparent rounded-full" />
-              ) : (
-                <X className="size-3.5" />
-              )}
-            </button>
-          )}
-        </motion.div>
+        dataOriginTooltip ? (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip content={dataOriginTooltip} side="top" asChild>
+              {chipBody}
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          chipBody
+        )
       )}
     </AnimatePresence>
   );
 }
-
-const isArabic = false; // Will be set dynamically in component

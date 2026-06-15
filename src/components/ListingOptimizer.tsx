@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
@@ -36,14 +36,13 @@ import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimiz
 import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog";
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
-import { useAppLimits, workspaceAppsQueryKey } from "@/hooks/use-app-limits";
+import { workspaceAppsQueryKey, useAppLimits } from "@/hooks/use-app-limits";
+import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
+import { isExplicitMarketIntelStagedItem } from "@/lib/client/market-intel-signals";
+import { REVIEW_DERIVED_INSIGHTS_KEY } from "@/lib/client/prefetch-listing-optimizer";
 import { useOptimizerSync } from "@/hooks/useOptimizerSync";
 import { AsoSandboxPanel } from "@/components/listing-optimizer/aso-sandbox-panel";
 import { ReviewInsightsPanel } from "@/components/listing-optimizer/review-insights-panel";
-import {
-  STAGING_VAULT_CHANGED_EVENT,
-  type StagingVaultChangedDetail,
-} from "@/lib/client/staging-vault-sync";
 import {
   REVIEW_INSIGHT_ARCHIVED_EVENT,
   REVIEW_INSIGHT_STAGED_EVENT,
@@ -98,7 +97,10 @@ import {
   type ListingImprovementItem,
 } from "@/components/reviews/review-improvements-queue";
 import StagingWorkspace from "@/components/staging-workspace/StagingWorkspace";
-import KeywordTrackerPanel from "@/components/listing-optimizer/KeywordTrackerPanel";
+import { ActiveContextWorkspaceSkeleton } from "@/components/staging-workspace/active-context-workspace-skeleton";
+import KeywordTrackerPanel, {
+  KeywordTrackerEmptySlot,
+} from "@/components/listing-optimizer/KeywordTrackerPanel";
 import {
   filterActiveContextKeywordSignals,
   filterSandboxKeywordSignals,
@@ -116,6 +118,7 @@ import {
   ACTIVE_CONTEXT_TOAST_POSITION,
 } from "@/lib/client/active-context-toast";
 import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import { useActiveContextVaultEvents } from "@/hooks/useActiveContextVaultEvents";
 import {
   OPTIMIZATION_QUEUE_KEY,
 } from "@/lib/client/optimization-queue-client";
@@ -386,6 +389,8 @@ interface StagingWorkspaceSectionProps {
   keywordTrackerCount?: number;
   trackerKeywordSignals?: import("@/lib/staging/keyword-signals").KeywordSignal[];
   vaultLocale: "en" | "ar";
+  reviewInsightsSection?: React.ReactNode;
+  hiddenPillarIds?: Array<"review_issues" | "market_opportunities" | "competitor_keywords">;
 }
 
 function StagingWorkspaceSection({
@@ -407,6 +412,8 @@ function StagingWorkspaceSection({
   keywordTrackerCount = 0,
   trackerKeywordSignals = [],
   vaultLocale,
+  reviewInsightsSection,
+  hiddenPillarIds,
 }: StagingWorkspaceSectionProps) {
   // Convert review queue pills to ReviewIssueSignal format
   const reviewIssues: ReviewIssueSignal[] = reviewQueuePills.map((pill) => ({
@@ -418,13 +425,24 @@ function StagingWorkspaceSection({
   }));
 
   // Convert spotlight pills to MarketOpportunitySignal format
-  const marketOpportunities: MarketOpportunitySignal[] = spotlightQueuePills.map((pill) => ({
-    id: pill.id,
-    source: "market_spotlight" as const,
-    keyword: pill.label,
-    timestamp: Date.now(),
-    metadata: { originalPill: pill },
-  }));
+  const marketOpportunities: MarketOpportunitySignal[] = spotlightQueuePills.map((pill) => {
+    const queueMeta =
+      pill.item && "payload" in pill.item
+        ? (pill.item.payload.metadata as Record<string, unknown> | undefined)
+        : undefined;
+    return {
+      id: pill.id,
+      source: "market_spotlight" as const,
+      keyword: pill.label,
+      timestamp: Date.now(),
+      metadata: {
+        originalPill: pill,
+        data_origin: queueMeta?.data_origin,
+        origin_module: queueMeta?.origin_module ?? "market_intel",
+        user_selected_boolean: queueMeta?.user_selected_boolean ?? true,
+      },
+    };
+  });
 
   // Convert staged keywords to CompetitorKeywordSignal format
   const competitorKeywords: CompetitorKeywordSignal[] = stagedKeywords.map((kw) => ({
@@ -468,13 +486,28 @@ function StagingWorkspaceSection({
     onRemoveSignal: handleRemoveSignal,
   });
 
+  const hasStagedSignals =
+    reviewIssues.length > 0 ||
+    marketOpportunities.length > 0 ||
+    competitorKeywords.length > 0 ||
+    competitorWeaknesses.length > 0;
+
+  const showActiveContextSkeleton =
+    loading && !hasStagedSignals && keywordTrackerCount === 0;
+
   return (
     <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
+      {showActiveContextSkeleton ? (
+        <ActiveContextWorkspaceSkeleton isRtl={isRtl} showKeywordTracker={Boolean(appId)} />
+      ) : (
       <StagingWorkspace
         state={workspaceState}
         config={workspaceConfig}
         onRemoveSignal={wrappedRemoveHandler}
         keywordTrackerCount={keywordTrackerCount}
+        workspaceId={workspaceId}
+        locale={locale as "en" | "ar"}
+        hiddenPillarIds={hiddenPillarIds}
         topSection={
           appId ? (
             <KeywordTrackerPanel
@@ -486,9 +519,13 @@ function StagingWorkspaceSection({
               isLoading={keywordSignalsLoading}
               trackerSignals={trackerKeywordSignals}
             />
-          ) : null
+          ) : (
+            <KeywordTrackerEmptySlot isRtl={isRtl} />
+          )
         }
+        middleSection={reviewInsightsSection}
       />
+      )}
 
       {/* Competitor Weaknesses - kept separate as it's a different data model */}
       {competitorWeaknesses.length > 0 && (
@@ -599,9 +636,6 @@ export function ListingOptimizer({
   const [category, setCategory] = useState("");
   const [keywords, setKeywords] = useState("");
   const [features, setFeatures] = useState("");
-  const [contextViewTab, setContextViewTab] = useState<"activeContext" | "reviewInsights">(
-    "activeContext",
-  );
   const [adoptingInsightId, setAdoptingInsightId] = useState<string | null>(null);
   const [toneStyle, setToneStyle] = useState<ToneStyle>("professional");
   const [loading, setLoading] = useState(false);
@@ -677,22 +711,21 @@ export function ListingOptimizer({
 
   const {
     data: reviewDerivedGate,
-    isLoading: reviewDerivedLoading,
     refetch: refetchReviewDerived,
   } = useQuery({
-    queryKey: [
-      "review-derived-insights",
+    queryKey: REVIEW_DERIVED_INSIGHTS_KEY(
       workspaceId,
       locale,
       selectedAppId.trim() || null,
-    ],
+    ),
     queryFn: () =>
       fetchReviewCurationInsights(workspaceId, {
         locale,
         appId: selectedAppId.trim() || undefined,
       }),
     enabled: Boolean(workspaceId),
-    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    ...queryDefaultsFor("reviewInsights"),
   });
 
   const pendingReviewInsights = reviewDerivedGate?.pendingInsights ?? [];
@@ -756,17 +789,13 @@ export function ListingOptimizer({
     },
   });
 
-  useEffect(() => {
-    const onStagingChanged = (event: Event) => {
-      const detail = (event as CustomEvent<StagingVaultChangedDetail>).detail;
-      if (!detail || detail.workspaceId !== workspaceId) return;
-      if (detail.appId && detail.appId !== selectedAppId.trim()) return;
-      if (detail.locale && detail.locale !== locale) return;
-      void refreshOptimizerContext();
-    };
-    window.addEventListener(STAGING_VAULT_CHANGED_EVENT, onStagingChanged);
-    return () => window.removeEventListener(STAGING_VAULT_CHANGED_EVENT, onStagingChanged);
-  }, [workspaceId, selectedAppId, locale, refreshOptimizerContext]);
+  useActiveContextVaultEvents({
+    workspaceId,
+    locale,
+    onFallbackRefresh: () => {
+      void Promise.all([refreshOptimizerContext(), refetchOptimizationQueue()]);
+    },
+  });
 
   useEffect(() => {
     const onReviewStaged = (event: Event) => {
@@ -994,8 +1023,8 @@ export function ListingOptimizer({
     queryKey: workspaceAppsQueryKey(workspaceId),
     enabled: Boolean(workspaceId),
     ...(initialApps !== undefined ? { initialData: initialApps } : {}),
-    /** Always reconcile with the API on mount — long `staleTime` hid failures and skipped refetch. */
-    staleTime: 0,
+    placeholderData: keepPreviousData,
+    ...queryDefaultsFor("workspaceMeta", { reconcileOnMount: true }),
     queryFn: async () => {
       if (!workspaceId) {
         throw new Error(t("appContext.missingWorkspaceId"));
@@ -1106,9 +1135,7 @@ export function ListingOptimizer({
       (livePreviewIconUrl.trim().length > 0 ||
         selectedPersistedIconUrl.trim().length > 0),
   );
-  const appsBusy =
-    (appsQuery.isLoading && initialApps === undefined) ||
-    (appsQuery.isFetching && appsList.length === 0);
+  const appsBusy = appsQuery.isLoading && appsList.length === 0;
 
   const clearOptimizerGeneratedOutputs = useCallback(
     (opts?: {
@@ -3226,12 +3253,19 @@ export function ListingOptimizer({
 
   const spotlightQueuePills = useMemo(
     () =>
-      queueBySignalType.keyword_gaps.map((signal) => ({
-        id: signal.payload.id,
-        label: signal.payload.content.replace(/^market_spotlight:/, ""),
-        source: "optimization_queue" as const,
-        item: signal,
-      })),
+      queueBySignalType.keyword_gaps
+        .filter((signal) =>
+          isExplicitMarketIntelStagedItem({
+            source: signal.payload.source,
+            metadata: signal.payload.metadata,
+          }),
+        )
+        .map((signal) => ({
+          id: signal.payload.id,
+          label: signal.payload.content.replace(/^market_spotlight:/, ""),
+          source: "optimization_queue" as const,
+          item: signal,
+        })),
     [queueBySignalType],
   );
 
@@ -3773,58 +3807,6 @@ export function ListingOptimizer({
                 >
                   <div className="space-y-6 border-t border-zinc-800/60 pt-5 sm:pt-6">
 
-                    <div
-                      className={cn(
-                        "flex flex-wrap gap-2 border-b border-white/[0.06] pb-3",
-                        isRtl && "flex-row-reverse",
-                      )}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setContextViewTab("activeContext")}
-                        className={cn(
-                          "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                          contextViewTab === "activeContext"
-                            ? "bg-emerald-500/15 text-emerald-300"
-                            : "text-zinc-500 hover:text-zinc-300",
-                        )}
-                      >
-                        {t("reviewInsights.tabActiveContext")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setContextViewTab("reviewInsights")}
-                        className={cn(
-                          "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                          contextViewTab === "reviewInsights"
-                            ? "bg-rose-500/15 text-rose-300"
-                            : "text-zinc-500 hover:text-zinc-300",
-                        )}
-                      >
-                        {t("reviewInsights.tabReviewInsights")}
-                        {reviewGateValid && pendingReviewInsights.length > 0 ? (
-                          <span className="ms-1.5 rounded-full bg-indigo-500/20 px-1.5 py-0.5 text-[10px] tabular-nums">
-                            {pendingReviewInsights.length}
-                          </span>
-                        ) : null}
-                      </button>
-                    </div>
-
-                    {contextViewTab === "reviewInsights" ? (
-                      <ReviewInsightsPanel
-                        workspaceId={workspaceId}
-                        pendingInsights={pendingReviewInsights}
-                        adoptedInsights={adoptedReviewInsights}
-                        isRtl={isRtl}
-                        loading={loading || reviewDerivedLoading}
-                        gateValid={reviewGateValid}
-                        analysisStatus={reviewAnalysisStatus}
-                        adoptingId={adoptingInsightId}
-                        onDismiss={(id) => void handleDismissPendingInsight(id)}
-                        onAdopt={(insight) => void handleAdoptReviewInsight(insight)}
-                      />
-                    ) : (
-                    <>
                     <StagingWorkspaceSection
                       workspaceId={workspaceId}
                       appId={selectedAppId.trim()}
@@ -3834,11 +3816,31 @@ export function ListingOptimizer({
                       competitorWeaknesses={queueCompetitorWeaknesses}
                       locale={locale}
                       isRtl={isRtl}
-                      loading={loading || optimizationQueueLoading}
-                      keywordSignalsLoading={optimizationQueueLoading}
+                      loading={
+                        loading ||
+                        (optimizationQueueLoading && optimizationQueueItems.length === 0)
+                      }
+                      keywordSignalsLoading={
+                        keywordSignalsLoading &&
+                        trackerKeywordSignals.length === 0
+                      }
                       keywordTrackerCount={trackerKeywordSignals.length}
                       trackerKeywordSignals={trackerKeywordSignals}
                       vaultLocale={locale}
+                      hiddenPillarIds={["review_issues"]}
+                      reviewInsightsSection={
+                        <ReviewInsightsPanel
+                          workspaceId={workspaceId}
+                          pendingInsights={pendingReviewInsights}
+                          adoptedInsights={adoptedReviewInsights}
+                          isRtl={isRtl}
+                          gateValid={reviewGateValid}
+                          analysisStatus={reviewAnalysisStatus}
+                          adoptingId={adoptingInsightId}
+                          onDismiss={(id) => void handleDismissPendingInsight(id)}
+                          onAdopt={(insight) => void handleAdoptReviewInsight(insight)}
+                        />
+                      }
                       onArchiveReviewIssue={(id, title) => {
                         const queueItem = optimizationQueueItems.find((row) => row.id === id);
                         void archiveReviewInsight(id, title, queueItem);
@@ -3868,8 +3870,6 @@ export function ListingOptimizer({
                       }}
                       onOpenKeywordValidator={handleOpenKeywordValidator}
                     />
-                    </>
-                    )}
 
                     <AsoSandboxPanel
                       title={editedTitle}

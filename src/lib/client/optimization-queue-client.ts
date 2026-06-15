@@ -5,7 +5,8 @@ import type {
   OptimizationQueueStats,
 } from "@/lib/optimization-queue";
 import { diffQueueInputs } from "@/lib/optimization-queue/queue-routing";
-import { dispatchStagingVaultChanged } from "@/lib/client/staging-vault-sync";
+import { buildQueueDeltaFromResponse } from "@/lib/client/active-context-delta";
+import { dispatchStagingVaultDelta } from "@/lib/client/staging-vault-sync";
 
 export type OptimizationQueueResponse = {
   items: OptimizationQueueItem[];
@@ -50,7 +51,17 @@ export async function addToOptimizationQueueClient(
     throw new Error(json.error ?? `Failed to add to queue: ${res.status}`);
   }
 
-  dispatchStagingVaultChanged({ workspaceId, appId, locale });
+  const addedItems = Array.isArray(json.items) ? json.items : [];
+  dispatchStagingVaultDelta(
+    buildQueueDeltaFromResponse({
+      workspaceId,
+      locale,
+      appId,
+      items: addedItems,
+      operation: "upsert",
+    }),
+  );
+
   return json;
 }
 
@@ -70,7 +81,13 @@ export async function removeFromOptimizationQueueClient(
     const json = await res.json().catch(() => ({}));
     throw new Error(json.error ?? `Failed to remove queue item: ${res.status}`);
   }
-  dispatchStagingVaultChanged({ workspaceId, appId, locale });
+  dispatchStagingVaultDelta({
+    operation: "remove",
+    workspaceId,
+    locale,
+    appId,
+    items: [{ id: itemId, content: "" }],
+  });
 }
 
 /** Map competitor spy keyword payloads → queue inputs. */

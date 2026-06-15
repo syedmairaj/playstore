@@ -21,6 +21,8 @@ import {
   type ReviewInsightStagedDetail,
 } from "@/lib/client/review-insight-staging";
 import { useReviewActiveContext } from "@/hooks/useReviewActiveContext";
+import { useReviewAnalysisCache } from "@/hooks/useReviewAnalysisCache";
+import { useReviewBacklog } from "@/hooks/useReviewBacklog";
 import { SyncInsightsCta } from "@/components/reviews/sync-insights-cta";
 import { AiCreditsModal } from "@/components/ui/ai-credits-modal";
 import { AppSourceSelector, type AppSourceOption } from "@/components/reviews/AppSourceSelector";
@@ -244,12 +246,7 @@ function CommonIssuesPanel({
   const locale = useLocale();
   const isRtl = locale === "ar";
 
-  const [isLoading, setIsLoading]               = useState<boolean>(true);
   const [isAnalyzing, setIsAnalyzing]           = useState<boolean>(false);
-  const [hasBeenAnalyzed, setHasBeenAnalyzed]   = useState<boolean>(false);
-  const [insights, setInsights]                 = useState<IssueItem[]>([]);
-  /** ISO 8601 string of the last Gemini write — null until first hasBeenAnalyzed=true */
-  const [analysedAt, setAnalysedAt]             = useState<string | null>(null);
   const [usage, setUsage] = useState<ReviewUsageSnapshot>({
     creditCost: 3,
     monthlyUsed: 0,
@@ -293,79 +290,20 @@ function CommonIssuesPanel({
     void refreshUsage();
   }, [refreshUsage, packageName, countryCode]);
 
-  // ── State flushing hook ────────────────────────────────────────────────────
-  //
-  // Fires synchronously whenever packageName or countryCode changes (i.e. the
-  // user switches to a different competitor tab or the workspace market changes).
-  //
-  // Instantly clears all state values so the UI never shows stale data from the
-  // previous tab while the new cache probe is in flight.
+  const {
+    cacheData,
+    isProbeLoading,
+    setCache: setAnalysisCache,
+  } = useReviewAnalysisCache(workspaceId, packageName, countryCode, langCode);
+
+  const hasBeenAnalyzed = cacheData?.hasBeenAnalyzed ?? false;
+  const insights = cacheData?.insights ?? [];
+  const analysedAt = cacheData?.updatedAt ?? null;
+  const isLoading = isProbeLoading;
+
   useEffect(() => {
-    setInsights([]);
-    setHasBeenAnalyzed(false);
     setIsAnalyzing(false);
-    setIsLoading(true);
-    setAnalysedAt(null);
   }, [packageName, countryCode]);
-
-  // ── Cache probe — fires after every flush ─────────────────────────────────
-  //
-  // GET /reviews/analyze?packageName=…&langCode=…&country=…
-  //
-  // Depends on packageName and countryCode so it re-runs whenever the flush
-  // hook resets state. AbortController cancels mid-flight fetches when the
-  // user switches tabs again before the probe completes.
-  //
-  // Response shape: flat { success, hasBeenAnalyzed, insights }
-  //   hasBeenAnalyzed=false → STATE B (paywall)
-  //   hasBeenAnalyzed=true  → STATE C or D depending on insights.length
-  useEffect(() => {
-    if (!packageName) return;
-
-    const controller = new AbortController();
-
-    void (async () => {
-      try {
-        const url =
-          `/api/workspaces/${workspaceId}/reviews/analyze` +
-          `?packageName=${encodeURIComponent(packageName)}` +
-          `&langCode=${encodeURIComponent(langCode)}` +
-          `&country=${encodeURIComponent(countryCode)}`;
-
-        const res = await fetch(url, {
-          credentials: "same-origin",
-          signal: controller.signal,
-        });
-
-        if (controller.signal.aborted) return;
-
-        const json = (await res.json()) as AnalyzeResponse;
-
-        if (!json.success) {
-          // Auth / server error — show paywall as safe fallback; never blank
-          setHasBeenAnalyzed(false);
-          setIsLoading(false);
-          return;
-        }
-
-        // Read the authoritative flag directly from the response
-        const analyzed = json.hasBeenAnalyzed === true;
-        const rows     = Array.isArray(json.insights) ? json.insights : [];
-
-        setHasBeenAnalyzed(analyzed);
-        setInsights(analyzed ? rows : []);
-        if (analyzed && json.updatedAt) setAnalysedAt(json.updatedAt);
-        setIsLoading(false);
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
-        // Network error — safe fallback to paywall
-        setHasBeenAnalyzed(false);
-        setIsLoading(false);
-      }
-    })();
-
-    return () => controller.abort();
-  }, [workspaceId, packageName, langCode, countryCode]);
 
   // ── runAnalysis — Sync Insights / Re-Analyze (POST /reviews/analyze) ─────
   const runAnalysis = useCallback(
@@ -373,7 +311,6 @@ function CommonIssuesPanel({
       if (reviewTexts.length === 0) return;
 
       setIsAnalyzing(true);
-      setIsLoading(false);
       try {
         const res = await fetch(`/api/workspaces/${workspaceId}/reviews/analyze`, {
           method: "POST",
@@ -411,20 +348,24 @@ function CommonIssuesPanel({
             toast.error(json.error?.message ?? tSync("analysisFailed"));
           }
           setIsAnalyzing(false);
-          if (!force) setHasBeenAnalyzed(false);
+          if (!force) {
+            setAnalysisCache({ hasBeenAnalyzed: false, insights: [], updatedAt: null });
+          }
           return;
         }
 
         if (!json.hasBeenAnalyzed) {
           setIsAnalyzing(false);
-          setHasBeenAnalyzed(false);
+          setAnalysisCache({ hasBeenAnalyzed: false, insights: [], updatedAt: null });
           return;
         }
 
         const rows = Array.isArray(json.insights) ? json.insights : [];
-        setInsights(rows);
-        setHasBeenAnalyzed(true);
-        if (json.updatedAt) setAnalysedAt(json.updatedAt);
+        setAnalysisCache({
+          hasBeenAnalyzed: true,
+          insights: rows,
+          updatedAt: json.updatedAt ?? new Date().toISOString(),
+        });
         setIsAnalyzing(false);
 
         if (json.usage) {
@@ -449,7 +390,9 @@ function CommonIssuesPanel({
       } catch {
         toast.error(tSync("networkError"));
         setIsAnalyzing(false);
-        if (!force) setHasBeenAnalyzed(false);
+        if (!force) {
+          setAnalysisCache({ hasBeenAnalyzed: false, insights: [], updatedAt: null });
+        }
       }
     },
     [
@@ -459,6 +402,7 @@ function CommonIssuesPanel({
       countryCode,
       reviewTexts,
       refreshUsage,
+      setAnalysisCache,
       tSync,
       usage.monthlyLimit,
     ],
@@ -949,36 +893,17 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   );
   const [hydrated, setHydrated] = useState(false);
 
-  // ── Backlog queue state ──────────────────────────────────────────────────
-  // Mirrors workspace_listing_backlog — active (not implemented) + archived (implemented)
-  type BacklogItem = {
-    id: string;
-    packageName: string;
-    countryCode: string;
-    issueTitle: string;
-    issueDescription: string;
-    severity: "CRITICAL" | "MEDIUM" | "LOW";
-    impact: number;
-    isImplemented: boolean;
-    createdAt: string;
-    updatedAt: string;
-    metadata?: {
-      competitor_name?: string | null;
-      staged_at?: string;
-      original_impact_score?: number;
-      quote?: string;
-      archive_reason?: string;
-      source_type?: string;
-      review_id?: string;
-      archived_at?: string;
-    };
-  };
-  const [backlogItems, setBacklogItems] = useState<BacklogItem[]>([]);
-  const [backlogLoading, setBacklogLoading] = useState(false);
-  const [backlogError, setBacklogError] = useState(false);
+  const {
+    items: backlogItems,
+    isLoading: backlogLoading,
+    removeItem: removeBacklogItem,
+    restoreItem: restoreBacklogItem,
+    refetch: refetchBacklog,
+  } = useReviewBacklog(workspaceId);
+
   // "active" = Active Insights tab, "archive" = Optimization History Archive tab
   const [insightsTab, setInsightsTab] = useState<"active" | "archive">("active");
-  // Per-item busy state for stage-exploit / restore buttons
+  // Per-item busy state for delete actions
   const [backlogBusy, setBacklogBusy] = useState<Record<string, boolean>>({});
 
   // App selector — "my-app" | competitor packageId
@@ -1149,83 +1074,24 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   //
   // hydrated flag: prevents SSR/client mismatch on first render.
   // backlogItems is the single source of truth for staged/archived state —
-  // no sessionStorage needed. loadBacklog() fetches from DB on mount.
+  // no sessionStorage needed. useReviewBacklog() hydrates from API with client cache.
   useEffect(() => {
     if (typeof window === "undefined") return;
     setHydrated(true);
   }, []);
-
-  // ── Fetch backlog (active queue + history archive) ───────────────────────
-  const loadBacklog = useCallback(() => {
-    let cancelled = false;
-    setBacklogLoading(true);
-    setBacklogError(false);
-
-    fetch(`/api/workspaces/${workspaceId}/backlog`, {
-      credentials: "same-origin",
-    })
-      .then((r) => r.json())
-      .then((json: { success: boolean; items?: Array<{
-        id: string;
-        package_name: string;
-        country_code: string;
-        issue_title: string;
-        issue_description: string;
-        severity: "CRITICAL" | "MEDIUM" | "LOW";
-        impact: number;
-        is_implemented: boolean;
-        metadata?: BacklogItem["metadata"];
-        created_at: string;
-        updated_at: string;
-      }> }) => {
-        if (cancelled) return;
-        if (json.success) {
-          setBacklogItems((json.items ?? [])
-            .filter((i) => i.is_implemented)
-            .map((i) => ({
-            id: i.id,
-            packageName: i.package_name,
-            countryCode: i.country_code,
-            issueTitle: i.issue_title,
-            issueDescription: i.issue_description,
-            severity: i.severity,
-            impact: i.impact,
-            isImplemented: i.is_implemented,
-            metadata: i.metadata,
-            createdAt: i.created_at,
-            updatedAt: i.updated_at,
-          })));
-        } else {
-          setBacklogError(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setBacklogError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setBacklogLoading(false);
-      });
-
-    return () => { cancelled = true; };
-  }, [workspaceId]);
-
-  useEffect(() => {
-    const cancel = loadBacklog();
-    return cancel;
-  }, [loadBacklog]);
 
   useEffect(() => {
     const onStaged = (event: Event) => {
       const detail = (event as CustomEvent<ReviewInsightStagedDetail>).detail;
       if (!detail || detail.workspaceId !== workspaceId) return;
       invalidateActiveContext();
-      loadBacklog();
+      refetchBacklog();
     };
     const onArchived = (event: Event) => {
       const detail = (event as CustomEvent<ReviewInsightArchivedDetail>).detail;
       if (!detail || detail.workspaceId !== workspaceId) return;
       invalidateActiveContext();
-      loadBacklog();
+      refetchBacklog();
     };
     window.addEventListener(REVIEW_INSIGHT_STAGED_EVENT, onStaged);
     window.addEventListener(REVIEW_INSIGHT_ARCHIVED_EVENT, onArchived);
@@ -1233,17 +1099,18 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
       window.removeEventListener(REVIEW_INSIGHT_STAGED_EVENT, onStaged);
       window.removeEventListener(REVIEW_INSIGHT_ARCHIVED_EVENT, onArchived);
     };
-  }, [workspaceId, loadBacklog, invalidateActiveContext]);
+  }, [workspaceId, refetchBacklog, invalidateActiveContext]);
 
 
   // ── Dismiss item (permanently delete from backlog) ───────────────────────
   const dismissItem = useCallback(async (itemId: string, fromArchive = false) => {
     setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
+    removeBacklogItem(itemId);
     try {
       if (fromArchive) {
         const ok = await deleteStagedReviewClient(workspaceId, itemId);
-        if (ok) {
-          setBacklogItems((prev) => prev.filter((i) => i.id !== itemId));
+        if (!ok) {
+          refetchBacklog();
         }
         return;
       }
@@ -1253,37 +1120,49 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
         { method: "DELETE", credentials: "same-origin" },
       );
       const json = (await res.json()) as { success: boolean };
-      if (json.success) {
-        setBacklogItems((prev) => prev.filter((i) => i.id !== itemId));
+      if (!json.success) {
+        refetchBacklog();
       }
     } catch {
-      // silent
+      refetchBacklog();
     } finally {
       setBacklogBusy((prev) => ({ ...prev, [itemId]: false }));
     }
-  }, [workspaceId]);
+  }, [workspaceId, removeBacklogItem, refetchBacklog]);
 
   // ── Restore archived insight → Active Context ────────────────────────────
   const revertToActive = useCallback(async (itemId: string) => {
-    setBacklogBusy((prev) => ({ ...prev, [itemId]: true }));
+    const item = backlogItems.find((row) => row.id === itemId);
+    if (!item) return;
+
+    removeBacklogItem(itemId);
+
     try {
       const result = await restoreStagedReviewClient(workspaceId, itemId, {
         locale: locale === "ar" ? "ar" : "en",
         appId: apps[0]?.id,
       });
       if (result.ok) {
-        setBacklogItems((prev) => prev.filter((i) => i.id !== itemId));
         invalidateActiveContext();
         toast.success(t("insightsTabs.restoreSuccess"));
       } else {
+        restoreBacklogItem(item);
         toast.error(result.error ?? t("insightsTabs.restoreFailed"));
       }
     } catch {
+      restoreBacklogItem(item);
       toast.error(t("insightsTabs.restoreFailed"));
-    } finally {
-      setBacklogBusy((prev) => ({ ...prev, [itemId]: false }));
     }
-  }, [workspaceId, locale, apps, t, invalidateActiveContext]);
+  }, [
+    workspaceId,
+    locale,
+    apps,
+    t,
+    invalidateActiveContext,
+    backlogItems,
+    removeBacklogItem,
+    restoreBacklogItem,
+  ]);
 
   const refresh = useCallback(() => {
     router.refresh();
@@ -1770,7 +1649,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
             langCode={primaryLang}
             competitorName={activeCompetitorName}
             stagedReviewIds={stagedReviewIds}
-            onReviewStaged={loadBacklog}
+            onReviewStaged={refetchBacklog}
           />
 
           {/* Per-tab loading indicator */}
@@ -1852,29 +1731,26 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
               </button>
             </div>
 
-            {/* ── ACTIVE INSIGHTS TAB ──────────────────────────────────────── */}
-            {insightsTab === "active" && (
-              <div className="space-y-6">
-                <CommonIssuesPanel
-                  key={selectedAppFilter}
-                  workspaceId={workspaceId}
-                  appId={primaryAppId}
-                  packageName={activePackageName}
-                  countryCode={countryCode}
-                  langCode={primaryLang}
-                  reviewTexts={activeLowRatingTexts}
-                  rawReviewCount={activeLowRatingTexts.length}
-                  isSyncLoading={activeLoading}
-                  activeContextTitles={activeContextTitles}
-                  competitorName={activeCompetitorName}
-                  excludeTitles={hiddenInsightTitles}
-                  onIssueStaged={() => {
-                    invalidateActiveContext();
-                    loadBacklog();
-                  }}
-                />
-              </div>
-            )}
+            {/* ── ACTIVE INSIGHTS TAB — keep mounted to preserve analysis cache ── */}
+            <div className={insightsTab === "active" ? "space-y-6" : "hidden"}>
+              <CommonIssuesPanel
+                workspaceId={workspaceId}
+                appId={primaryAppId}
+                packageName={activePackageName}
+                countryCode={countryCode}
+                langCode={primaryLang}
+                reviewTexts={activeLowRatingTexts}
+                rawReviewCount={activeLowRatingTexts.length}
+                isSyncLoading={activeLoading}
+                activeContextTitles={activeContextTitles}
+                competitorName={activeCompetitorName}
+                excludeTitles={hiddenInsightTitles}
+                onIssueStaged={() => {
+                  invalidateActiveContext();
+                  refetchBacklog();
+                }}
+              />
+            </div>
 
             {/* ── OPTIMIZATION HISTORY ARCHIVE TAB ─────────────────────────── */}
             {insightsTab === "archive" && (() => {

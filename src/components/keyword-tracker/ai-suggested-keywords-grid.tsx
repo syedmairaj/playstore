@@ -3,6 +3,7 @@
 import { Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { AiSuggestedKeywordRow } from "@/components/keyword-tracker/ai-suggested-keyword-row";
+import type { DiscoveryKeywordSuggestion } from "@/lib/keywords/discovery-ai-suggestions";
 import type { ListingAssetTarget } from "@/lib/keywords/discovery-listing-asset";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -38,7 +39,7 @@ function GridSkeleton({ rows = 4 }: { rows?: number }) {
 }
 
 export type AiSuggestedKeywordsGridProps = {
-  keywords: string[];
+  suggestions: DiscoveryKeywordSuggestion[];
   isRtl?: boolean;
   disabled?: boolean;
   loading?: boolean;
@@ -80,7 +81,7 @@ export function AiSuggestedKeywordsGridEmpty({
 }
 
 export function AiSuggestedKeywordsGrid({
-  keywords,
+  suggestions,
   isRtl = false,
   disabled = false,
   loading = false,
@@ -106,9 +107,9 @@ export function AiSuggestedKeywordsGrid({
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] table-fixed border-collapse">
             <colgroup>
-              <col className="w-[34%]" />
+              <col className="w-[38%]" />
+              <col className="w-[14%]" />
               <col className="w-[16%]" />
-              <col className="w-[18%]" />
               <col className="w-[32%]" />
             </colgroup>
             <thead>
@@ -141,15 +142,16 @@ export function AiSuggestedKeywordsGrid({
             </thead>
             <tbody className="divide-y divide-white/[0.04]">
               {loading ? (
-                <GridSkeleton rows={Math.max(keywords.length, 4)} />
+                <GridSkeleton rows={Math.max(suggestions.length, 4)} />
               ) : (
-                keywords.map((kw, index) => {
+                suggestions.map((suggestion, index) => {
+                  const kw = suggestion.keyword;
                   const tracked = isTracked(kw);
                   const stagedAsset = resolveStaged(kw);
                   return (
                     <AiSuggestedKeywordRow
                       key={kw}
-                      keyword={kw}
+                      suggestion={suggestion}
                       rowIndex={index}
                       isTracked={tracked}
                       stagedAsset={stagedAsset}

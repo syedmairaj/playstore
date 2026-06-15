@@ -615,6 +615,8 @@
       "same": "No change"
     },
     "actions": {
+      "groupLabel": "Page actions",
+      "validateKeyword": "Validate Keyword",
       "refreshSerperHint": "Charges {per} AI credit per country refreshed.",
       "refreshSerper": "Refresh ranks",
       "refreshSerperPending": "Refreshing…",

@@ -13,6 +13,7 @@ function asSource(
   raw: string | undefined,
 ): AddOptimizationQueueInput["source"] {
   const s = String(raw ?? "manual");
+  if (s === "keyword_spotlight") return "market_intel";
   if (
     s === "keyword_tracker" ||
     s === "competitor_spy" ||
@@ -35,19 +36,27 @@ export function mapStagingPayloadToQueueInputs(
   if (body.signalType === "keyword") {
     const term = body.content.trim();
     if (term) {
+      const rawSource = String(body.source ?? "");
+      const isMarketIntel =
+        source === "market_intel" || rawSource === "keyword_spotlight";
       const isTracker =
-        source === "keyword_tracker" || source === "manual";
+        !isMarketIntel && (source === "keyword_tracker" || source === "manual");
       items.push({
-        type: "market_keyword",
+        type: isMarketIntel ? "keyword_gap" : "market_keyword",
         category: isTracker ? "tracker" : "opportunity",
         content: term,
-        source: isTracker ? "keyword_tracker" : source,
+        source: isTracker ? "keyword_tracker" : isMarketIntel ? "market_intel" : source,
         sourceContext: body.sourceContext,
         sourceContextId: body.sourceContextId,
         metadata: {
           ...meta,
           category: isTracker ? "tracker" : "opportunity",
-          source_origin: isTracker ? "keyword_tracker" : source,
+          source_origin: isTracker
+            ? "keyword_tracker"
+            : isMarketIntel
+              ? "market_intel"
+              : source,
+          ...(isMarketIntel ? { from_keyword_spotlight: true } : {}),
         },
       });
     }
