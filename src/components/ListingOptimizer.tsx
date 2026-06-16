@@ -496,7 +496,7 @@ function StagingWorkspaceSection({
     loading && !hasStagedSignals && keywordTrackerCount === 0;
 
   return (
-    <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
+    <div>
       {showActiveContextSkeleton ? (
         <ActiveContextWorkspaceSkeleton isRtl={isRtl} showKeywordTracker={Boolean(appId)} />
       ) : (

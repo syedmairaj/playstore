@@ -1,41 +1,44 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, ArrowRight } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 import { Link } from "@/i18n/navigation";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-
-const SLOT_BODY_MIN_H = "min-h-[60px]";
+import {
+  ACTIVE_CONTEXT_DESCRIPTION_CLASS,
+  ACTIVE_CONTEXT_HEADER_CLASS,
+  ACTIVE_CONTEXT_HEADER_CLASS_AR,
+  ACTIVE_CONTEXT_HEADER_ICON_GAP,
+  ACTIVE_CONTEXT_HEADER_ICON_SIZE_PX,
+  ACTIVE_CONTEXT_HEADER_ICON_STROKE,
+  ACTIVE_CONTEXT_HEADER_UNIT_BOTTOM,
+  ACTIVE_CONTEXT_TITLE_UNIT_GAP,
+} from "@/components/staging-workspace/active-context-tokens";
 
 export type ActiveContextSlotProps = {
   id: string;
   icon: LucideIcon;
+  /** Hex color for the section icon (see ACTIVE_CONTEXT_MODULE_ICON_COLOR). */
+  iconColor: string;
   title: string;
   description?: string;
-  /** Shown in header — use number for signal count, or "—" when empty. */
+  moduleTip?: string;
   count?: number;
   isRtl?: boolean;
-  headerBorderClass?: string;
-  iconClassName?: string;
-  bodyClassName?: string;
-  /** Subtle amber warning in the header (e.g. expired sync). */
   headerStatusWarning?: string;
   children: React.ReactNode;
 };
 
-/**
- * Persistent Active Context module slot — header and container always stay mounted.
- */
 export function ActiveContextSlot({
   id,
   icon: Icon,
+  iconColor,
   title,
   description,
+  moduleTip,
   count,
   isRtl = false,
-  headerBorderClass = "border-white/10",
-  iconClassName = "text-white/60",
-  bodyClassName = "bg-white/[0.02]",
   headerStatusWarning,
   children,
 }: ActiveContextSlotProps) {
@@ -46,59 +49,78 @@ export function ActiveContextSlot({
     <section
       id={id}
       data-active-context-slot={id}
-      className="space-y-2 scroll-mt-24"
+      className="scroll-mt-24"
       aria-labelledby={`${id}-heading`}
     >
-      <div
-        className={cn(
-          "flex items-center gap-2 border-b pb-2",
-          headerBorderClass,
-          isRtl && "flex-row-reverse",
-        )}
-      >
-        <Icon className={cn("size-4 shrink-0", iconClassName)} aria-hidden />
-        <h3
-          id={`${id}-heading`}
+      <header className={ACTIVE_CONTEXT_HEADER_UNIT_BOTTOM}>
+        <div
           className={cn(
-            "flex-1 text-[11px] font-semibold text-white/90",
-            isRtl ? "font-arabic" : "uppercase tracking-[0.12em]",
+            "mt-0.5 flex items-center",
+            ACTIVE_CONTEXT_HEADER_ICON_GAP,
+            isRtl && "flex-row-reverse",
           )}
         >
-          {title}
-        </h3>
-        {headerStatusWarning ? (
-          <span
+          <Icon
             className="shrink-0"
-            title={headerStatusWarning}
-            aria-label={headerStatusWarning}
+            width={ACTIVE_CONTEXT_HEADER_ICON_SIZE_PX}
+            height={ACTIVE_CONTEXT_HEADER_ICON_SIZE_PX}
+            strokeWidth={ACTIVE_CONTEXT_HEADER_ICON_STROKE}
+            style={{ color: iconColor }}
+            aria-hidden
+          />
+          <h3
+            id={`${id}-heading`}
+            className={cn(
+              "flex-1",
+              isRtl
+                ? ACTIVE_CONTEXT_HEADER_CLASS_AR
+                : `${ACTIVE_CONTEXT_HEADER_CLASS} uppercase`,
+            )}
           >
-            <AlertTriangle className="size-3.5 text-amber-400/75" aria-hidden />
+            {title}
+          </h3>
+          {moduleTip ? (
+            <Tooltip content={moduleTip} delayDuration={300} asChild>
+              <button
+                type="button"
+                className="shrink-0 rounded-full p-0.5 text-white/25 transition-colors duration-200 hover:text-white/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/10"
+                aria-label={moduleTip}
+              >
+                <Info className="size-3" aria-hidden />
+              </button>
+            </Tooltip>
+          ) : null}
+          {headerStatusWarning ? (
+            <Tooltip content={headerStatusWarning} delayDuration={300} asChild>
+              <button
+                type="button"
+                className="shrink-0 rounded-full p-0.5 text-amber-400/50 transition-colors duration-200 hover:text-amber-300/70"
+                aria-label={headerStatusWarning}
+              >
+                <AlertTriangle className="size-3" aria-hidden />
+              </button>
+            </Tooltip>
+          ) : null}
+          <span className="shrink-0 text-[10px] font-medium tabular-nums text-white/28">
+            {countLabel}
           </span>
+        </div>
+
+        {description ? (
+          <p
+            className={cn(
+              ACTIVE_CONTEXT_DESCRIPTION_CLASS,
+              ACTIVE_CONTEXT_TITLE_UNIT_GAP,
+              "max-w-2xl",
+              isRtl ? "text-right font-arabic" : "text-left",
+            )}
+          >
+            {description}
+          </p>
         ) : null}
-        <span className="text-[10px] font-medium text-white/50 tabular-nums">
-          {countLabel}
-        </span>
-      </div>
+      </header>
 
-      {description ? (
-        <p
-          className={cn(
-            "px-1 text-[9px] italic text-white/30",
-            isRtl ? "text-right font-arabic" : "text-left",
-          )}
-        >
-          {description}
-        </p>
-      ) : null}
-
-      <div
-        className={cn(
-          "flex flex-wrap gap-2 rounded-lg border border-white/5 p-3",
-          SLOT_BODY_MIN_H,
-          bodyClassName,
-          isRtl && "font-arabic",
-        )}
-      >
+      <div className={cn("flex flex-col", isRtl && "font-arabic")}>
         {children}
       </div>
     </section>
@@ -110,46 +132,47 @@ export type ActiveContextSlotEmptyProps = {
   ctaLabel?: string;
   ctaHref?: string;
   onCtaClick?: () => void;
-  ctaClassName?: string;
   isRtl?: boolean;
 };
 
-/** Unified empty list state — left-aligned, non-disruptive secondary CTA. */
 export function ActiveContextSlotEmpty({
   message,
   ctaLabel,
   ctaHref,
   onCtaClick,
-  ctaClassName,
   isRtl = false,
 }: ActiveContextSlotEmptyProps) {
-  const ctaClasses = cn(
-    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium transition",
-    "border-white/15 bg-white/[0.04] text-white/55 hover:border-white/25 hover:bg-white/[0.06] hover:text-white/75",
-    isRtl && "flex-row-reverse font-arabic",
-    ctaClassName,
-  );
-
   return (
-    <div
+    <p
       className={cn(
-        "flex flex-1 flex-col gap-2 text-[11px]",
-        isRtl ? "items-end text-right" : "items-start text-left",
+        "py-1 text-[11px] leading-relaxed text-white/28",
+        isRtl ? "text-right font-arabic" : "text-left",
       )}
     >
-      <p className="italic text-white/35">{message}</p>
+      {message}
       {ctaLabel && ctaHref ? (
-        <Link href={ctaHref} className={ctaClasses}>
-          {ctaLabel}
-          <ArrowRight className={cn("size-3", isRtl && "rotate-180")} aria-hidden />
-        </Link>
+        <>
+          {" "}
+          <Link
+            href={ctaHref}
+            className="text-white/40 underline-offset-2 transition-colors duration-200 hover:text-white/55 hover:underline"
+          >
+            {ctaLabel}
+          </Link>
+        </>
       ) : null}
       {ctaLabel && onCtaClick ? (
-        <button type="button" onClick={onCtaClick} className={ctaClasses}>
-          {ctaLabel}
-          <ArrowRight className={cn("size-3", isRtl && "rotate-180")} aria-hidden />
-        </button>
+        <>
+          {" "}
+          <button
+            type="button"
+            onClick={onCtaClick}
+            className="text-white/40 underline-offset-2 transition-colors duration-200 hover:text-white/55 hover:underline"
+          >
+            {ctaLabel}
+          </button>
+        </>
       ) : null}
-    </div>
+    </p>
   );
 }

@@ -1,31 +1,31 @@
 /**
- * StagingWorkspacePillar.tsx
- *
- * Pillar container component for the Staging Workspace.
- * Displays a single pillar (Review Issues, Market Opportunities, or Competitor Keywords)
- * with header, signal chips, and empty state.
- *
- * Features:
- * - Always visible header (even with 0 signals)
- * - Itemized signal display as chips
- * - Category context (how signals are routed to AI)
- * - Bilingual support (EN/AR with RTL)
- * - Smooth animations
- * - Responsive wrapping
+ * Market Intelligence and Competitor Strengths — borderless Active Context slots.
  */
 
-import React from "react";
-import { motion } from "framer-motion";
+import React, { useState } from "react";
+import { AlertTriangle, ShieldCheck, TrendingUp } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { marketIntelSignalsSectionId } from "@/lib/client/market-intel-signals";
-import { ActiveContextSlotEmpty } from "@/components/staging-workspace/active-context-slot";
+import {
+  ActiveContextSlot,
+  ActiveContextSlotEmpty,
+} from "@/components/staging-workspace/active-context-slot";
+import { ActiveContextSignalList } from "@/components/staging-workspace/active-context-signal-list";
+import { StagingSignalChipRow } from "@/components/staging-workspace/staging-signal-chip-row";
+import { ACTIVE_CONTEXT_MODULE_ICON_COLOR } from "@/components/staging-workspace/active-context-tokens";
 import type {
   StagingPillar,
-  StagingSignal,
-  ChipDisplayOptions,
   RemovalHandler,
+  ChipDisplayOptions,
 } from "@/lib/client/staging-workspace-types";
-import StagingSignalChip from "./StagingSignalChip";
+
+const PILLAR_ROW_H = 28;
+
+const pillarIcons = {
+  AlertTriangle,
+  TrendingUp,
+  ShieldCheck,
+} as const;
 
 interface StagingWorkspacePillarProps {
   pillar: StagingPillar;
@@ -38,12 +38,31 @@ interface StagingWorkspacePillarProps {
   localeOverride?: "en" | "ar";
 }
 
-const pillarIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-  AlertTriangle: require("lucide-react").AlertTriangle,
-  TrendingUp: require("lucide-react").TrendingUp,
-  Shield: require("lucide-react").Shield,
-  Hash: require("lucide-react").Hash,
-};
+function pillarSlotKeys(pillarId: StagingPillar["id"]) {
+  switch (pillarId) {
+    case "market_opportunities":
+      return {
+        title: "marketIntelSlotTitle" as const,
+        description: "marketIntelSlotDescription" as const,
+        moduleTip: "marketIntelModuleTip" as const,
+        iconColor: ACTIVE_CONTEXT_MODULE_ICON_COLOR.marketIntel,
+      };
+    case "competitor_keywords":
+      return {
+        title: "competitorSlotTitle" as const,
+        description: "competitorSlotDescription" as const,
+        moduleTip: "competitorModuleTip" as const,
+        iconColor: ACTIVE_CONTEXT_MODULE_ICON_COLOR.competitor,
+      };
+    default:
+      return {
+        title: "reviewInsightsSlotTitle" as const,
+        description: "reviewInsightsSlotDescription" as const,
+        moduleTip: "reviewInsightsModuleTip" as const,
+        iconColor: ACTIVE_CONTEXT_MODULE_ICON_COLOR.reviewInsights,
+      };
+  }
+}
 
 export default function StagingWorkspacePillar({
   pillar,
@@ -62,101 +81,73 @@ export default function StagingWorkspacePillar({
 }: StagingWorkspacePillarProps) {
   const tSlot = useTranslations("optimizer.activeContext");
   const resolvedLocale = localeOverride ?? locale;
-  const label = pillar.label[resolvedLocale];
-  const description = pillar.description[resolvedLocale];
-  const IconComponent = pillarIcons[pillar.icon];
+  const keys = pillarSlotKeys(pillar.id);
+  const IconComponent = pillarIcons[pillar.icon as keyof typeof pillarIcons] ?? AlertTriangle;
   const isMarketIntelPillar = pillar.id === "market_opportunities";
-  const sectionId = isMarketIntelPillar ? marketIntelSignalsSectionId() : undefined;
+  const sectionId = isMarketIntelPillar ? marketIntelSignalsSectionId() : pillar.id;
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  const handleRemove: RemovalHandler = async (signalId, source) => {
+    setRemovingId(signalId);
+    try {
+      await onRemoveSignal(signalId, source);
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
   return (
-    <div id={sectionId} className="space-y-2 scroll-mt-24">
-      {/* Pillar Header - Always Visible */}
-      <div
-        className={`flex items-center gap-2 border-b pb-2 ${pillar.color.header} ${
-          isRtl ? "flex-row-reverse" : ""
-        }`}
-      >
-        {IconComponent ? (
-          <IconComponent className={`size-4 shrink-0 ${pillar.color.icon}`} />
-        ) : (
-          <div className={`size-4 shrink-0 rounded-full ${pillar.color.icon}`} />
-        )}
-
-        <h3
-          className={`flex-1 text-[11px] font-semibold text-white/90 ${
-            isRtl ? "font-arabic text-right" : "uppercase tracking-[0.12em]"
-          }`}
-        >
-          {label}
-        </h3>
-
-        <span className="shrink-0 text-[10px] font-medium text-white/50 tabular-nums">
-          {pillar.count > 0 ? `(${pillar.count})` : "—"}
-        </span>
-      </div>
-
-      {/* Pillar Description */}
-      <div className={`text-[9px] italic text-white/30 px-1 ${isRtl ? "text-right" : "text-left"}`}>
-        {description}
-      </div>
-
-      {/* Signals Container */}
-      <div
-        className={`flex flex-wrap gap-2 rounded-lg border border-white/5 bg-white/[0.02] p-3 min-h-[60px] ${
-          isRtl ? "flex-row-reverse" : ""
-        }`}
-      >
-        {isLoading ? (
-          // Loading state
-          <div className="flex items-center justify-center w-full h-12">
-            <div className="flex gap-1">
-              {[0, 1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="w-2 h-2 rounded-full bg-white/30 animate-bounce"
-                  style={{ animationDelay: `${i * 100}ms` }}
-                />
-              ))}
-            </div>
-          </div>
-        ) : pillar.isEmpty ? (
-          isMarketIntelPillar && workspaceId ? (
-            <ActiveContextSlotEmpty
-              message={tSlot("noActiveSignals")}
-              ctaLabel={tSlot("openMarketIntelCta")}
-              ctaHref={`/app/${workspaceId}/market`}
-              ctaClassName="border-emerald-500/25 bg-emerald-500/10 text-emerald-200/80 hover:border-emerald-400/45 hover:bg-emerald-500/18 hover:text-emerald-100"
-              isRtl={isRtl}
+    <ActiveContextSlot
+      id={sectionId}
+      icon={IconComponent}
+      title={tSlot(keys.title)}
+      description={tSlot(keys.description)}
+      moduleTip={tSlot(keys.moduleTip)}
+      count={pillar.count}
+      isRtl={isRtl}
+      iconColor={keys.iconColor}
+    >
+      {isLoading ? (
+        <div className="flex h-8 w-full items-center gap-1 py-1">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="size-1.5 animate-pulse rounded-full bg-white/20"
+              style={{ animationDelay: `${i * 120}ms` }}
             />
-          ) : (
-            <ActiveContextSlotEmpty
-              message={tSlot("noActiveSignals")}
-              isRtl={isRtl}
-            />
-          )
+          ))}
+        </div>
+      ) : pillar.isEmpty ? (
+        isMarketIntelPillar && workspaceId ? (
+          <ActiveContextSlotEmpty
+            message={tSlot("noActiveSignals")}
+            ctaLabel={tSlot("openMarketIntelCta")}
+            ctaHref={`/app/${workspaceId}/market`}
+            isRtl={isRtl}
+          />
         ) : (
-          // Signal chips
-          <motion.div
-            layout
-            className={`flex flex-wrap gap-2 w-full ${isRtl ? "justify-end" : "justify-start"}`}
-          >
-            {pillar.signals.map((signal) => (
-              <StagingSignalChip
-                key={
-                  signal.source === "review_issue"
-                    ? `review-${signal.content.trim().toLowerCase()}`
-                    : signal.id
-                }
-                signal={signal}
-                locale={resolvedLocale}
-                isRtl={isRtl}
-                onRemove={onRemoveSignal}
-                displayOptions={chipDisplayOptions}
-              />
-            ))}
-          </motion.div>
-        )}
-      </div>
-    </div>
+          <ActiveContextSlotEmpty message={tSlot("noActiveSignals")} isRtl={isRtl} />
+        )
+      ) : (
+        <ActiveContextSignalList rowHeight={PILLAR_ROW_H}>
+          {pillar.signals.map((signal) => (
+            <StagingSignalChipRow
+              key={
+                signal.source === "review_issue"
+                  ? `review-${signal.content.trim().toLowerCase()}`
+                  : signal.id
+              }
+              signal={signal}
+              locale={resolvedLocale}
+              isRtl={isRtl}
+              isRemoving={removingId === signal.id}
+              onRemove={
+                chipDisplayOptions.showRemoveButton ? handleRemove : () => Promise.resolve()
+              }
+            />
+          ))}
+        </ActiveContextSignalList>
+      )}
+    </ActiveContextSlot>
   );
 }

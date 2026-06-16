@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { cn } from "@/lib/utils";
 
 export const ACTIVE_CONTEXT_MAX_VISIBLE_ROWS = 6;
@@ -11,19 +12,30 @@ type ActiveContextSignalListProps = {
   className?: string;
 };
 
-/** Shared scrollable list container for Active Context module rows/chips. */
+/** Scrollable signal list with ultra-light row dividers. */
 export function ActiveContextSignalList({
   children,
   rowHeight,
   maxVisibleRows = ACTIVE_CONTEXT_MAX_VISIBLE_ROWS,
   className,
 }: ActiveContextSignalListProps) {
+  const items = React.Children.toArray(children);
+
   return (
     <div
-      className={cn("w-full space-y-0.5 overflow-y-auto px-0.5", className)}
-      style={{ maxHeight: maxVisibleRows * (rowHeight + 2) }}
+      className={cn("w-full overflow-y-auto", className)}
+      style={{ maxHeight: maxVisibleRows * (rowHeight + 4) }}
     >
-      {children}
+      {items.map((child, index) => (
+        <div
+          key={index}
+          className={cn(
+            index < items.length - 1 && "border-b border-white/[0.04]",
+          )}
+        >
+          {child}
+        </div>
+      ))}
     </div>
   );
 }
