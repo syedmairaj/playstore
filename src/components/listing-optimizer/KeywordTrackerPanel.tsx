@@ -1,12 +1,7 @@
 "use client";
 
-/**
- * Keyword Tracker — minimal Active Context overview panel.
- * Quick scan: keyword + difficulty. Details live in Validator / Tracker.
- */
-
 import { useCallback, useMemo, useState } from "react";
-import { Hash, Loader2, X } from "lucide-react";
+import { Hash } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -15,10 +10,10 @@ import {
   ActiveContextSlotEmpty,
 } from "@/components/staging-workspace/active-context-slot";
 import { ActiveContextSignalList } from "@/components/staging-workspace/active-context-signal-list";
-import {
-  difficultyBadge,
-  type KeywordSignal,
-} from "@/lib/staging/keyword-signals";
+import { ActionableChipRow } from "@/components/staging-workspace/actionable-chip-row";
+import { ACTIVE_CONTEXT_MODULE_ICON_COLOR } from "@/components/staging-workspace/active-context-tokens";
+import { keywordSignalToChipRowProps } from "@/components/staging-workspace/staging-signal-chip-row";
+import { difficultyBadge, type KeywordSignal } from "@/lib/staging/keyword-signals";
 import {
   KEYWORD_SIGNALS_KEY,
   useKeywordSignals,
@@ -26,14 +21,7 @@ import {
   type VaultLocale,
 } from "@/hooks/useOptimizerSync";
 
-const T = {
-  border: "rgba(255, 255, 255, 0.06)",
-  help: "rgba(148, 163, 184, 0.42)",
-  rowHover: "rgba(255, 255, 255, 0.04)",
-  accent: "#a5b4fc",
-} as const;
-
-const ROW_H = 30;
+const ROW_H = 28;
 
 export interface KeywordTrackerPanelProps {
   workspaceId: string;
@@ -42,105 +30,7 @@ export interface KeywordTrackerPanelProps {
   isRtl?: boolean;
   onOpenValidator: (keyword: string, signal?: KeywordSignal) => void;
   isLoading?: boolean;
-  /** Queue-backed tracker category signals (SSOT). Falls back to vault keyword-signals API. */
   trackerSignals?: KeywordSignal[];
-}
-
-function DifficultyPill({
-  difficulty,
-  label,
-  isRtl,
-}: {
-  difficulty: number;
-  label: string;
-  isRtl?: boolean;
-}) {
-  const d = difficultyBadge(difficulty);
-  return (
-    <span
-      className={`shrink-0 rounded-full border px-2 py-px text-[8px] font-semibold ${
-        isRtl ? "font-arabic" : "uppercase tracking-wide"
-      }`}
-      style={{ color: d.color, backgroundColor: d.bg, borderColor: d.border }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function KeywordRow({
-  signal,
-  isRtl,
-  isRemoving,
-  difficultyText,
-  onRowClick,
-  onRemove,
-  removeLabel,
-}: {
-  signal: KeywordSignal;
-  isRtl?: boolean;
-  isRemoving: boolean;
-  difficultyText: string;
-  onRowClick: () => void;
-  onRemove: () => void;
-  removeLabel: string;
-}) {
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onRowClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onRowClick();
-        }
-      }}
-      className={`group flex cursor-pointer items-center gap-2.5 px-1 py-0.5 transition-colors duration-150 ${
-        isRtl ? "flex-row-reverse" : ""
-      }`}
-      style={{ minHeight: ROW_H }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = T.rowHover;
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "transparent";
-      }}
-    >
-      <span
-        className="min-w-0 flex-1 truncate text-start text-[12px] font-medium text-white/90"
-        dir="auto"
-      >
-        {signal.keyword}
-      </span>
-
-      <DifficultyPill difficulty={signal.difficulty} label={difficultyText} isRtl={isRtl} />
-
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-        disabled={isRemoving}
-        className="shrink-0 rounded p-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-40"
-        style={{ color: "rgba(148, 163, 184, 0.4)" }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = "#f87171";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = "rgba(148, 163, 184, 0.4)";
-        }}
-        aria-label={removeLabel}
-      >
-        {isRemoving ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <X className="h-3 w-3" />
-        )}
-      </button>
-    </div>
-  );
 }
 
 export default function KeywordTrackerPanel({
@@ -149,25 +39,25 @@ export default function KeywordTrackerPanel({
   vaultLocale,
   isRtl: isRtlProp,
   onOpenValidator,
-  isLoading: externalLoading,
   trackerSignals,
 }: KeywordTrackerPanelProps) {
   const isRtl = isRtlProp ?? vaultLocale === "ar";
   const t = useTranslations("optimizer.activeContext");
   const queryClient = useQueryClient();
-  const { signals: vaultSignals, isLoading, isFetching } = useKeywordSignals(
+  const { signals: vaultSignals } = useKeywordSignals(
     workspaceId,
     appId,
-    vaultLocale
+    vaultLocale,
   );
   const [removingKeyword, setRemovingKeyword] = useState<string | null>(null);
 
   const signals = trackerSignals !== undefined ? trackerSignals : vaultSignals;
   const total = signals.length;
+  const sourceTooltip = t("chipSource", { source: t("chipSourceKeywordTracker") });
 
   const sortedSignals = useMemo(
     () => [...signals].sort((a, b) => b.confidence - a.confidence),
-    [signals]
+    [signals],
   );
 
   const difficultyText = useCallback(
@@ -180,10 +70,9 @@ export default function KeywordTrackerPanel({
             ? "difficultyMedium"
             : "difficultyHard";
       const label = t(key);
-      // Uppercase only for English badges — Arabic has no case transforms
       return vaultLocale === "en" ? label.toUpperCase() : label;
     },
-    [t, vaultLocale]
+    [t, vaultLocale],
   );
 
   const removeMutation = useMutation({
@@ -206,7 +95,7 @@ export default function KeywordTrackerPanel({
         workspaceId,
         appId,
         (prev) => prev.filter((s) => s.keyword !== keyword),
-        vaultLocale
+        vaultLocale,
       );
     },
     onSuccess: (keyword) => {
@@ -230,36 +119,43 @@ export default function KeywordTrackerPanel({
       <ActiveContextSlot
         id="active-context-keyword-tracker"
         icon={Hash}
+        iconColor={ACTIVE_CONTEXT_MODULE_ICON_COLOR.keywordTracker}
         title={t("keywordTracker")}
         description={t("keywordTrackerHelp")}
+        moduleTip={t("keywordTrackerModuleTip")}
         count={total}
         isRtl={isRtl}
-        headerBorderClass="border-indigo-400/20"
-        iconClassName="text-indigo-300/80"
-        bodyClassName="bg-white/[0.02]"
       >
         {!hasSignals ? (
           <ActiveContextSlotEmpty
             message={t("noActiveSignals")}
             ctaLabel={t("openValidatorCta")}
             onCtaClick={() => onOpenValidator("")}
-            ctaClassName="border-indigo-500/20 bg-indigo-500/[0.06] text-indigo-200/70 hover:border-indigo-400/35 hover:bg-indigo-500/10 hover:text-indigo-100/90"
             isRtl={isRtl}
           />
         ) : (
           <ActiveContextSignalList rowHeight={ROW_H}>
-            {sortedSignals.map((signal) => (
-              <KeywordRow
-                key={signal.keyword}
-                signal={signal}
-                isRtl={isRtl}
-                isRemoving={removingKeyword === signal.keyword}
-                difficultyText={difficultyText(signal.difficulty)}
-                onRowClick={() => onOpenValidator(signal.keyword, signal)}
-                onRemove={() => removeMutation.mutate(signal.keyword)}
-                removeLabel={t("removeKeyword", { keyword: signal.keyword })}
-              />
-            ))}
+            {sortedSignals.map((signal) => {
+              const chip = keywordSignalToChipRowProps(
+                signal,
+                difficultyText(signal.difficulty),
+                sourceTooltip,
+              );
+              return (
+                <ActionableChipRow
+                  key={signal.keyword}
+                  summary={chip.summary}
+                  tags={chip.tags}
+                  sourceTooltip={chip.sourceTooltip}
+                  isRtl={isRtl}
+                  minHeight={ROW_H}
+                  isRemoving={removingKeyword === signal.keyword}
+                  removeLabel={t("removeKeyword", { keyword: signal.keyword })}
+                  onRowClick={() => onOpenValidator(signal.keyword, signal)}
+                  onRemove={() => removeMutation.mutate(signal.keyword)}
+                />
+              );
+            })}
           </ActiveContextSignalList>
         )}
       </ActiveContextSlot>
@@ -267,7 +163,6 @@ export default function KeywordTrackerPanel({
   );
 }
 
-/** Persistent Keyword Tracker slot when no app is selected. */
 export function KeywordTrackerEmptySlot({ isRtl = false }: { isRtl?: boolean }) {
   const t = useTranslations("optimizer.activeContext");
 
@@ -275,18 +170,14 @@ export function KeywordTrackerEmptySlot({ isRtl = false }: { isRtl?: boolean }) 
     <ActiveContextSlot
       id="active-context-keyword-tracker"
       icon={Hash}
+      iconColor={ACTIVE_CONTEXT_MODULE_ICON_COLOR.keywordTracker}
       title={t("keywordTracker")}
       description={t("keywordTrackerHelp")}
+      moduleTip={t("keywordTrackerModuleTip")}
       count={0}
       isRtl={isRtl}
-      headerBorderClass="border-indigo-400/20"
-      iconClassName="text-indigo-300/80"
-      bodyClassName="bg-white/[0.02]"
     >
-      <ActiveContextSlotEmpty
-        message={t("noActiveSignals")}
-        isRtl={isRtl}
-      />
+      <ActiveContextSlotEmpty message={t("noActiveSignals")} isRtl={isRtl} />
     </ActiveContextSlot>
   );
 }

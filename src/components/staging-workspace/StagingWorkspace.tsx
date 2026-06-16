@@ -38,6 +38,10 @@ import type {
   StagingPillar,
 } from "@/lib/client/staging-workspace-types";
 import StagingWorkspacePillar from "./StagingWorkspacePillar";
+import { ActiveContextSectionZone } from "@/components/staging-workspace/active-context-section-zone";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { ACTIVE_CONTEXT_MODULE_ICON_COLOR } from "@/components/staging-workspace/active-context-tokens";
+import { cn } from "@/lib/utils";
 
 interface StagingWorkspaceProps {
   state: StagingWorkspaceState;
@@ -76,10 +80,10 @@ function buildPillarsConfig(
       },
       icon: "AlertTriangle",
       color: {
-        icon: "text-rose-400/80",
-        header: "border-rose-400/20",
-        chip: "bg-rose-500/5",
-        text: "text-rose-200/90",
+        icon: ACTIVE_CONTEXT_MODULE_ICON_COLOR.reviewInsights,
+        header: "border-orange-400/20",
+        chip: "bg-orange-500/5",
+        text: "text-orange-200/90",
       },
     },
     {
@@ -94,7 +98,7 @@ function buildPillarsConfig(
       },
       icon: "TrendingUp",
       color: {
-        icon: "text-emerald-400/80",
+        icon: ACTIVE_CONTEXT_MODULE_ICON_COLOR.marketIntel,
         header: "border-emerald-400/20",
         chip: "bg-emerald-500/5",
         text: "text-emerald-200/90",
@@ -110,12 +114,12 @@ function buildPillarsConfig(
         en: "→ positioning angles to counter in long description",
         ar: "← زوايا تموضع للرد عليها في الوصف الطويل",
       },
-      icon: "Shield",
+      icon: "ShieldCheck",
       color: {
-        icon: "text-sky-400/80",
-        header: "border-sky-400/20",
-        chip: "bg-sky-500/5",
-        text: "text-sky-200/90",
+        icon: ACTIVE_CONTEXT_MODULE_ICON_COLOR.competitor,
+        header: "border-violet-400/20",
+        chip: "bg-violet-500/5",
+        text: "text-violet-200/90",
       },
     },
   ];
@@ -165,67 +169,32 @@ export default function StagingWorkspace({
     [onRemoveSignal]
   );
 
-  return (
-    <div
-      className={`space-y-6 scroll-smooth p-4 rounded-lg bg-gradient-to-b from-white/3 to-white/1 border border-white/5 ${
-        config.isRtl ? "dir-rtl" : "dir-ltr"
-      }`}
-    >
-      {/* Header with Signal Counter — sticky while scrolling the unified stack */}
-      <div
-        className={`sticky top-0 z-10 -mx-4 mb-2 border-b border-white/[0.06] bg-gradient-to-b from-[#0a0e14] via-[#0a0e14]/98 to-[#0a0e14]/90 px-4 py-3 backdrop-blur-md ${
-          config.isRtl ? "flex-row-reverse" : ""
-        } flex items-start justify-between gap-4`}
-      >
-        <div className={`flex-1 ${config.isRtl ? "text-right" : "text-left"}`}>
-          <h2 className="text-sm font-bold text-white flex items-center gap-2">
-            <span className="text-lg">✨</span>
-            {config.locale === "ar" ? "السياق النشط" : "Active Context"}
-          </h2>
-          <p className="text-[11px] text-white/50 mt-1">
-            {unifiedStack
-              ? t("unifiedStackHint")
-              : config.locale === "ar"
-                ? "سيتم دمج جميع الإشارات أدناه تلقائياً في القائمة. اضغط × لإزالة أي إشارة."
-                : "All signals below will be woven into your listing automatically. Click × to remove any signal."}
-          </p>
-        </div>
+  const stackSections = useMemo(() => {
+    const blocks: { key: string; node: React.ReactNode }[] = [];
 
-        {config.showSignalCounter && (
-          <div className="shrink-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
-            <div className="text-[10px] font-semibold text-white/50 uppercase tracking-[0.08em]">
-              {config.locale === "ar" ? "الإشارات" : "Signals"}
-            </div>
-            <div className="text-xl font-bold text-white">{combinedSignalCount}</div>
-          </div>
-        )}
-      </div>
+    if (topSection) {
+      blocks.push({
+        key: "keyword-tracker",
+        node: (
+          <div data-slot="keyword-tracker">{topSection}</div>
+        ),
+      });
+    }
 
-      {/* Error state */}
-      {state.error && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/25 text-[11px] text-red-300">
-          {state.error}
-        </div>
-      )}
+    if (unifiedStack && middleSection) {
+      blocks.push({
+        key: "review-insights",
+        node: (
+          <div data-slot="review-insights">{middleSection}</div>
+        ),
+      });
+    }
 
-      {/* Persistent module slots — always mounted to prevent layout shift */}
-      <div className="flex flex-col gap-6" data-active-context-slots>
-        <div data-slot="keyword-tracker" className="shrink-0">
-          {topSection}
-        </div>
-
-        {unifiedStack ? (
-          <div data-slot="review-insights" className="shrink-0">
-            {middleSection}
-          </div>
-        ) : null}
-      </div>
-
-      {/* Market Intelligence + Competitor Strengths pillars */}
-      <div className="space-y-6">
-        {pillars.map((pillar) => (
+    for (const pillar of pillars) {
+      blocks.push({
+        key: pillar.id,
+        node: (
           <StagingWorkspacePillar
-            key={pillar.id}
             pillar={pillar}
             locale={config.locale}
             isRtl={config.isRtl}
@@ -240,6 +209,82 @@ export default function StagingWorkspace({
               animateOnRemove: config.animateTransitions,
             }}
           />
+        ),
+      });
+    }
+
+    return blocks;
+  }, [
+    topSection,
+    unifiedStack,
+    middleSection,
+    pillars,
+    config.locale,
+    config.isRtl,
+    config.enableInlineRemoval,
+    config.animateTransitions,
+    state.isLoading,
+    handleRemoveSignal,
+    workspaceId,
+    localeProp,
+  ]);
+
+  return (
+    <TooltipProvider delayDuration={300}>
+    <div
+      className={cn(
+        "scroll-smooth py-2",
+        config.isRtl ? "dir-rtl" : "dir-ltr",
+      )}
+    >
+      {/* Header — SIGNALS badge is the only contained element */}
+      <div
+        className={cn(
+          "sticky top-0 z-10 mb-12 flex items-start justify-between gap-8 pb-2",
+          "bg-[#0a0e14]/80 backdrop-blur-md",
+          config.isRtl && "flex-row-reverse",
+        )}
+      >
+        <div className={cn("flex-1", config.isRtl ? "text-right" : "text-left")}>
+          <h2 className="flex items-center gap-2.5 text-[15px] font-bold tracking-tight text-white/95">
+            <span className="text-sm opacity-80">✨</span>
+            {config.locale === "ar" ? "السياق النشط" : "Active Context"}
+          </h2>
+          <p className="mt-2 max-w-lg text-[11px] font-normal leading-relaxed text-white/32">
+            {unifiedStack
+              ? t("unifiedStackHint")
+              : config.locale === "ar"
+                ? "سيتم دمج جميع الإشارات أدناه تلقائياً في القائمة. اضغط × لإزالة أي إشارة."
+                : "All signals below will be woven into your listing automatically. Click × to remove any signal."}
+          </p>
+        </div>
+
+        {config.showSignalCounter && (
+          <div className="shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.025] px-4 py-2.5">
+            <div className="text-[9px] font-medium uppercase tracking-[0.12em] text-white/30">
+              {config.locale === "ar" ? "الإشارات" : "Signals"}
+            </div>
+            <div className="text-xl font-semibold tabular-nums text-white/90">{combinedSignalCount}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Error state */}
+      {state.error && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/25 text-[11px] text-red-300">
+          {state.error}
+        </div>
+      )}
+
+      {/* Module slots — sectional gravity zones, no cards */}
+      <div data-active-context-slots className="flex flex-col">
+        {stackSections.map((block, index) => (
+          <ActiveContextSectionZone
+            key={block.key}
+            showSectionRule={index > 0}
+          >
+            {block.node}
+          </ActiveContextSectionZone>
         ))}
       </div>
 
@@ -260,5 +305,6 @@ export default function StagingWorkspace({
         </div>
       )}
     </div>
+    </TooltipProvider>
   );
 }

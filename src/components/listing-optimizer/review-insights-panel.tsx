@@ -8,17 +8,21 @@ import {
   ActiveContextSlot,
   ActiveContextSlotEmpty,
 } from "@/components/staging-workspace/active-context-slot";
+import { ACTIVE_CONTEXT_MODULE_ICON_COLOR } from "@/components/staging-workspace/active-context-tokens";
 import { ActiveContextSignalList } from "@/components/staging-workspace/active-context-signal-list";
 import {
-  REVIEW_CHIP_ROW_H,
-  ReviewInsightChipRow,
-} from "@/components/listing-optimizer/review-insight-chip-row";
+  ActionableChipRow,
+  reviewCategoryToTone,
+  severityToTone,
+} from "@/components/staging-workspace/actionable-chip-row";
 
 const SYNC_ATTENTION_STATUSES = new Set<ReviewAnalysisStatus>([
   "EXPIRED",
   "REFUNDED",
   "INVALID_TRANSACTION",
 ]);
+
+const REVIEW_CHIP_ROW_H = 34;
 
 export type ReviewInsightsPanelProps = {
   pendingInsights: PendingReviewInsight[];
@@ -51,28 +55,29 @@ export function ReviewInsightsPanel({
   const syncAttention = SYNC_ATTENTION_STATUSES.has(analysisStatus);
   const showSyncCta = analysisStatus !== "SUCCESS_PAID";
   const uppercaseSeverity = !isRtl;
+  const sourceTooltip = tSlot("chipSource", { source: tSlot("chipSourceReviews") });
 
   return (
     <ActiveContextSlot
       id="active-context-review-insights"
       icon={AlertTriangle}
+      iconColor={ACTIVE_CONTEXT_MODULE_ICON_COLOR.reviewInsights}
       title={tSlot("reviewInsightsSlotTitle")}
       description={tSlot("reviewInsightsSlotDescription")}
+      moduleTip={tSlot("reviewInsightsModuleTip")}
       count={signalCount}
       isRtl={isRtl}
-      headerBorderClass="border-rose-400/20"
-      iconClassName="text-rose-400/80"
-      bodyClassName="bg-white/[0.02]"
       headerStatusWarning={
         syncAttention ? tSlot("syncExpiredHeaderWarning") : undefined
       }
     >
       {cards.length === 0 ? (
         <ActiveContextSlotEmpty
-          message={tSlot("noActiveSignals")}
+          message={
+            showSyncCta ? tSlot("syncRequiredInline") : tSlot("noActiveSignals")
+          }
           ctaLabel={showSyncCta ? tSlot("reviewInsightsSyncCta") : undefined}
           ctaHref={showSyncCta ? `/app/${workspaceId}/reviews` : undefined}
-          ctaClassName="border-rose-500/20 bg-rose-500/[0.06] text-rose-200/70 hover:border-rose-400/35 hover:bg-rose-500/10 hover:text-rose-100/90"
           isRtl={isRtl}
         />
       ) : (
@@ -85,20 +90,32 @@ export function ReviewInsightsPanel({
               : insight.severity;
 
             return (
-              <ReviewInsightChipRow
+              <ActionableChipRow
                 key={insight.id}
-                text={insight.title}
-                categoryLabel={t(`categories.${insight.category}`)}
-                severityLabel={severityLabel}
-                severity={insight.severity}
+                summary={insight.title}
+                tags={[
+                  {
+                    label: t(`categories.${insight.category}`),
+                    tone: reviewCategoryToTone(insight.category),
+                  },
+                  {
+                    label: severityLabel,
+                    tone: severityToTone(insight.severity),
+                  },
+                ]}
+                sourceTooltip={sourceTooltip}
                 isRtl={isRtl}
-                adopted={adopted}
-                busy={busy}
-                adoptEnabled={adoptEnabled}
-                onAdopt={adopted ? undefined : () => onAdopt(insight)}
-                onDismiss={adopted ? undefined : () => onDismiss(insight.id)}
-                dismissLabel={t("dismiss")}
-                adoptLabel={adopted ? t("inActiveContext") : t("adopt")}
+                lineClamp={2}
+                minHeight={REVIEW_CHIP_ROW_H}
+                isRemoving={busy}
+                showRemove={!adopted}
+                removeLabel={t("dismiss")}
+                onRemove={adopted ? undefined : () => onDismiss(insight.id)}
+                onRowClick={
+                  adopted || !adoptEnabled
+                    ? undefined
+                    : () => onAdopt(insight)
+                }
               />
             );
           })}

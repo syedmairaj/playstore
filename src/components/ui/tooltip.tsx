@@ -50,21 +50,19 @@ function Tooltip({
   side = "top",
   className,
   triggerClassName,
+  delayDuration = 300,
   asChild = false,
 }: {
   children: React.ReactNode;
   content: React.ReactNode;
   side?: React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>["side"];
   className?: string;
-  /** className applied to the trigger wrapper. Ignored when asChild={true}. */
   triggerClassName?: string;
-  /** When true, merges tooltip trigger props onto the child element directly
-   *  (no wrapper rendered). Required when the child is a button or link to
-   *  avoid invalid nested-button HTML. */
+  delayDuration?: number;
   asChild?: boolean;
 }) {
   return (
-    <TooltipRoot delayDuration={200}>
+    <TooltipRoot delayDuration={delayDuration}>
       {asChild ? (
         <TooltipTrigger asChild>{children}</TooltipTrigger>
       ) : (
