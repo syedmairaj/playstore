@@ -4,16 +4,19 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { PraiseSignal } from "@/lib/competitor-spy/praise-signal-curation";
 
 type ReviewInsightsSummaryProps = {
-  praiseTerms: string[];
+  userAppreciated: PraiseSignal[];
+  marketDominating: PraiseSignal[];
   bugTerms: string[];
   requestTerms: string[];
   isRtl?: boolean;
 };
 
 export function ReviewInsightsSummary({
-  praiseTerms,
+  userAppreciated,
+  marketDominating,
   bugTerms,
   requestTerms,
   isRtl = false,
@@ -21,9 +24,10 @@ export function ReviewInsightsSummary({
   const t = useTranslations("competitorSpy.reviewInsights");
   const [expanded, setExpanded] = useState(false);
 
+  const praiseCount = userAppreciated.length + marketDominating.length;
   const parts: string[] = [];
-  if (praiseTerms.length > 0) {
-    parts.push(t("summaryPraise", { count: praiseTerms.length }));
+  if (praiseCount > 0) {
+    parts.push(t("summaryPraise", { count: praiseCount }));
   }
   if (bugTerms.length > 0) {
     parts.push(t("summaryBugs", { count: bugTerms.length }));
@@ -62,12 +66,22 @@ export function ReviewInsightsSummary({
       </button>
 
       {expanded ? (
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
-          {praiseTerms.length > 0 ? (
-            <InsightBucket
-              title={t("bucketPraiseTitle")}
-              terms={praiseTerms}
-              tone="emerald"
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {userAppreciated.length > 0 ? (
+            <PraiseBucket
+              title={t("bucketBaselineTitle")}
+              hint={t("bucketBaselineHint")}
+              signals={userAppreciated}
+              tone="zinc"
+              isRtl={isRtl}
+            />
+          ) : null}
+          {marketDominating.length > 0 ? (
+            <PraiseBucket
+              title={t("bucketStrategicTitle")}
+              hint={t("bucketStrategicHint")}
+              signals={marketDominating}
+              tone="amber"
               isRtl={isRtl}
             />
           ) : null}
@@ -93,6 +107,43 @@ export function ReviewInsightsSummary({
   );
 }
 
+function PraiseBucket({
+  title,
+  hint,
+  signals,
+  tone,
+  isRtl,
+}: {
+  title: string;
+  hint: string;
+  signals: PraiseSignal[];
+  tone: "zinc" | "amber";
+  isRtl?: boolean;
+}) {
+  const toneClass =
+    tone === "amber"
+      ? "border-amber-500/25 bg-amber-500/[0.06] text-amber-100"
+      : "border-zinc-700/60 bg-zinc-900/50 text-zinc-300";
+
+  return (
+    <div className={cn("rounded-lg border p-3", toneClass)}>
+      <p className={cn("text-xs font-semibold", isRtl && "text-end")}>{title}</p>
+      <p className={cn("mb-2 text-[10px] opacity-75", isRtl && "text-end")}>{hint}</p>
+      <div className={cn("flex flex-wrap gap-1.5", isRtl && "justify-end")}>
+        {signals.map((signal) => (
+          <span
+            key={signal.term}
+            className="rounded-full bg-black/25 px-2 py-0.5 text-[11px] font-medium"
+            title={`CVR ${signal.conversionImpactScore}`}
+          >
+            {signal.term}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function InsightBucket({
   title,
   terms,
@@ -101,15 +152,13 @@ function InsightBucket({
 }: {
   title: string;
   terms: string[];
-  tone: "emerald" | "rose" | "indigo";
+  tone: "rose" | "indigo";
   isRtl?: boolean;
 }) {
   const toneClass =
-    tone === "emerald"
-      ? "border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-200"
-      : tone === "rose"
-        ? "border-rose-500/20 bg-rose-500/[0.06] text-rose-200"
-        : "border-indigo-500/20 bg-indigo-500/[0.06] text-indigo-200";
+    tone === "rose"
+      ? "border-rose-500/20 bg-rose-500/[0.06] text-rose-200"
+      : "border-indigo-500/20 bg-indigo-500/[0.06] text-indigo-200";
 
   return (
     <div className={cn("rounded-lg border p-3", toneClass)}>

@@ -5,7 +5,7 @@ import { useTranslations, useLocale } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { RankDisplay } from "@/components/keywords/rank-display";
 import { CompetitorSpyOpenPlayButton } from "@/components/competitor-spy/competitor-spy-open-play-button";
-import { KeywordSurfacesInline } from "@/components/competitor-spy/keyword-surfaces-inline";
+import { CompetitorKeywordSurfacesReadonly } from "@/components/competitor-spy/competitor-keyword-surfaces-readonly";
 import type { RankDisplayLabels } from "@/lib/keywords/format-rank-display";
 import { cn } from "@/lib/utils";
 
@@ -186,13 +186,9 @@ export function CompetitorSpySnapshotCard({
 
               {/* Inline Expandable Keyword Container - Fetches keywords from staging vault */}
               <div className="rounded-xl border border-white/[0.06] bg-[#070a0f] p-3 text-start">
-                <KeywordSurfacesInline
+                <CompetitorKeywordSurfacesReadonly
                   keywords={keywordSurfaces || []}
-                  count={metricsKeywordCount}
                   isRtl={isRtl}
-                  competitorPackageId={packageId}
-                  workspaceId={workspaceId}
-                  language={isRtl ? "ar" : "en"}
                 />
               </div>
 

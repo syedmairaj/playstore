@@ -1,4 +1,5 @@
 import type { AddOptimizationQueueInput } from "@/lib/optimization-queue/optimization-queue.types";
+import type { SignalCluster } from "@/lib/optimization-queue/signal-cluster";
 
 type StagingAddBody = {
   signalType: string;
@@ -6,8 +7,13 @@ type StagingAddBody = {
   source?: string;
   sourceContext?: string;
   sourceContextId?: string;
+  signalCluster?: SignalCluster;
   metadata?: Record<string, unknown>;
 };
+
+function clusterMeta(cluster: SignalCluster) {
+  return { signal_cluster: cluster, cluster_category: cluster };
+}
 
 function asSource(
   raw: string | undefined,
@@ -48,6 +54,11 @@ export function mapStagingPayloadToQueueInputs(
         source: isTracker ? "keyword_tracker" : isMarketIntel ? "market_intel" : source,
         sourceContext: body.sourceContext,
         sourceContextId: body.sourceContextId,
+        signalCluster: isMarketIntel
+          ? "MARKET_INTEL"
+          : source === "manual"
+            ? body.signalCluster
+            : undefined,
         metadata: {
           ...meta,
           category: isTracker ? "tracker" : "opportunity",
@@ -56,7 +67,7 @@ export function mapStagingPayloadToQueueInputs(
             : isMarketIntel
               ? "market_intel"
               : source,
-          ...(isMarketIntel ? { from_keyword_spotlight: true } : {}),
+          ...(isMarketIntel ? { from_keyword_spotlight: true, ...clusterMeta("MARKET_INTEL") } : {}),
         },
       });
     }
@@ -71,9 +82,15 @@ export function mapStagingPayloadToQueueInputs(
         category: "review",
         content: issue,
         source: "review_analysis",
+        signalCluster: "DEFENSIVE_PAIN_POINT",
         sourceContext: body.sourceContext,
         sourceContextId: body.sourceContextId,
-        metadata: { ...meta, category: "review", source_origin: "review_analysis" },
+        metadata: {
+          ...meta,
+          category: "review",
+          source_origin: "review_analysis",
+          ...clusterMeta("DEFENSIVE_PAIN_POINT"),
+        },
       });
     }
     return items;
@@ -95,12 +112,14 @@ export function mapStagingPayloadToQueueInputs(
           category: "opportunity",
           content: term,
           source: "competitor_spy",
+          signalCluster: "OFFENSIVE_GROWTH",
           sourceContext: body.sourceContext,
           sourceContextId: body.sourceContextId,
           metadata: {
             ...meta,
             category: "opportunity",
             source_origin: "competitor_spy",
+            ...clusterMeta("OFFENSIVE_GROWTH"),
             competitor_gap_category:
               typeof kw === "object" && kw && "category" in kw
                 ? (kw as { category: string }).category
@@ -123,9 +142,15 @@ export function mapStagingPayloadToQueueInputs(
           category: "strength",
           content: term,
           source: "competitor_spy",
+          signalCluster: "DEFENSIVE_PAIN_POINT",
           sourceContext: body.sourceContext,
           sourceContextId: body.sourceContextId,
-          metadata: { ...meta, category: "strength", source_origin: "competitor_spy" },
+          metadata: {
+            ...meta,
+            category: "strength",
+            source_origin: "competitor_spy",
+            ...clusterMeta("DEFENSIVE_PAIN_POINT"),
+          },
         });
       }
     }
@@ -139,9 +164,15 @@ export function mapStagingPayloadToQueueInputs(
           category: "opportunity",
           content: term,
           source: "competitor_spy",
+          signalCluster: "OFFENSIVE_GROWTH",
           sourceContext: body.sourceContext,
           sourceContextId: body.sourceContextId,
-          metadata: { ...meta, category: "opportunity", source_origin: "competitor_spy" },
+          metadata: {
+            ...meta,
+            category: "opportunity",
+            source_origin: "competitor_spy",
+            ...clusterMeta("OFFENSIVE_GROWTH"),
+          },
         });
       }
     }

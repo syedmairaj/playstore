@@ -3,8 +3,24 @@
  * Used by hooks and safe prefetch helpers — keeps API URLs in one place.
  */
 
+import { isRetryableNetworkError } from "@/lib/client/query-network-retry";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
 import type { VaultLocale } from "@/hooks/useOptimizerSync";
+
+async function fetchJsonWithNetworkRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isRetryableNetworkError(err)) {
+      throw new Error(`ERR_NETWORK_CHANGED: ${message}`);
+    }
+    throw err;
+  }
+}
 
 export type WorkspaceAppRow = {
   id: string;
@@ -84,8 +100,9 @@ export async function fetchOptimizerContext(
 ) {
   const params = new URLSearchParams({ locale: vaultLocale });
   if (appId) params.set("appId", appId);
-  const response = await fetch(
+  const response = await fetchJsonWithNetworkRetry(
     `/api/workspaces/${workspaceId}/optimizer/context?${params.toString()}`,
+    { credentials: "include" },
   );
   if (!response.ok) {
     throw new Error(`Failed to fetch optimizer context: ${response.status}`);

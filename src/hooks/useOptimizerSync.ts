@@ -6,8 +6,12 @@
  */
 
 import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
+import {
+  isActiveContextReconnecting,
+  networkQueryRetryOptions,
+} from "@/lib/client/query-network-retry";
 import {
   fetchOptimizerContext,
 } from "@/lib/client/workspace-query-fetchers";
@@ -78,9 +82,16 @@ async function fetchKeywordSignals(
   appId: string,
   vaultLocale: VaultLocale
 ): Promise<KeywordSignalsResponse> {
-  const res = await fetch(
-    `/api/workspaces/${workspaceId}/staging-vault/keyword-signals?appId=${encodeURIComponent(appId)}&locale=${vaultLocale}`
-  );
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/workspaces/${workspaceId}/staging-vault/keyword-signals?appId=${encodeURIComponent(appId)}&locale=${vaultLocale}`,
+      { credentials: "include" },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`ERR_NETWORK_CHANGED: ${message}`);
+  }
   if (!res.ok) {
     throw new Error(`Failed to fetch keyword signals: ${res.status}`);
   }
@@ -133,13 +144,28 @@ export function useKeywordSignals(
   appId: string | undefined,
   vaultLocale: VaultLocale = "en"
 ) {
-  const { data, isLoading, isFetching, error, isPending } = useQuery<KeywordSignalsResponse>({
-    queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId ?? "", vaultLocale),
-    queryFn: () => fetchKeywordSignals(workspaceId, appId!, vaultLocale),
-    enabled: Boolean(workspaceId && appId),
-    placeholderData: keepPreviousData,
-    ...queryDefaultsFor("workspaceContext"),
-    retry: 2,
+  const contextCache = queryDefaultsFor("workspaceContext");
+
+  const { data, isLoading, isFetching, error, isPending, isError, failureCount } =
+    useQuery<KeywordSignalsResponse>({
+      queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId ?? "", vaultLocale),
+      queryFn: () => fetchKeywordSignals(workspaceId, appId!, vaultLocale),
+      enabled: Boolean(workspaceId && appId),
+      placeholderData: keepPreviousData,
+      staleTime: contextCache.staleTime,
+      gcTime: contextCache.gcTime,
+      refetchOnWindowFocus: contextCache.refetchOnWindowFocus,
+      refetchOnMount: true,
+      structuralSharing: contextCache.structuralSharing,
+      ...networkQueryRetryOptions,
+    });
+
+  const isReconnecting = isActiveContextReconnecting({
+    isFetching,
+    isError,
+    failureCount,
+    error,
+    hasCachedData: Boolean(data?.signals?.length),
   });
 
   return {
@@ -148,7 +174,10 @@ export function useKeywordSignals(
     total: data?.total ?? 0,
     isLoading: isPending && !data,
     isFetching,
+    isError,
     error,
+    failureCount,
+    isReconnecting,
   };
 }
 
@@ -160,7 +189,6 @@ export function useOptimizerSync(
     enabled = true,
     staleTime,
     gcTime,
-    onError,
     appId,
     vaultLocale = "en",
   } = options;
@@ -171,20 +199,46 @@ export function useOptimizerSync(
 
   const queryClient = useQueryClient();
 
-  const { data, isLoading, error, isPending, isFetching } = useQuery<OptimizerContext>({
-    queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
-    queryFn: () => fetchOptimizerContext(workspaceId, vaultLocale, appId),
-    enabled,
-    placeholderData: keepPreviousData,
-    staleTime: resolvedStaleTime,
-    gcTime: resolvedGcTime,
-    refetchOnWindowFocus: contextCache.refetchOnWindowFocus,
-    refetchOnMount: contextCache.refetchOnMount,
-    structuralSharing: contextCache.structuralSharing,
-    retry: 2,
-  });
+  const queryKey = useMemo(
+    () => OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
+    [workspaceId, vaultLocale],
+  );
+
+  const { data, error, isPending, isFetching, isError, failureCount } =
+    useQuery<OptimizerContext>({
+      queryKey,
+      queryFn: () => fetchOptimizerContext(workspaceId, vaultLocale, appId),
+      enabled: enabled && Boolean(workspaceId),
+      placeholderData: keepPreviousData,
+      staleTime: resolvedStaleTime,
+      gcTime: resolvedGcTime,
+      refetchOnWindowFocus: contextCache.refetchOnWindowFocus,
+      refetchOnMount: true,
+      structuralSharing: contextCache.structuralSharing,
+      ...networkQueryRetryOptions,
+    });
 
   const keywordSignals = useKeywordSignals(workspaceId, appId, vaultLocale);
+
+  const isReconnecting = useMemo(
+    () =>
+      isActiveContextReconnecting({
+        isFetching,
+        isError,
+        failureCount,
+        error,
+        hasCachedData: Boolean(data?.activeItems?.length),
+      }) ||
+      keywordSignals.isReconnecting,
+    [
+      data?.activeItems?.length,
+      error,
+      failureCount,
+      isError,
+      isFetching,
+      keywordSignals.isReconnecting,
+    ],
+  );
 
   const mutate = useCallback(async () => {
     const tasks = [
@@ -215,8 +269,10 @@ export function useOptimizerSync(
 
     isLoading: isPending && !data,
     isFetching,
-    isError: !!error,
-    error,
+    isError: isError || keywordSignals.isError,
+    error: error ?? keywordSignals.error,
+    failureCount: Math.max(failureCount, keywordSignals.failureCount),
+    isReconnecting,
 
     mutate,
   };

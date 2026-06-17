@@ -7,6 +7,23 @@ const toneStyleSchema = z.enum([
   "minimal",
 ]);
 
+const activeContextSignalSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  label: z.string().trim().min(1).max(200),
+  type: z.string().trim().min(1).max(80),
+  signalCluster: z.enum(["OFFENSIVE_GROWTH", "DEFENSIVE_PAIN_POINT", "MARKET_INTEL"]),
+  source: z.string().trim().max(80).optional(),
+  impactPercent: z.number().min(0).max(100).optional(),
+  growthStrategyTag: z.enum(["product_improvement", "oppositional_target"]).optional(),
+  competitorName: z.string().trim().max(120).optional(),
+});
+
+export const activeContextSynthesisSchema = z.object({
+  offensive: z.array(activeContextSignalSchema).max(30),
+  defensive: z.array(activeContextSignalSchema).max(30),
+  market: z.array(activeContextSignalSchema).max(30),
+});
+
 export const listingOptimizerRequestSchema = z.object({
   appName: z.string().trim().min(1).max(200),
   category: z.string().trim().min(1).max(120),
@@ -43,6 +60,18 @@ export const listingOptimizerRequestSchema = z.object({
     )
     .max(30)
     .optional(),
+  strategyMode: z.enum(["defensive", "offensive"]).optional(),
+  topStagedIssues: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(200),
+        impactPercent: z.number().min(0).max(100).optional(),
+        growthStrategyTag: z.enum(["product_improvement", "oppositional_target"]),
+      }),
+    )
+    .max(10)
+    .optional(),
+  activeContext: activeContextSynthesisSchema.optional(),
 });
 
 export type ListingOptimizerRequest = z.infer<

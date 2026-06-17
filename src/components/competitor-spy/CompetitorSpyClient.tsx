@@ -1,6 +1,7 @@
 "use client";
 import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
 import {
+  auditQueueStrengthToQueueInputs,
   keywordGapsToQueueInputs,
   reviewInsightsQueueDiff,
 } from "@/lib/client/optimization-queue-client";
@@ -9,8 +10,20 @@ import {
   type ValidateAndQueueSource,
 } from "@/lib/client/validate-and-queue";
 import { ReviewInsightsSummary } from "@/components/competitor-spy/review-insights-summary";
+import { CompetitorStrengthAuditQueue } from "@/components/competitor-spy/competitor-strength-audit-queue";
+import { VulnerabilityConquestQueueCta } from "@/components/competitor-spy/vulnerability-conquest-queue-cta";
+import { useCompetitorStrengthAuditQueue } from "@/hooks/useCompetitorStrengthAuditQueue";
+import { useOptimizationQueueOnboarding } from "@/hooks/useOptimizationQueueOnboarding";
+import {
+  buildAuditQueueFromCandidates,
+  migrateLegacyPraiseTerms,
+  normalizePraiseSignals,
+  splitPraiseSignals,
+  type PraiseSignal,
+} from "@/lib/competitor-spy/praise-signal-curation";
+import { upsertStrengthAuditQueue, readStrengthAuditQueue } from "@/lib/client/competitor-strength-audit-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
@@ -321,8 +334,17 @@ export function CompetitorSpyClient({
   const [appsLoadError, setAppsLoadError] = useState<string | null>(initialAppsLoadError);
   const [targetAppId, setTargetAppId] = useState(() => initialApps?.[0]?.id ?? "");
   const vaultLocale = locale === "ar" ? "ar" : "en";
-  const { addItems: addToOptimizationQueue, items: optimizationQueueItems } =
-    useOptimizationQueue(workspaceId, vaultLocale, targetAppId || undefined);
+  const {
+    addItems: addToOptimizationQueue,
+    allItems: allQueueItems,
+    refetch: refetchOptimizationQueue,
+  } = useOptimizationQueue(workspaceId, vaultLocale, targetAppId || undefined);
+  const {
+    onboardingOpen,
+    setOnboardingOpen,
+    notifyQueuedSuccess,
+    dismissOnboarding,
+  } = useOptimizationQueueOnboarding();
   const [dismissedSharedKeywords, setDismissedSharedKeywords] = useState<Set<string>>(
     () => new Set(),
   );
@@ -366,6 +388,7 @@ export function CompetitorSpyClient({
 
   // ── Review Sentiment state ─────────────────────────────────────────────────
   type SentimentResult = {
+    praiseSignals?: PraiseSignal[];
     topPraiseKeywords: string[];
     reportedBugsKeywords: string[];
     featureRequestsKeywords: string[];
@@ -898,6 +921,65 @@ export function CompetitorSpyClient({
     [competitors, selectedCompetitorId],
   );
 
+  const {
+    items: strengthAuditItems,
+    refresh: refreshStrengthAudit,
+  } = useCompetitorStrengthAuditQueue(workspaceId, activeCompetitor?.packageId ?? null);
+
+  useEffect(() => {
+    if (
+      !activeCompetitor ||
+      !sentimentResult ||
+      sentimentForPackage !== activeCompetitor.packageId
+    ) {
+      return;
+    }
+    const praiseSignals = normalizePraiseSignals({
+      praiseSignals: sentimentResult.praiseSignals,
+      topPraiseKeywords: sentimentResult.topPraiseKeywords,
+    });
+    const { marketDominatingCandidates } = splitPraiseSignals(praiseSignals);
+    if (marketDominatingCandidates.length === 0) return;
+
+    const existing = readStrengthAuditQueue(workspaceId, activeCompetitor.packageId);
+    const next = buildAuditQueueFromCandidates(
+      marketDominatingCandidates,
+      activeCompetitor.packageId,
+      activeCompetitor.displayName,
+      existing,
+    );
+    if (next.length === existing.length) return;
+
+    upsertStrengthAuditQueue(workspaceId, next, activeCompetitor.packageId);
+    refreshStrengthAudit();
+
+    const newPending = next.filter(
+      (item) => !existing.some((prior) => prior.id === item.id),
+    );
+    if (newPending.length > 0) {
+      const inputs = auditQueueStrengthToQueueInputs(
+        newPending.map((item) => ({
+          term: item.term,
+          conversionImpactScore: item.conversionImpactScore,
+          auditItemId: item.id,
+        })),
+        activeCompetitor.displayName,
+        activeCompetitor.packageId,
+      );
+      void addToOptimizationQueue(inputs).then(() => {
+        void refetchOptimizationQueue();
+      });
+    }
+  }, [
+    activeCompetitor,
+    sentimentResult,
+    sentimentForPackage,
+    workspaceId,
+    refreshStrengthAudit,
+    addToOptimizationQueue,
+    refetchOptimizationQueue,
+  ]);
+
   const activeCountryLabel = useMemo(
     () =>
       tCountries(
@@ -1210,7 +1292,7 @@ export function CompetitorSpyClient({
         workspaceLocale: locale,
         appId: targetAppId || apps[0]?.id,
         items,
-        existingQueue: optimizationQueueItems,
+        existingQueue: allQueueItems,
         addItems: async (batch) => {
           const response = await addToOptimizationQueue(batch);
           return {
@@ -1237,13 +1319,15 @@ export function CompetitorSpyClient({
           count: result.addedCount,
         }),
       });
+      notifyQueuedSuccess();
       return true;
     },
     [
       addToOptimizationQueue,
       apps,
       locale,
-      optimizationQueueItems,
+      allQueueItems,
+      notifyQueuedSuccess,
       router,
       targetAppId,
       t,
@@ -2680,46 +2764,32 @@ export function CompetitorSpyClient({
               ? (activeCompetitor.quickWinTerms ?? []).slice(0, 4)
               : [];
 
-            const praiseTerms = liveResult?.topPraiseKeywords ?? seedPraise;
             const bugTerms = liveResult?.reportedBugsKeywords ?? seedBugs;
             const requestTerms = liveResult?.featureRequestsKeywords ?? seedRequests;
 
-            // Target keywords: high-intent search phrases only — praise + feature requests.
-            // Bugs/pain-points are passed separately as vulnerabilities for prompt inversion,
-            // never injected as raw search keywords.
-            const exploitKeywords = [
-              ...praiseTerms,
-              ...requestTerms.slice(0, 3),
-              // When a second competitor is tracked, fold in their quick-win ranking
-              // terms so the optimizer receives cross-rival keyword coverage.
-              ...(inactiveCompetitor
-                ? inactiveCompetitor.quickWinTerms.slice(0, 3).filter(Boolean)
-                : []),
-            ].filter(Boolean);
-            // Vulnerabilities: competitor pain-points to be inverted into positive angles.
-            // Merge from both rivals so the LLM prompt addresses weaknesses across the board.
-            const exploitVulnerabilities = [
-              ...bugTerms,
-              ...(inactiveCompetitor?.gaps
-                .filter((g) => g.opportunity === "high")
-                .map((g) => g.keyword)
-                .slice(0, 3) ?? []),
-            ].filter(Boolean);
+            const praiseSignals = liveResult
+              ? normalizePraiseSignals({
+                  praiseSignals: liveResult.praiseSignals,
+                  topPraiseKeywords: liveResult.topPraiseKeywords,
+                })
+              : migrateLegacyPraiseTerms(seedPraise);
+            const { userAppreciated, marketDominatingCandidates } =
+              splitPraiseSignals(praiseSignals);
+
             const reviewQueueBundle = reviewInsightsQueueDiff(
               {
                 painPoints: bugTerms,
                 featureRequests: requestTerms,
-                keywords: praiseTerms,
                 competitorName: activeCompetitor?.displayName,
                 competitorId: activeCompetitor?.packageId,
               },
-              optimizationQueueItems,
+              allQueueItems,
             );
             const reviewQueueInputs = reviewQueueBundle.inputs;
             const reviewQueueAllQueued = reviewQueueBundle.allQueued;
             const reviewQueueEmpty = reviewQueueBundle.isEmpty;
             const hasReviewInsightTerms =
-              praiseTerms.length > 0 || bugTerms.length > 0 || requestTerms.length > 0;
+              bugTerms.length > 0 || requestTerms.length > 0;
 
             return (
               <>
@@ -2865,9 +2935,24 @@ export function CompetitorSpyClient({
                       </div>
 
                       <ReviewInsightsSummary
-                        praiseTerms={praiseTerms}
+                        userAppreciated={userAppreciated}
+                        marketDominating={marketDominatingCandidates}
                         bugTerms={bugTerms}
                         requestTerms={requestTerms}
+                        isRtl={isRtl}
+                      />
+
+                      <CompetitorStrengthAuditQueue
+                        workspaceId={workspaceId}
+                        appId={targetAppId || apps[0]?.id}
+                        locale={locale}
+                        items={strengthAuditItems}
+                        queueItems={allQueueItems}
+                        onQueueChanged={async () => {
+                          await refetchOptimizationQueue();
+                        }}
+                        onAuditChanged={refreshStrengthAudit}
+                        addItems={addToOptimizationQueue}
                         isRtl={isRtl}
                       />
 
@@ -2877,96 +2962,55 @@ export function CompetitorSpyClient({
                           workspaceId={workspaceId}
                           appId={targetAppId || undefined}
                         >
-                          <div className="flex flex-col gap-2">
-                            <p className="inline-flex items-center gap-1.5 self-start rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-300/80 ring-1 ring-amber-500/20">
-                              {t("reviewSentiment.exploitBadge")}
-                            </p>
-                            <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3">
-                              <p className="text-sm text-amber-200/80">
-                                {reviewQueueEmpty
-                                  ? t("reviewSentiment.exploitEmptyHint")
-                                  : t("reviewSentiment.exploitTooltip")}
-                              </p>
-                              <TooltipProvider>
-                                <Tooltip
-                                  content={
-                                    reviewQueueAllQueued
-                                      ? t("reviewSentiment.queueAlreadyAll")
-                                      : reviewQueueEmpty
-                                        ? t("reviewSentiment.exploitEmptyHint")
-                                        : t("reviewSentiment.exploitInfoTooltip")
-                                  }
-                                  side="top"
-                                  className="max-w-[300px]"
-                                  asChild
-                                >
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    disabled={reviewQueueEmpty || reviewQueueAllQueued}
-                                    className={cn(
-                                      "shrink-0 border text-white",
-                                      reviewQueueAllQueued
-                                        ? "cursor-default border-zinc-600 bg-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80"
-                                        : reviewQueueEmpty
-                                          ? "cursor-not-allowed border-zinc-700 bg-zinc-800/60 text-zinc-500 opacity-60"
-                                          : "border-amber-400/30 bg-amber-500/80 hover:bg-amber-400",
-                                    )}
-                                    onClick={() => {
-                                      if (reviewQueueEmpty || reviewQueueAllQueued) {
-                                        if (reviewQueueAllQueued) {
-                                          toast.info(t("reviewSentiment.queueAlreadyAll"));
-                                        }
-                                        return;
-                                      }
-                                      void validateAndQueue({
-                                        source: "competitor_spy_review",
-                                        workspaceId,
-                                        workspaceLocale: locale,
-                                        appId: targetAppId || apps[0]?.id,
-                                        items: reviewQueueInputs,
-                                        existingQueue: optimizationQueueItems,
-                                        addItems: async (batch) => {
-                                          const response = await addToOptimizationQueue(batch);
-                                          return {
-                                            addedCount: response.addedCount ?? 0,
-                                            skippedCount: response.skippedCount,
-                                          };
-                                        },
-                                        navigate: false,
-                                      }).then((result) => {
-                                        if (!result.ok) {
-                                          toast.error(
-                                            result.error ?? t("reviewSentiment.queueError"),
-                                          );
-                                          return;
-                                        }
-                                        if (result.alreadyQueued) {
-                                          toast.info(t("reviewSentiment.queueAlreadyAll"));
-                                          return;
-                                        }
-                                        toast.success(t("reviewSentiment.queueSuccess"), {
-                                          description: t("reviewSentiment.queueSuccessDetail", {
-                                            count: result.addedCount,
-                                          }),
-                                        });
-                                      });
-                                    }}
-                                  >
-                                    {reviewQueueAllQueued ? (
-                                      <CheckCircle2 className="me-1.5 size-3.5 shrink-0" aria-hidden />
-                                    ) : (
-                                      <Sparkles className="me-1.5 size-3.5 shrink-0" aria-hidden />
-                                    )}
-                                    {reviewQueueAllQueued
-                                      ? t("reviewSentiment.exploitCtaAlreadyQueued")
-                                      : t("reviewSentiment.exploitCta")}
-                                    <Info className="ms-1.5 size-3 shrink-0 opacity-70" aria-hidden />
-                                  </Button>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                          </div>
+                          <VulnerabilityConquestQueueCta
+                            isRtl={isRtl}
+                            reviewQueueEmpty={reviewQueueEmpty}
+                            reviewQueueAllQueued={reviewQueueAllQueued}
+                            onboardingOpen={onboardingOpen}
+                            onOnboardingOpenChange={setOnboardingOpen}
+                            onDismissOnboarding={dismissOnboarding}
+                            onQueueClick={() => {
+                              if (reviewQueueEmpty || reviewQueueAllQueued) {
+                                if (reviewQueueAllQueued) {
+                                  toast.info(t("reviewSentiment.queueAlreadyAll"));
+                                }
+                                return;
+                              }
+                              void validateAndQueue({
+                                source: "competitor_spy_review",
+                                workspaceId,
+                                workspaceLocale: locale,
+                                appId: targetAppId || apps[0]?.id,
+                                items: reviewQueueInputs,
+                                existingQueue: allQueueItems,
+                                addItems: async (batch) => {
+                                  const response = await addToOptimizationQueue(batch);
+                                  return {
+                                    addedCount: response.addedCount ?? 0,
+                                    skippedCount: response.skippedCount,
+                                  };
+                                },
+                                navigate: false,
+                              }).then((result) => {
+                                if (!result.ok) {
+                                  toast.error(
+                                    result.error ?? t("reviewSentiment.queueError"),
+                                  );
+                                  return;
+                                }
+                                if (result.alreadyQueued) {
+                                  toast.info(t("reviewSentiment.queueAlreadyAll"));
+                                  return;
+                                }
+                                toast.success(t("reviewSentiment.queueSuccess"), {
+                                  description: t("reviewSentiment.queueSuccessDetail", {
+                                    count: result.addedCount,
+                                  }),
+                                });
+                                notifyQueuedSuccess();
+                              });
+                            }}
+                          />
                         </OptimizerWorkspace>
                       ) : null}
 

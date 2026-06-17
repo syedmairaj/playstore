@@ -30,6 +30,7 @@ import {
 import {
   OptimizerCreditsConfirmDialog,
 } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
+import { GenerationGuardrailModal } from "@/components/listing/optimizer/generation-guardrail-modal";
 import { AlertTriangle, Hash, Info, Loader2, Shield, Sparkles } from "lucide-react";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
@@ -38,7 +39,9 @@ import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
 import { workspaceAppsQueryKey, useAppLimits } from "@/hooks/use-app-limits";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
-import { isExplicitMarketIntelStagedItem } from "@/lib/client/market-intel-signals";
+import {
+  partitionQueueItemsByCategory,
+} from "@/lib/staging/optimizer-context-adapter";
 import { REVIEW_DERIVED_INSIGHTS_KEY } from "@/lib/client/prefetch-listing-optimizer";
 import { useOptimizerSync } from "@/hooks/useOptimizerSync";
 import { AsoSandboxPanel } from "@/components/listing-optimizer/aso-sandbox-panel";
@@ -98,6 +101,7 @@ import {
 } from "@/components/reviews/review-improvements-queue";
 import StagingWorkspace from "@/components/staging-workspace/StagingWorkspace";
 import { ActiveContextWorkspaceSkeleton } from "@/components/staging-workspace/active-context-workspace-skeleton";
+import { ActiveContextReconnectingBanner } from "@/components/staging-workspace/active-context-reconnecting-banner";
 import KeywordTrackerPanel, {
   KeywordTrackerEmptySlot,
 } from "@/components/listing-optimizer/KeywordTrackerPanel";
@@ -106,18 +110,13 @@ import {
   filterSandboxKeywordSignals,
   formatLiveRankIndicators,
 } from "@/lib/staging/keyword-signals";
-import {
-  partitionActiveContextByWidget,
-  partitionQueueItemsByCategory,
-  partitionQueueItemsBySignalType,
-} from "@/lib/staging/optimizer-context-adapter";
 import { useArchiveReviewInsightFromContext } from "@/hooks/useArchiveReviewInsightFromContext";
 import {
   ACTIVE_CONTEXT_TOAST_CLASS_NAMES,
   ACTIVE_CONTEXT_TOAST_DURATION_MS,
   ACTIVE_CONTEXT_TOAST_POSITION,
 } from "@/lib/client/active-context-toast";
-import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import { useActiveContextFromVault } from "@/hooks/useActiveContextFromVault";
 import { useActiveContextVaultEvents } from "@/hooks/useActiveContextVaultEvents";
 import {
   OPTIMIZATION_QUEUE_KEY,
@@ -129,6 +128,16 @@ import {
   patchOptimizationQueueStore,
 } from "@/lib/client/optimization-queue-store";
 import { buildSynthesisFromOptimizationQueue } from "@/lib/optimization-queue";
+import { pickTopAutoStageInsightInputs } from "@/lib/optimization-queue/auto-stage-top-insights";
+import type { OptimizationQueueItem } from "@/lib/optimization-queue";
+import { filterQueueForActiveContextDisplay } from "@/lib/competitor-spy/strength-audit-ssot";
+import { validateGenerationReadiness } from "@/lib/utils/listing-guardrails";
+import {
+  generateOptimizedListing,
+  type GenerateOptimizedListingSuccess,
+} from "@/lib/listing/generate-optimized-listing";
+import type { ActiveContextStrategyMode } from "@/lib/optimization-queue/resolve-strategy-mode";
+import { optimizationQueueItemsToImprovements } from "@/lib/client/optimization-queue-improvements";
 import { KeywordValidatorCard } from "@/components/keyword-tracker/KeywordValidatorCard";
 import { useStagingWorkspace } from "@/hooks/useStagingWorkspace";
 import {
@@ -148,34 +157,6 @@ import {
 import { cn } from "@/lib/utils";
 
 type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
-
-type ApiSuccess = {
-  ok: true;
-  data: ListingGenerationOutput;
-  meta?: {
-    model?: string;
-    promptVersion?: string;
-    persisted?: boolean;
-    generationId?: string;
-    savedAt?: string;
-    /** Server could not validate ASO scoring; listing fields are still valid. */
-    asoScorePartial?: boolean;
-    /** Server performed an automatic retry — first attempt failed schema validation. */
-    retried?: boolean;
-    /** Clamp layer trimmed shortDescription to fit ≤80 chars — surfaced as a neutral UI hint. */
-    shortDescriptionClamped?: boolean;
-    /**
-     * All three signal channels were active — synthesis quality is maximum.
-     * Shown as a green "Maximum Synthesis" badge in the results area.
-     */
-    quality_status?: "All signals active. Synthesis mode: Maximum.";
-    /**
-     * Fewer than 3 signal channels were active — listing was generated from partial data.
-     * Shown as an amber nudge badge in the results area.
-     */
-    quality_warning?: "Listing generated using partial data. Add Review, Market, or Competitor signals for a more comprehensive strategy.";
-  };
-};
 
 type ApiError = {
   ok: false;
@@ -375,6 +356,7 @@ interface StagingWorkspaceSectionProps {
   appId: string;
   reviewQueuePills: import("@/components/reviews/review-improvements-queue").ListingImprovementItem[];
   spotlightQueuePills: import("@/components/reviews/review-improvements-queue").ListingImprovementItem[];
+  competitorSpyPills: import("@/lib/client/active-context-from-queue").ActiveContextQueuePill[];
   stagedKeywords: KeywordDisplayItem[];
   competitorWeaknesses: string[];
   locale: string;
@@ -391,6 +373,7 @@ interface StagingWorkspaceSectionProps {
   vaultLocale: "en" | "ar";
   reviewInsightsSection?: React.ReactNode;
   hiddenPillarIds?: Array<"review_issues" | "market_opportunities" | "competitor_keywords">;
+  networkReconnecting?: boolean;
 }
 
 function StagingWorkspaceSection({
@@ -398,6 +381,7 @@ function StagingWorkspaceSection({
   appId,
   reviewQueuePills,
   spotlightQueuePills,
+  competitorSpyPills,
   stagedKeywords,
   competitorWeaknesses,
   locale,
@@ -414,6 +398,7 @@ function StagingWorkspaceSection({
   vaultLocale,
   reviewInsightsSection,
   hiddenPillarIds,
+  networkReconnecting = false,
 }: StagingWorkspaceSectionProps) {
   // Convert review queue pills to ReviewIssueSignal format
   const reviewIssues: ReviewIssueSignal[] = reviewQueuePills.map((pill) => ({
@@ -444,16 +429,31 @@ function StagingWorkspaceSection({
     };
   });
 
-  // Convert staged keywords to CompetitorKeywordSignal format
-  const competitorKeywords: CompetitorKeywordSignal[] = stagedKeywords.map((kw) => ({
-    id: kw.id,
-    source: "competitor_keyword" as const,
-    keyword: kw.term,
-    category: kw.category,
-    userSelected: true,
-    timestamp: Date.now(),
-    metadata: { originalId: kw.originalId },
-  }));
+  // Approved audit strengths only — read-only in Active Context (remove = vault dismiss).
+  const competitorStrengthPills = competitorSpyPills.filter(
+    (pill) => pill.item.type === "competitor_strength",
+  );
+
+  const competitorKeywords: CompetitorKeywordSignal[] = competitorStrengthPills.map((pill) => {
+    const meta = pill.item.payload.metadata ?? {};
+    return {
+      id: pill.id,
+      source: "competitor_keyword" as const,
+      keyword: pill.label,
+      category: "competitor_gap",
+      userSelected: true,
+      timestamp: Date.now(),
+      metadata: {
+        originalPill: pill,
+        queueItemId: pill.id,
+        competitor_name: meta.competitor_name,
+        origin_module: meta.origin_module ?? "competitor_spy",
+        audit_status: meta.audit_status,
+        core_differentiator: meta.core_differentiator,
+        readOnlyStrength: true,
+      },
+    };
+  });
 
   // Create unified removal handler
   const handleRemoveSignal = async (signalId: string, source: string) => {
@@ -463,11 +463,7 @@ function StagingWorkspaceSection({
     } else if (source === "market_spotlight") {
       onRemoveMarketOpportunity(signalId);
     } else if (source === "competitor_keyword") {
-      // Find the original ID from metadata
-      const keyword = stagedKeywords.find((kw) => kw.id === signalId);
-      if (keyword) {
-        onRemoveCompetitorKeyword(signalId, keyword.originalId);
-      }
+      onRemoveCompetitorKeyword(signalId, signalId);
     }
   };
 
@@ -492,11 +488,15 @@ function StagingWorkspaceSection({
     competitorKeywords.length > 0 ||
     competitorWeaknesses.length > 0;
 
+  const activeContextEmpty = !hasStagedSignals && keywordTrackerCount === 0;
   const showActiveContextSkeleton =
-    loading && !hasStagedSignals && keywordTrackerCount === 0;
+    activeContextEmpty && (loading || networkReconnecting);
 
   return (
     <div>
+      {networkReconnecting ? (
+        <ActiveContextReconnectingBanner isRtl={isRtl} />
+      ) : null}
       {showActiveContextSkeleton ? (
         <ActiveContextWorkspaceSkeleton isRtl={isRtl} showKeywordTracker={Boolean(appId)} />
       ) : (
@@ -651,7 +651,10 @@ export function ListingOptimizer({
   const [editedTitle, setEditedTitle] = useState("");
   const [editedShort, setEditedShort] = useState("");
   const [editedLong, setEditedLong] = useState("");
-  const [meta, setMeta] = useState<ApiSuccess["meta"]>();
+  const [metadataVariant, setMetadataVariant] = useState<"aggressive" | "growth">("growth");
+  const [activeStrategyMode, setActiveStrategyMode] =
+    useState<ActiveContextStrategyMode>("defensive");
+  const [meta, setMeta] = useState<GenerateOptimizedListingSuccess["meta"]>();
   const [listingGenerationId, setListingGenerationId] = useState<
     string | undefined
   >();
@@ -671,6 +674,13 @@ export function ListingOptimizer({
   const [autofillBusy, setAutofillBusy] = useState<AutofillField | null>(null);
   const [creditConfirmPending, setCreditConfirmPending] =
     useState<CreditConfirmPending | null>(null);
+  const [generationGuardrailOpen, setGenerationGuardrailOpen] = useState(false);
+  const [generationGuardrailBusy, setGenerationGuardrailBusy] = useState(false);
+  const [pendingListingGeneration, setPendingListingGeneration] = useState<{
+    mode: "fresh" | "regenerate";
+    userInstruction?: string;
+    targetArabicOverride?: boolean;
+  } | null>(null);
   const [autofillGate, setAutofillGate] = useState<{
     appName?: boolean;
     category?: boolean;
@@ -682,32 +692,35 @@ export function ListingOptimizer({
   );
 
   // ── Staging Vault Context ────────────────────────────────────────────────
+  const resolvedAppId = useMemo(
+    () => selectedAppId.trim() || undefined,
+    [selectedAppId],
+  );
+
   const {
-    data: optimizerContext,
     mutate: refreshOptimizerContext,
     keywordSignalsLoading,
     keywordSignals,
-    keywordSignalsTotal,
+    isReconnecting: optimizerSyncReconnecting,
   } = useOptimizerSync(workspaceId, {
-    appId: selectedAppId.trim() || undefined,
+    appId: resolvedAppId,
     vaultLocale: locale,
   });
 
-  const activeContextByWidget = useMemo(
-    () => partitionActiveContextByWidget(optimizerContext?.activeItems),
-    [optimizerContext?.activeItems],
-  );
-
   const {
     items: optimizationQueueItems,
+    allItems: allOptimizationQueueItems,
+    partitioned: activeContextPartition,
     removeItem: removeQueueItem,
+    addItems: addToOptimizationQueue,
     isLoading: optimizationQueueLoading,
+    isReconnecting: optimizationQueueReconnecting,
     refetch: refetchOptimizationQueue,
-  } = useOptimizationQueue(
-    workspaceId,
-    locale,
-    selectedAppId.trim() || undefined,
-  );
+    categorizationModal,
+  } = useActiveContextFromVault(workspaceId, locale, resolvedAppId);
+
+  const activeContextNetworkReconnecting =
+    optimizerSyncReconnecting || optimizationQueueReconnecting;
 
   const {
     data: reviewDerivedGate,
@@ -716,12 +729,12 @@ export function ListingOptimizer({
     queryKey: REVIEW_DERIVED_INSIGHTS_KEY(
       workspaceId,
       locale,
-      selectedAppId.trim() || null,
+      resolvedAppId ?? null,
     ),
     queryFn: () =>
       fetchReviewCurationInsights(workspaceId, {
         locale,
-        appId: selectedAppId.trim() || undefined,
+        appId: resolvedAppId,
       }),
     enabled: Boolean(workspaceId),
     placeholderData: keepPreviousData,
@@ -770,6 +783,12 @@ export function ListingOptimizer({
     }));
   }, [queueByCategory.tracker]);
 
+  /** Queue tracker is SSOT; fall back to keyword-signals API when queue is empty (e.g. during network blips). */
+  const keywordTrackerDisplaySignals = useMemo(() => {
+    if (trackerKeywordSignals.length > 0) return trackerKeywordSignals;
+    return keywordSignals;
+  }, [trackerKeywordSignals, keywordSignals]);
+
   const sandboxKeywordSignals = useMemo(
     () => filterSandboxKeywordSignals(keywordSignals),
     [keywordSignals],
@@ -789,12 +808,14 @@ export function ListingOptimizer({
     },
   });
 
+  const refreshActiveContext = useCallback(() => {
+    void Promise.all([refreshOptimizerContext(), refetchOptimizationQueue()]);
+  }, [refreshOptimizerContext, refetchOptimizationQueue]);
+
   useActiveContextVaultEvents({
     workspaceId,
     locale,
-    onFallbackRefresh: () => {
-      void Promise.all([refreshOptimizerContext(), refetchOptimizationQueue()]);
-    },
+    onFallbackRefresh: refreshActiveContext,
   });
 
   useEffect(() => {
@@ -2521,11 +2542,14 @@ export function ListingOptimizer({
     toast.success(t("results.exportSuccess"));
   }
 
-  async function runListingGeneration(opts: {
-    mode: "fresh" | "regenerate";
-    userInstruction?: string;
-    targetArabicOverride?: boolean;
-  }) {
+  async function runListingGeneration(
+    opts: {
+      mode: "fresh" | "regenerate";
+      userInstruction?: string;
+      targetArabicOverride?: boolean;
+    },
+    runOptions?: { skipGuardrail?: boolean; queueOverride?: OptimizationQueueItem[] },
+  ) {
     if (!workspaceId) {
       setError(t("appContext.missingWorkspaceId"));
       return;
@@ -2547,8 +2571,9 @@ export function ListingOptimizer({
       return;
     }
     if (loading) return;
-    // Hard debounce: block re-entry even before React flushes the `loading` state update.
     if (isProcessingCredits) return;
+
+    // Hard debounce: block re-entry even before React flushes the `loading` state update.
     setIsProcessingCredits(true);
 
     setError(null);
@@ -2579,8 +2604,12 @@ export function ListingOptimizer({
       }),
     );
     setLoading(true);
+    const queueForGeneration =
+      runOptions?.queueOverride ?? optimizationQueueItems;
     // Snapshot the queue before generation — used for "Optimization Factors" pills
-    setGenerationQueueSnapshot([...queuedImprovements]);
+    setGenerationQueueSnapshot(
+      optimizationQueueItemsToImprovements(queueForGeneration),
+    );
     try {
       // ── Curated optimization queue only (no raw discovery streams) ────────
       competitorVulnerabilitiesRef.current = [];
@@ -2592,96 +2621,59 @@ export function ListingOptimizer({
         .filter(Boolean);
 
       const queueSynthesis = buildSynthesisFromOptimizationQueue(
-        optimizationQueueItems,
+        queueForGeneration,
         seedKwList,
       );
 
-      const reviewQueueItems = queueSynthesis.reviewIssueLabels.map((label, i) => ({
-        id: `queue-review-${i}`,
-        reviewId: `queue-review-${i}`,
-        reviewText: label,
-        title: label,
-        userName: "",
-        score: 0,
-        sentimentTag: label,
-        appId: null,
-        packageName: null,
-        isUtilized: false,
-        createdAt: new Date().toISOString(),
-      }));
-
-      const improvementsDirective = buildListingImprovementsGenerateDirective(
-        reviewQueueItems,
-      );
-
-      const effectiveInstruction = [
-        ...queueSynthesis.userInstructionParts,
-        improvementsDirective,
-        opts.userInstruction,
-      ]
+      const effectiveInstruction = [opts.userInstruction]
         .map((s) => s?.trim())
         .filter(Boolean)
         .join("\n\n");
 
-      const trackedKeywordSignals = queueSynthesis.trackedKeywordSignals;
-      const exploitTargets = queueSynthesis.exploitTargets;
       const mergedKeywords = queueSynthesis.mergedKeywords;
 
-      const res = await fetch("/api/listings/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspaceId,
-          ...(selectedAppId.trim() ? { appId: selectedAppId.trim() } : {}),
-          appName: displayAppName,
-          category: category.trim(),
-          targetKeywords:
-            mergedKeywords.length > 0 ? mergedKeywords : keywords.trim(),
-          appFeatures: features.trim(),
-          toneStyle,
-          targetArabic: opts.targetArabicOverride ?? locale === "ar",
-          ...(effectiveInstruction
-            ? { userInstruction: effectiveInstruction }
-            : {}),
-          // Market spotlight keywords from Market Intelligence → SYNTHESIS PRIORITY 2
-          ...(exploitTargets.length > 0 ? { exploitTargets } : {}),
-          ...(trackedKeywordSignals.length > 0
-            ? { trackedKeywordSignals }
-            : {}),
-          // Active signal types — used server-side to compute quality_status / quality_warning meta.
-          activeSignalTypes: queueSynthesis.activeSignalTypes,
-        }),
+      const generationResult = await generateOptimizedListing({
+        workspaceId,
+        appId: selectedAppId.trim() || undefined,
+        appName: displayAppName,
+        category: category.trim(),
+        targetKeywords:
+          mergedKeywords.length > 0 ? mergedKeywords.join(", ") : keywords.trim(),
+        appFeatures: features.trim(),
+        toneStyle,
+        targetArabic: opts.targetArabicOverride ?? locale === "ar",
+        userInstruction: effectiveInstruction || undefined,
+        queueSynthesis,
       });
-      const json = (await res.json()) as ApiSuccess | ApiError;
       toast.dismiss(runToastId);
-      if (!json.ok) {
-        if (res.status === 401) {
+      if (!generationResult.ok) {
+        if (generationResult.status === 401) {
           setError(t("form.signInError"));
-        } else if (json.error.code === "duplicate_request") {
-          // A generation is already running for this workspace — silently discard
-          // the duplicate. The in-flight request will complete and update the UI.
-          // No error message, no credit deduction — safe to ignore.
+        } else if (generationResult.error.code === "duplicate_request") {
           return;
         } else if (
-          res.status === 402 ||
-          json.error.code === "insufficient_credits"
+          generationResult.status === 402 ||
+          generationResult.error.code === "insufficient_credits"
         ) {
-          const rem = json.error.remaining;
-          const req = json.error.required;
+          const rem = generationResult.error.remaining;
+          const req = generationResult.error.required;
           const suffix =
             typeof rem === "number" && typeof req === "number"
               ? ` ${t("form.creditsDetail", { rem, req })}`
               : "";
-          setError(`${json.error.message}${suffix}${t("form.creditsSuffix")}`);
+          setError(
+            `${generationResult.error.message}${suffix}${t("form.creditsSuffix")}`,
+          );
           setUpgradeOpen(true);
           if (typeof rem === "number") {
             setAiCreditsRemaining(rem);
           }
         } else {
-          setError(json.error.message || t("form.networkError"));
+          setError(generationResult.error.message || t("form.networkError"));
         }
         return;
       }
+      const json = generationResult;
       const d = json.data;
       setError(null);
       suppressListingHydrationRef.current = false;
@@ -2766,6 +2758,8 @@ export function ListingOptimizer({
       setGenerateJustSucceeded(true);
       setWizardStep(2);
       setWizardPanelPeek({});
+      setMetadataVariant("growth");
+      setActiveStrategyMode(queueSynthesis.strategyMode);
       setEditedTitle(d.title);
       setEditedShort(d.shortDescription);
       setEditedLong(d.fullDescription);
@@ -2903,9 +2897,90 @@ export function ListingOptimizer({
     }
   }
 
-  function requestListingGeneration() {
-    void runListingGeneration({ mode: "fresh" });
+  function handleGenerate(
+    opts: {
+      mode: "fresh" | "regenerate";
+      userInstruction?: string;
+      targetArabicOverride?: boolean;
+    },
+    options?: { skipGuardrail?: boolean; queueOverride?: OptimizationQueueItem[] },
+  ) {
+    if (!options?.skipGuardrail && !optimizationQueueLoading) {
+      const queue = options?.queueOverride ?? optimizationQueueItems;
+      const readiness = validateGenerationReadiness(queue);
+      if (!readiness.isReady) {
+        setPendingListingGeneration(opts);
+        setGenerationGuardrailOpen(true);
+        return;
+      }
+    }
+    void runListingGeneration(opts, options);
   }
+
+  function requestListingGeneration() {
+    handleGenerate({ mode: "fresh" });
+  }
+
+  const handleGenerationGuardrailAutoStage = useCallback(async () => {
+    if (!workspaceId || generationGuardrailBusy) return;
+    setGenerationGuardrailBusy(true);
+    try {
+      const inputs = pickTopAutoStageInsightInputs({
+        allQueueItems: allOptimizationQueueItems,
+        activeQueueItems: optimizationQueueItems,
+        pendingReviewInsights,
+        keywordSignals: keywordTrackerDisplaySignals,
+      });
+
+      if (inputs.length === 0) {
+        toast.error(t("form.generationGuardrail.autoStageEmpty"));
+        return;
+      }
+
+      const result = await addToOptimizationQueue(inputs);
+      await refetchOptimizationQueue();
+      const stagedQueue = filterQueueForActiveContextDisplay(result.items);
+      setGenerationGuardrailOpen(false);
+      toast.success(
+        t("form.generationGuardrail.autoStageSuccess", { count: inputs.length }),
+      );
+
+      const pending = pendingListingGeneration;
+      setPendingListingGeneration(null);
+      if (pending) {
+        handleGenerate(pending, {
+          skipGuardrail: true,
+          queueOverride: stagedQueue,
+        });
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : t("form.generationGuardrail.autoStageError");
+      toast.error(message);
+    } finally {
+      setGenerationGuardrailBusy(false);
+    }
+  }, [
+    addToOptimizationQueue,
+    allOptimizationQueueItems,
+    keywordTrackerDisplaySignals,
+    generationGuardrailBusy,
+    optimizationQueueItems,
+    pendingListingGeneration,
+    pendingReviewInsights,
+    refetchOptimizationQueue,
+    t,
+    workspaceId,
+  ]);
+
+  const handleGenerationGuardrailContinue = useCallback(() => {
+    const pending = pendingListingGeneration;
+    setGenerationGuardrailOpen(false);
+    setPendingListingGeneration(null);
+    if (pending) {
+      handleGenerate(pending, { skipGuardrail: true });
+    }
+  }, [pendingListingGeneration]);
 
   function handleCreditConfirm() {
     setCreditConfirmPending((pending) => {
@@ -2959,6 +3034,19 @@ export function ListingOptimizer({
   const clampedListing = useMemo(
     () => clampListingTexts(editedTitle, editedShort, editedLong),
     [editedTitle, editedShort, editedLong],
+  );
+
+  const handleMetadataVariantChange = useCallback(
+    (variant: "aggressive" | "growth") => {
+      const output = resultRef.current;
+      const slice = output?.listingVariants?.[variant];
+      if (!slice) return;
+      setMetadataVariant(variant);
+      setEditedTitle(slice.title);
+      setEditedShort(slice.shortDescription);
+      setEditedLong(slice.fullDescription);
+    },
+    [],
   );
 
   const activeLocalized = useMemo(
@@ -3229,52 +3317,10 @@ export function ListingOptimizer({
   const finalSummary = t("workflow.finalSummaryLine", { tone: toneLabel });
 
   // ── Active Context Canvas: pre-compute pill groups outside JSX ───────────
-  // These MUST be plain variables (not IIFEs inside JSX) so that Framer Motion
-  // AnimatePresence can track key identity across renders without frame.join errors.
-
-  const queueBySignalType = useMemo(
-    () => partitionQueueItemsBySignalType(optimizationQueueItems),
-    [optimizationQueueItems],
-  );
-
-  const reviewQueuePills = useMemo(
-    () =>
-      [
-        ...queueBySignalType.review_insights,
-        ...queueBySignalType.feature_requests,
-      ].map((signal) => ({
-        id: signal.payload.id,
-        label: signal.payload.content,
-        source: "optimization_queue" as const,
-        item: signal,
-      })),
-    [queueBySignalType],
-  );
-
-  const spotlightQueuePills = useMemo(
-    () =>
-      queueBySignalType.keyword_gaps
-        .filter((signal) =>
-          isExplicitMarketIntelStagedItem({
-            source: signal.payload.source,
-            metadata: signal.payload.metadata,
-          }),
-        )
-        .map((signal) => ({
-          id: signal.payload.id,
-          label: signal.payload.content.replace(/^market_spotlight:/, ""),
-          source: "optimization_queue" as const,
-          item: signal,
-        })),
-    [queueBySignalType],
-  );
-
+  const reviewQueuePills = activeContextPartition.reviewPills;
+  const spotlightQueuePills = activeContextPartition.marketIntelPills;
+  const competitorSpyPills = activeContextPartition.competitorSpyPills;
   const stagedKeywords = useMemo(() => [], []);
-
-  const queueCompetitorWeaknesses = useMemo(
-    () => queueBySignalType.competitor_strengths.map((s) => s.payload.content),
-    [queueBySignalType],
-  );
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
@@ -3304,6 +3350,21 @@ export function ListingOptimizer({
         autofillField={creditConfirmPending?.field}
         spyHref={workspaceId ? `/app/${workspaceId}/competitors` : undefined}
         onGoToSpy={() => setCreditConfirmPending(null)}
+      />
+
+      <GenerationGuardrailModal
+        open={generationGuardrailOpen}
+        onOpenChange={(open) => {
+          setGenerationGuardrailOpen(open);
+          if (!open) {
+            setPendingListingGeneration(null);
+            setGenerationGuardrailBusy(false);
+          }
+        }}
+        isRtl={isRtl}
+        autoStageBusy={generationGuardrailBusy}
+        onAutoStage={() => void handleGenerationGuardrailAutoStage()}
+        onContinueGeneric={handleGenerationGuardrailContinue}
       />
 
       <UpgradeModal
@@ -3812,20 +3873,23 @@ export function ListingOptimizer({
                       appId={selectedAppId.trim()}
                       reviewQueuePills={reviewQueuePills}
                       spotlightQueuePills={spotlightQueuePills}
+                      competitorSpyPills={competitorSpyPills}
                       stagedKeywords={stagedKeywords}
-                      competitorWeaknesses={queueCompetitorWeaknesses}
+                      competitorWeaknesses={[]}
                       locale={locale}
                       isRtl={isRtl}
                       loading={
                         loading ||
                         (optimizationQueueLoading && optimizationQueueItems.length === 0)
                       }
+                      networkReconnecting={activeContextNetworkReconnecting}
                       keywordSignalsLoading={
-                        keywordSignalsLoading &&
-                        trackerKeywordSignals.length === 0
+                        (keywordSignalsLoading || optimizationQueueLoading) &&
+                        keywordTrackerDisplaySignals.length === 0 &&
+                        !activeContextNetworkReconnecting
                       }
-                      keywordTrackerCount={trackerKeywordSignals.length}
-                      trackerKeywordSignals={trackerKeywordSignals}
+                      keywordTrackerCount={keywordTrackerDisplaySignals.length}
+                      trackerKeywordSignals={keywordTrackerDisplaySignals}
                       vaultLocale={locale}
                       hiddenPillarIds={["review_issues"]}
                       reviewInsightsSection={
@@ -4069,26 +4133,26 @@ export function ListingOptimizer({
               onExportOpen={() => setExportPlayOpen(true)}
               canRegenerate={canRegenerate}
               onRegeneratePunchier={() =>
-                void runListingGeneration({
+                handleGenerate({
                   mode: "regenerate",
                   userInstruction: REGENERATE_MODEL_INSTRUCTIONS.punchier,
                 })
               }
               onRegenerateProfessional={() =>
-                void runListingGeneration({
+                handleGenerate({
                   mode: "regenerate",
                   userInstruction: REGENERATE_MODEL_INSTRUCTIONS.professional,
                 })
               }
               onRegenerateArabic={() =>
-                void runListingGeneration({
+                handleGenerate({
                   mode: "regenerate",
                   userInstruction: REGENERATE_MODEL_INSTRUCTIONS.arabic,
                   targetArabicOverride: true,
                 })
               }
               onRegenerateTone={() =>
-                void runListingGeneration({
+                handleGenerate({
                   mode: "regenerate",
                   userInstruction: REGENERATE_MODEL_INSTRUCTIONS.tone,
                 })
@@ -4105,6 +4169,9 @@ export function ListingOptimizer({
               showGenerateSuccess={generateJustSucceeded}
               canSaveToTracker={canSaveKeywordsToTracker}
               generationQueueSnapshot={generationQueueSnapshot}
+              strategyMode={activeStrategyMode}
+              metadataVariant={metadataVariant}
+              onMetadataVariantChange={handleMetadataVariantChange}
             />
             ) : null}
 
@@ -4414,6 +4481,7 @@ export function ListingOptimizer({
         />
       </div>
     </div>
+    {categorizationModal}
     </div>
   );
 }

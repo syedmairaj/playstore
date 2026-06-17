@@ -32,3 +32,29 @@ export {
 export type { QueueInputDiffResult } from "@/lib/optimization-queue/queue-routing";
 
 export { buildSynthesisFromOptimizationQueue } from "@/lib/optimization-queue/optimization-queue-synthesis";
+export {
+  buildActiveContextSynthesis,
+  activeContextHasSignals,
+} from "@/lib/optimization-queue/build-active-context-synthesis";
+export type {
+  ClusterSynthesisPayload,
+  ActiveContextSynthesisPayload,
+  ActiveContextSynthesisSignal,
+} from "@/lib/optimization-queue/build-active-context-synthesis";
+export {
+  SIGNAL_CLUSTERS,
+  inferSignalCluster,
+  resolveSignalCluster,
+  validateManualQueueInput,
+  withResolvedSignalCluster,
+  ManualClusterRequiredError,
+} from "@/lib/optimization-queue/signal-cluster";
+export type { SignalCluster } from "@/lib/optimization-queue/signal-cluster";
+export {
+  resolveActiveContextStrategyMode,
+  topStagedIssuesByImpact,
+} from "@/lib/optimization-queue/resolve-strategy-mode";
+export type {
+  ActiveContextStrategyMode,
+  PrioritizedStagedIssue,
+} from "@/lib/optimization-queue/resolve-strategy-mode";

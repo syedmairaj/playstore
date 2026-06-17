@@ -26,6 +26,10 @@ import { useReviewBacklog } from "@/hooks/useReviewBacklog";
 import { SyncInsightsCta } from "@/components/reviews/sync-insights-cta";
 import { AiCreditsModal } from "@/components/ui/ai-credits-modal";
 import { AppSourceSelector, type AppSourceOption } from "@/components/reviews/AppSourceSelector";
+import { ReviewsArchitectTip } from "@/components/reviews/reviews-architect-tip";
+import { MarketUxSentimentInsightsPanel } from "@/components/reviews/market-ux-sentiment-insights-panel";
+import { useMarketUxSentimentInsights } from "@/hooks/useMarketUxSentimentInsights";
+import type { ReviewGrowthMode } from "@/lib/review-insights/growth-strategy-tags";
 import type { WorkspaceAppListRow } from "@/lib/workspace/workspace-apps-list";
 import type { ReviewRow } from "@/components/reviews/reviews-types";
 import type { IssueItem } from "@/lib/gemini/generate-review-analysis";
@@ -878,7 +882,9 @@ export type ReviewsClientProps = {
 
 export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClientProps) {
   const t = useTranslations("reviews");
+  const tGrowth = useTranslations("reviews.growthMode");
   const locale = useLocale();
+  const isRtl = locale === "ar";
   const router = useRouter();
   const primaryAppId = apps[0]?.id;
 
@@ -891,6 +897,8 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     locale === "ar" ? "ar" : "en",
     primaryAppId,
   );
+  const { insights: marketUxInsights, meta: marketUxMeta } =
+    useMarketUxSentimentInsights(workspaceId);
   const [hydrated, setHydrated] = useState(false);
 
   const {
@@ -1625,6 +1633,18 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
             loading={competitorsLoading}
           />
 
+          <ReviewsArchitectTip
+            mode={(isMyAppTab ? "defensive" : "offensive") satisfies ReviewGrowthMode}
+            isRtl={isRtl}
+            className="mt-1"
+          />
+
+          <MarketUxSentimentInsightsPanel
+            insights={marketUxInsights}
+            meta={marketUxMeta}
+            isRtl={isRtl}
+          />
+
           {/*
            * key={selectedAppFilter} forces a full remount of ReviewsTab on every
            * tab switch, resetting all internal filter/search/pagination state.
@@ -1694,10 +1714,14 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                 id="common-issues-heading"
                 className="text-xl font-semibold tracking-tight text-white sm:text-2xl"
               >
-                {t("commonIssues.title")}
+                {isMyAppTab
+                  ? tGrowth("defensiveDashboardTitle")
+                  : tGrowth("offensiveDashboardTitle")}
               </h2>
               <p className="max-w-2xl text-sm text-zinc-400">
-                {t("commonIssues.subtitle")}
+                {isMyAppTab
+                  ? tGrowth("defensiveDashboardSubtitle")
+                  : tGrowth("offensiveDashboardSubtitle")}
               </p>
             </div>
 

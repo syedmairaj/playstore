@@ -14,6 +14,7 @@ import {
   ActionableChipRow,
   reviewCategoryToTone,
   severityToTone,
+  type ChipMetadataTag,
 } from "@/components/staging-workspace/actionable-chip-row";
 
 const SYNC_ATTENTION_STATUSES = new Set<ReviewAnalysisStatus>([
@@ -48,6 +49,7 @@ export function ReviewInsightsPanel({
   onAdopt,
 }: ReviewInsightsPanelProps) {
   const t = useTranslations("optimizer.reviewInsights");
+  const tGrowth = useTranslations("reviews.growthMode");
   const tSlot = useTranslations("optimizer.activeContext");
   const adoptEnabled = gateValid && analysisStatus === "SUCCESS_PAID";
   const cards = [...pendingInsights, ...adoptedInsights];
@@ -89,20 +91,41 @@ export function ReviewInsightsPanel({
               ? insight.severity.toUpperCase()
               : insight.severity;
 
+            const tags: ChipMetadataTag[] = [
+              {
+                label: t(`categories.${insight.category}`),
+                tone: reviewCategoryToTone(insight.category),
+              },
+              {
+                label: severityLabel,
+                tone: severityToTone(insight.severity),
+              },
+            ];
+
+            if (insight.growthStrategyTag === "product_improvement") {
+              tags.push({
+                label: tGrowth("tagProductImprovement"),
+                tone: "sky",
+              });
+            } else if (insight.growthStrategyTag === "oppositional_target") {
+              tags.push({
+                label: tGrowth("tagOppositionalTarget"),
+                tone: "orange",
+              });
+            }
+
+            if (insight.impactPercent != null && insight.impactPercent > 0) {
+              tags.push({
+                label: tGrowth("impactLabel", { pct: insight.impactPercent }),
+                tone: "amber",
+              });
+            }
+
             return (
               <ActionableChipRow
                 key={insight.id}
                 summary={insight.title}
-                tags={[
-                  {
-                    label: t(`categories.${insight.category}`),
-                    tone: reviewCategoryToTone(insight.category),
-                  },
-                  {
-                    label: severityLabel,
-                    tone: severityToTone(insight.severity),
-                  },
-                ]}
+                tags={tags}
                 sourceTooltip={sourceTooltip}
                 isRtl={isRtl}
                 lineClamp={2}

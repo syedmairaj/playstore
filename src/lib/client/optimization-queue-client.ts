@@ -4,9 +4,11 @@ import type {
   OptimizationQueueLocale,
   OptimizationQueueStats,
 } from "@/lib/optimization-queue";
+import { SIGNAL_LIFECYCLE_STATUS } from "@/lib/signals/signal-lifecycle";
 import { diffQueueInputs } from "@/lib/optimization-queue/queue-routing";
 import { buildQueueDeltaFromResponse } from "@/lib/client/active-context-delta";
 import { dispatchStagingVaultDelta } from "@/lib/client/staging-vault-sync";
+import { isRetryableNetworkError } from "@/lib/client/query-network-retry";
 
 export type OptimizationQueueResponse = {
   items: OptimizationQueueItem[];
@@ -26,9 +28,19 @@ export async function fetchOptimizationQueue(
 ): Promise<OptimizationQueueResponse> {
   const params = new URLSearchParams({ locale });
   if (appId) params.set("appId", appId);
-  const res = await fetch(
-    `/api/workspaces/${workspaceId}/optimization-queue?${params.toString()}`,
-  );
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/workspaces/${workspaceId}/optimization-queue?${params.toString()}`,
+      { credentials: "include" },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isRetryableNetworkError(err)) {
+      throw new Error(`ERR_NETWORK_CHANGED: ${message}`);
+    }
+    throw err;
+  }
   if (!res.ok) {
     throw new Error(`Failed to fetch optimization queue: ${res.status}`);
   }
@@ -90,25 +102,109 @@ export async function removeFromOptimizationQueueClient(
   });
 }
 
-/** Map competitor spy keyword payloads → queue inputs. */
+/** Approve: AUDIT → ACTIVE */
+export function marketDominatingStrengthToQueueInputs(
+  items: Array<{
+    term: string;
+    conversionImpactScore: number;
+    coreDifferentiator: boolean;
+    auditItemId: string;
+  }>,
+  competitorName: string,
+  competitorId: string,
+): AddOptimizationQueueInput[] {
+  return items.map((item) => ({
+    type: "competitor_strength" as const,
+    category: "strength" as const,
+    status: SIGNAL_LIFECYCLE_STATUS.ACTIVE,
+    content: item.term.trim(),
+    source: "competitor_spy" as const,
+    signalCluster: "OFFENSIVE_GROWTH" as const,
+    sourceContext: competitorName,
+    sourceContextId: competitorId,
+    metadata: {
+      category: "strength",
+      active_context_section: "strength",
+      source_origin: "competitor_spy",
+      origin_module: "competitor_spy",
+      competitor_name: competitorName,
+      competitor_id: competitorId,
+      from_strength_audit: true,
+      user_selected_boolean: true,
+      signal_cluster: "OFFENSIVE_GROWTH",
+      cluster_category: "OFFENSIVE_GROWTH",
+      strength_class: "market_dominating",
+      praise_class: "market_dominating",
+      core_differentiator: item.coreDifferentiator,
+      conversion_impact_score: item.conversionImpactScore,
+      listing_placement: "fullDescription",
+      listing_placements: ["fullDescription", "whatsNew"],
+      audit_item_id: item.auditItemId,
+    },
+  }));
+}
+
+/** Seed praise candidates into vault audit queue (AUDIT). */
+export function auditQueueStrengthToQueueInputs(
+  items: Array<{
+    term: string;
+    conversionImpactScore: number;
+    auditItemId: string;
+  }>,
+  competitorName: string,
+  competitorId: string,
+): AddOptimizationQueueInput[] {
+  return items.map((item) => ({
+    type: "competitor_strength" as const,
+    category: "strength" as const,
+    status: SIGNAL_LIFECYCLE_STATUS.AUDIT,
+    content: item.term.trim(),
+    source: "competitor_spy" as const,
+    signalCluster: "OFFENSIVE_GROWTH" as const,
+    sourceContext: competitorName,
+    sourceContextId: competitorId,
+    metadata: {
+      category: "strength",
+      active_context_section: "strength",
+      source_origin: "competitor_spy",
+      origin_module: "competitor_spy",
+      competitor_name: competitorName,
+      competitor_id: competitorId,
+      from_strength_audit: true,
+      strength_class: "market_dominating",
+      conversion_impact_score: item.conversionImpactScore,
+      audit_item_id: item.auditItemId,
+    },
+  }));
+}
+
+/** @deprecated Legacy keyword curation — excluded from Active Context. Use marketDominatingStrengthToQueueInputs via Audit Queue. */
 export function competitorKeywordsToQueueInputs(
   keywords: Array<{ term: string; category: string }>,
   competitorName: string,
   competitorId: string,
 ): AddOptimizationQueueInput[] {
   return keywords.map((kw) => ({
-    type: "keyword_gap" as const,
-    category: "opportunity" as const,
+    type: "competitor_keyword" as const,
+    category: "strength" as const,
     content: kw.term.trim(),
     source: "competitor_spy" as const,
+    signalCluster: "OFFENSIVE_GROWTH" as const,
     sourceContext: competitorName,
     sourceContextId: competitorId,
     metadata: {
-      category: "opportunity",
+      category: "strength",
+      active_context_section: "strength",
       source_origin: "competitor_spy",
+      origin_module: "competitor_spy",
       competitor_gap_category: kw.category,
       competitor_name: competitorName,
+      competitor_id: competitorId,
       from_keyword_curation: true,
+      explicitly_staged: true,
+      user_selected_boolean: true,
+      signal_cluster: "OFFENSIVE_GROWTH",
+      cluster_category: "OFFENSIVE_GROWTH",
     },
   }));
 }
@@ -122,13 +218,26 @@ export function keywordGapsToQueueInputs(
     .map((term) => term.trim())
     .filter(Boolean)
     .map((content) => ({
-      type: "keyword_gap" as const,
-      category: "opportunity" as const,
+      type: "competitor_keyword" as const,
+      category: "strength" as const,
       content,
       source: "competitor_spy" as const,
+      signalCluster: "OFFENSIVE_GROWTH" as const,
       sourceContext: competitorName,
       sourceContextId: competitorId,
-      metadata: { category: "opportunity", source_origin: "competitor_spy", from_gap_analysis: true },
+      metadata: {
+        category: "strength",
+        active_context_section: "strength",
+        source_origin: "competitor_spy",
+        origin_module: "competitor_spy",
+        signal_cluster: "OFFENSIVE_GROWTH",
+        cluster_category: "OFFENSIVE_GROWTH",
+        competitor_name: competitorName,
+        competitor_id: competitorId,
+        from_gap_analysis: true,
+        explicitly_staged: true,
+        user_selected_boolean: true,
+      },
     }));
 }
 
@@ -151,6 +260,7 @@ export function reviewExploitToQueueInputs(args: {
       category: "review",
       content: term,
       source: "competitor_spy",
+      signalCluster: "DEFENSIVE_PAIN_POINT",
       sourceContext: args.competitorName,
       sourceContextId: args.competitorId,
       metadata: {
@@ -158,6 +268,8 @@ export function reviewExploitToQueueInputs(args: {
         source_origin: "competitor_spy",
         from_review_insights: true,
         signal_kind: "pain_point",
+        signal_cluster: "DEFENSIVE_PAIN_POINT",
+        cluster_category: "DEFENSIVE_PAIN_POINT",
       },
     });
   }
@@ -181,24 +293,7 @@ export function reviewExploitToQueueInputs(args: {
     });
   }
 
-  for (const kw of args.keywords ?? []) {
-    const term = kw.trim();
-    if (!term) continue;
-    items.push({
-      type: "keyword_gap",
-      category: "opportunity",
-      content: term,
-      source: "competitor_spy",
-      sourceContext: args.competitorName,
-      sourceContextId: args.competitorId,
-      metadata: {
-        category: "opportunity",
-        source_origin: "competitor_spy",
-        from_review_insights: true,
-      },
-    });
-  }
-
+  // Praise / strengths are NOT bulk-queued — they flow through the Strength Audit Queue.
   return items;
 }
 

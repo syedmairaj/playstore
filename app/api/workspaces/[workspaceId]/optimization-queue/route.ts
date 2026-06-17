@@ -50,11 +50,35 @@ const addBodySchema = z.object({
         ]),
         sourceContext: z.string().optional(),
         sourceContextId: z.string().optional(),
+        signalCluster: z
+          .enum(["OFFENSIVE_GROWTH", "DEFENSIVE_PAIN_POINT", "MARKET_INTEL"])
+          .optional(),
         metadata: z.record(z.unknown()).optional(),
       }),
     )
     .min(1)
-    .max(50),
+    .max(50)
+    .superRefine((items, ctx) => {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]!;
+        if (item.source !== "manual") continue;
+        const cluster =
+          item.signalCluster ??
+          item.metadata?.signal_cluster ??
+          item.metadata?.cluster_category;
+        if (
+          cluster !== "OFFENSIVE_GROWTH" &&
+          cluster !== "DEFENSIVE_PAIN_POINT" &&
+          cluster !== "MARKET_INTEL"
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Manual queue items require signalCluster",
+            path: [i, "signalCluster"],
+          });
+        }
+      }
+    }),
 });
 
 export async function GET(request: Request, context: Ctx) {

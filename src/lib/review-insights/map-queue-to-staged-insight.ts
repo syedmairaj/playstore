@@ -2,6 +2,10 @@ import type { OptimizationQueueItem } from "@/lib/optimization-queue";
 import type { PendingReviewInsight } from "@/lib/review-insights/pending-insights.types";
 import { normalizeReviewInsightCategory } from "@/lib/review-insights/pending-insights.types";
 import type { IssueSeverity } from "@/lib/gemini/generate-review-analysis";
+import {
+  readGrowthStrategyTag,
+  readImpactPercent,
+} from "@/lib/review-insights/growth-strategy-tags";
 
 function isStagedReviewQueueItem(item: OptimizationQueueItem): boolean {
   const meta = item.metadata ?? {};
@@ -51,6 +55,8 @@ export function mapQueueItemToStagedInsight(
     clusterIndex: -1,
     createdAt: item.stagedAt,
     updatedAt: item.stagedAt,
+    growthStrategyTag: readGrowthStrategyTag(meta),
+    impactPercent: readImpactPercent(meta),
   };
 }
 

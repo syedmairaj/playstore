@@ -1,30 +1,36 @@
 "use client";
 
-import { Lightbulb, Sparkles } from "lucide-react";
+import { ShieldAlert, Sparkles, TrendingUp } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
-import type { KeywordSpotlightResult } from "@/app/api/market/keyword-spotlight/route";
+import type {
+  CompetitorThreatSignal,
+  GrowthKeywordSignal,
+  MarketIntelligenceReport,
+} from "@/lib/market/market-intel-signal-types";
 
-type CurationState = {
-  selected: Set<string>;
+export type MarketIntelCurationState = {
+  selectedGrowth: Set<string>;
+  selectedThreats: Set<string>;
   staged: Set<string>;
-  onToggle: (keyword: string) => void;
+  onToggleGrowth: (key: string) => void;
+  onToggleThreat: (key: string) => void;
+  growthKey: (signal: GrowthKeywordSignal) => string;
+  threatKey: (signal: CompetitorThreatSignal) => string;
 };
 
 type Props = {
-  spotlight: KeywordSpotlightResult | null;
+  report: MarketIntelligenceReport | null;
   loading?: boolean;
   isRtl?: boolean;
-  curation?: CurationState;
+  curation?: MarketIntelCurationState;
 };
-
-// ── Skeleton ──────────────────────────────────────────────────────────────────
 
 function SpotlightSkeleton({ isRtl }: { isRtl: boolean }) {
   return (
     <div className="space-y-4">
-      {/* Keyword chips skeleton */}
       <div className={cn("flex flex-wrap gap-1.5", isRtl && "flex-row-reverse")}>
-        {[88, 72, 104, 80, 96, 64, 112, 76].map((w, i) => (
+        {[88, 72, 104, 80, 96, 64].map((w, i) => (
           <span
             key={i}
             className="inline-block h-[26px] animate-pulse rounded-lg bg-white/[0.06]"
@@ -33,152 +39,221 @@ function SpotlightSkeleton({ isRtl }: { isRtl: boolean }) {
           />
         ))}
       </div>
-      {/* Narrative skeleton */}
       <div className="space-y-2">
         <div className="h-3 w-full animate-pulse rounded-full bg-white/[0.05]" />
         <div className={cn("h-3 w-4/5 animate-pulse rounded-full bg-white/[0.04]", isRtl && "ms-auto")} />
       </div>
-      {/* Tip skeleton */}
-      <div className="h-12 w-full animate-pulse rounded-xl bg-white/[0.04]" />
     </div>
   );
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+function PriorityMeta({
+  signal,
+  isRtl,
+}: {
+  signal: { searchVolumeScore: number; conversionImpactScore: number; priorityScore: number };
+  isRtl: boolean;
+}) {
+  const t = useTranslations("market.spotlight");
+
+  return (
+    <span
+      className={cn(
+        "mt-0.5 block text-[10px] tabular-nums text-zinc-500",
+        isRtl && "text-end font-arabic",
+      )}
+    >
+      {t("priorityMeta", {
+        volume: signal.searchVolumeScore,
+        cvr: signal.conversionImpactScore,
+        priority: signal.priorityScore,
+      })}
+    </span>
+  );
+}
+
+function StagedBadge({ isRtl }: { isRtl: boolean }) {
+  const t = useTranslations("market.spotlight");
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded border border-emerald-500/35 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300",
+        isRtl ? "me-1.5 font-arabic" : "ms-1.5",
+      )}
+    >
+      {t("stagedBadge")}
+    </span>
+  );
+}
 
 export function KeywordSpotlightCard({
-  spotlight,
+  report,
   loading = false,
   isRtl = false,
   curation,
 }: Props) {
+  const t = useTranslations("market.spotlight");
+
   return (
     <div
       dir={isRtl ? "rtl" : "ltr"}
       className="rounded-2xl border border-zinc-800 bg-white/[0.03] p-5 ring-1 ring-white/[0.04] transition-[border-color] duration-200 hover:border-zinc-700/80"
     >
-      {/* Header */}
       <div className={cn("mb-4 flex items-center gap-2.5", isRtl && "flex-row-reverse")}>
         <div className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-emerald-500/25 bg-emerald-500/10">
           <Sparkles className="size-3.5 text-emerald-400" aria-hidden />
         </div>
         <div className={isRtl ? "text-right font-arabic" : ""}>
-          <h3 className="text-sm font-semibold text-white/95">AI Keyword Spotlight</h3>
-          <p className="text-[11px] text-zinc-500">
-            {isRtl ? "الكلمات المهيمنة على هذه الفئة الآن" : "What's dominating this category right now"}
-          </p>
+          <h3 className="text-sm font-semibold text-white/95">{t("title")}</h3>
+          <p className="text-[11px] text-zinc-500">{t("subtitle")}</p>
         </div>
       </div>
 
-      {loading || !spotlight ? (
+      {loading || !report ? (
         <SpotlightSkeleton isRtl={isRtl} />
       ) : (
-        <div className="space-y-4 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-          {/* Trending keyword chips */}
-          <div>
-            <p className={cn(
-              "mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500",
-              isRtl && "text-end font-arabic normal-case",
-            )}>
-              {isRtl ? "الكلمات المفتاحية الرائجة" : "Trending keywords"}
-            </p>
-            <div className={cn("flex flex-wrap gap-1.5", isRtl && "flex-row-reverse")}>
-              {spotlight.trendingKeywords.map((kw, i) => {
-                const isStaged = curation?.staged.has(kw) ?? false;
-                const isSelected = curation?.selected.has(kw) ?? false;
-                const isTopTrend = i < 3;
-                const interactive = Boolean(curation);
+        <div className="space-y-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+          {/* Growth Keywords */}
+          <section>
+            <div className={cn("mb-2 flex items-center gap-2", isRtl && "flex-row-reverse")}>
+              <TrendingUp className="size-3.5 text-emerald-400" aria-hidden />
+              <p
+                className={cn(
+                  "text-[11px] font-medium uppercase tracking-wider text-zinc-500",
+                  isRtl && "font-arabic normal-case",
+                )}
+              >
+                {t("growthKeywords")}
+              </p>
+            </div>
+            <div className="space-y-2">
+              {report.growthKeywords.length === 0 ? (
+                <p className={cn("text-xs text-zinc-500", isRtl && "text-end font-arabic")}>
+                  {t("emptyGrowth")}
+                </p>
+              ) : (
+                report.growthKeywords.map((signal) => {
+                  const key = curation?.growthKey(signal) ?? signal.id;
+                  const isStaged = curation?.staged.has(key) ?? false;
+                  const isSelected = curation?.selectedGrowth.has(key) ?? false;
+                  const interactive = Boolean(curation) && !isStaged;
 
-                const chipClass = cn(
-                  "inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
-                  isStaged
-                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200/90 cursor-default"
-                    : interactive
-                      ? isSelected
-                        ? "border-sky-500/45 bg-sky-500/15 text-sky-200 cursor-pointer ring-1 ring-sky-400/35"
-                        : isTopTrend
-                          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 cursor-pointer hover:border-emerald-400/45 hover:bg-emerald-500/18"
-                          : "border-zinc-700/60 bg-zinc-800/60 text-zinc-300 cursor-pointer hover:border-zinc-600 hover:bg-zinc-800"
-                      : isTopTrend
-                        ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
-                        : "border-zinc-700/60 bg-zinc-800/60 text-zinc-300",
-                );
-
-                const chipInner = (
-                  <>
-                    {(isTopTrend || isStaged) && (
-                      <span
-                        className={cn(
-                          "inline-block size-1.5 rounded-full shrink-0",
-                          isStaged ? "bg-emerald-300" : "bg-emerald-400",
-                          isRtl ? "ms-1.5" : "me-1.5",
-                        )}
-                        aria-hidden
-                      />
-                    )}
-                    {kw}
-                    {isStaged && (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300/80",
-                          isRtl ? "me-1.5" : "ms-1.5",
-                        )}
-                      >
-                        {isRtl ? "مُضاف" : "Staged"}
-                      </span>
-                    )}
-                  </>
-                );
-
-                if (interactive && !isStaged) {
-                  return (
-                    <button
-                      key={`${i}-${kw}`}
-                      type="button"
-                      onClick={() => curation?.onToggle(kw)}
-                      aria-pressed={isSelected}
-                      className={chipClass}
-                    >
-                      {chipInner}
-                    </button>
+                  const rowClass = cn(
+                    "rounded-xl border px-3 py-2 transition-colors",
+                    isStaged
+                      ? "border-emerald-500/35 bg-emerald-500/[0.08]"
+                      : interactive && isSelected
+                        ? "border-sky-500/45 bg-sky-500/10 ring-1 ring-sky-400/30 cursor-pointer"
+                        : "border-zinc-800/80 bg-zinc-900/40 cursor-pointer hover:border-zinc-700",
                   );
-                }
 
-                return (
-                  <span key={`${i}-${kw}`} className={chipClass}>
-                    {chipInner}
-                  </span>
-                );
-              })}
+                  const inner = (
+                    <div className={cn("flex items-start justify-between gap-2", isRtl && "flex-row-reverse")}>
+                      <div className={isRtl ? "text-end font-arabic" : ""}>
+                        <p className="text-sm font-medium text-white/90">{signal.term}</p>
+                        <PriorityMeta signal={signal} isRtl={isRtl} />
+                      </div>
+                      {isStaged ? <StagedBadge isRtl={isRtl} /> : null}
+                    </div>
+                  );
+
+                  if (interactive) {
+                    return (
+                      <button
+                        key={signal.id}
+                        type="button"
+                        onClick={() => curation?.onToggleGrowth(key)}
+                        aria-pressed={isSelected}
+                        className={cn("w-full text-start", rowClass, isRtl && "text-end")}
+                      >
+                        {inner}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div key={signal.id} className={rowClass}>
+                      {inner}
+                    </div>
+                  );
+                })
+              )}
             </div>
-          </div>
+          </section>
 
-          {/* Narrative */}
-          <p className={cn(
-            "text-sm leading-relaxed text-zinc-400",
-            isRtl && "text-end font-arabic",
-          )}>
-            {spotlight.narrative}
-          </p>
-
-          {/* ASO Tip */}
-          <div className={cn("flex gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-3", isRtl && "flex-row-reverse")}>
-            <Lightbulb className="mt-0.5 size-4 shrink-0 text-amber-400" aria-hidden />
-            <div className={isRtl ? "text-end" : ""}>
-              <p className={cn(
-                "mb-0.5 text-[11px] font-semibold uppercase tracking-wider text-amber-400/80",
-                isRtl && "font-arabic normal-case",
-              )}>
-                {isRtl ? "نصيحة ASO" : "ASO tip"}
-              </p>
-              <p className={cn(
-                "text-xs leading-relaxed text-amber-100/80",
-                isRtl && "font-arabic",
-              )}>
-                {spotlight.asoTip}
+          {/* Competitor Threats */}
+          <section>
+            <div className={cn("mb-2 flex items-center gap-2", isRtl && "flex-row-reverse")}>
+              <ShieldAlert className="size-3.5 text-orange-400" aria-hidden />
+              <p
+                className={cn(
+                  "text-[11px] font-medium uppercase tracking-wider text-zinc-500",
+                  isRtl && "font-arabic normal-case",
+                )}
+              >
+                {t("competitorThreats")}
               </p>
             </div>
-          </div>
+            <div className="space-y-2">
+              {report.competitorThreats.length === 0 ? (
+                <p className={cn("text-xs text-zinc-500", isRtl && "text-end font-arabic")}>
+                  {t("emptyThreats")}
+                </p>
+              ) : (
+                report.competitorThreats.map((signal) => {
+                  const key = curation?.threatKey(signal) ?? signal.id;
+                  const isStaged = curation?.staged.has(key) ?? false;
+                  const isSelected = curation?.selectedThreats.has(key) ?? false;
+                  const interactive = Boolean(curation) && !isStaged;
+
+                  const rowClass = cn(
+                    "rounded-xl border px-3 py-2 transition-colors",
+                    isStaged
+                      ? "border-emerald-500/35 bg-emerald-500/[0.08]"
+                      : interactive && isSelected
+                        ? "border-orange-500/40 bg-orange-500/10 ring-1 ring-orange-400/25 cursor-pointer"
+                        : "border-zinc-800/80 bg-zinc-900/40 cursor-pointer hover:border-zinc-700",
+                  );
+
+                  const inner = (
+                    <div className={cn("space-y-1", isRtl && "text-end font-arabic")}>
+                      <div className={cn("flex items-start justify-between gap-2", isRtl && "flex-row-reverse")}>
+                        <p className="text-sm font-medium text-white/90">{signal.term}</p>
+                        {isStaged ? <StagedBadge isRtl={isRtl} /> : null}
+                      </div>
+                      <p className="text-[11px] text-zinc-500">
+                        {t("threatSource", {
+                          app: signal.competitorTitle,
+                          rank: signal.chartRank ?? "—",
+                        })}
+                      </p>
+                      <PriorityMeta signal={signal} isRtl={isRtl} />
+                    </div>
+                  );
+
+                  if (interactive) {
+                    return (
+                      <button
+                        key={signal.id}
+                        type="button"
+                        onClick={() => curation?.onToggleThreat(key)}
+                        aria-pressed={isSelected}
+                        className={cn("w-full text-start", rowClass, isRtl && "text-end")}
+                      >
+                        {inner}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div key={signal.id} className={rowClass}>
+                      {inner}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
         </div>
       )}
     </div>

@@ -151,6 +151,22 @@ export function normalizeStoredCompetitorFromAnalysisJson(
         topPraiseKeywords: arr("topPraiseKeywords"),
         reportedBugsKeywords: arr("reportedBugsKeywords"),
         featureRequestsKeywords: arr("featureRequestsKeywords"),
+        praiseSignals: Array.isArray(sr.praiseSignals)
+          ? (sr.praiseSignals as Array<Record<string, unknown>>)
+              .map((row) => ({
+                term: typeof row.term === "string" ? row.term : "",
+                conversionImpactScore:
+                  typeof row.conversionImpactScore === "number"
+                    ? row.conversionImpactScore
+                    : 50,
+                classification:
+                  row.classification === "market_dominating" ||
+                  row.classification === "user_appreciated"
+                    ? row.classification
+                    : ("user_appreciated" as const),
+              }))
+              .filter((row) => row.term)
+          : undefined,
       };
     })(),
     asoAudit: (() => {

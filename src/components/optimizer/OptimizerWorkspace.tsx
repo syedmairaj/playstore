@@ -4,12 +4,14 @@ import { type ReactNode } from "react";
 import { useLocale } from "next-intl";
 import { ActiveOptimizationQueuePanel } from "@/components/optimizer/ActiveOptimizationQueuePanel";
 import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import { optimizationQueueItemsToImprovements } from "@/lib/client/optimization-queue-improvements";
 import { cn } from "@/lib/utils";
 import type { ListingImprovementItem } from "@/components/reviews/review-improvements-queue";
 
 export type OptimizerWorkspaceProps = {
   workspaceId: string;
   appId?: string;
+  ownPackageName?: string | null;
   className?: string;
   children?: ReactNode;
 };
@@ -17,29 +19,13 @@ export type OptimizerWorkspaceProps = {
 function queueItemsToImprovements(
   items: ReturnType<typeof useOptimizationQueue>["items"],
 ): ListingImprovementItem[] {
-  return items.map((item) => ({
-    id: item.id,
-    reviewId: item.id,
-    reviewText: item.content,
-    title: item.content,
-    userName: "",
-    score: 0,
-    sentimentTag:
-      item.type === "market_keyword"
-        ? item.content.startsWith("market_spotlight:")
-          ? item.content
-          : `market_spotlight:${item.content}`
-        : item.content,
-    appId: null,
-    packageName: null,
-    isUtilized: false,
-    createdAt: item.stagedAt,
-  }));
+  return optimizationQueueItemsToImprovements(items);
 }
 
 export function OptimizerWorkspace({
   workspaceId,
   appId,
+  ownPackageName,
   className,
   children,
 }: OptimizerWorkspaceProps) {
@@ -56,6 +42,7 @@ export function OptimizerWorkspace({
       <ActiveOptimizationQueuePanel
         items={queueItemsToImprovements(items)}
         loading={isLoading}
+        ownPackageName={ownPackageName}
         onRemoveItem={(id) => void removeItem(id)}
       />
       {children}

@@ -21,7 +21,21 @@ import {
   resolveQueueItemCategory,
   sectionDedupeKey,
 } from "@/lib/optimization-queue/queue-routing";
+import {
+  inferSignalCluster,
+  resolveSignalCluster,
+  validateManualQueueInput,
+  withResolvedSignalCluster,
+} from "@/lib/optimization-queue/signal-cluster";
 import { enrichStagingVaultMetadata } from "@/lib/staging-vault/staging-vault-metadata";
+import {
+  isSignalLifecycleStatus,
+  readSignalLifecycleStatus,
+  SIGNAL_LIFECYCLE_STATUS,
+  stripLegacyLifecycleMetadata,
+  type SignalLifecycleStatus,
+} from "@/lib/signals/signal-lifecycle";
+import { demoteCompetitorStrengthItem } from "@/lib/competitor-spy/strength-audit-ssot";
 
 const QUEUE_FEATURE = "optimization_queue";
 /** Keep queue bounded so state_en/state_ar JSON stays index-friendly. */
@@ -37,6 +51,12 @@ const ALLOWED_METADATA_KEYS = new Set([
   "review_derived",
   "from_gap_analysis",
   "from_keyword_curation",
+  "from_gap_analysis",
+  "competitor_gap_category",
+  "competitor_id",
+  "growth_mode",
+  "growth_strategy_tag",
+  "impactPercent",
   "locale",
   "difficulty",
   "confidence",
@@ -65,8 +85,16 @@ const ALLOWED_METADATA_KEYS = new Set([
   "archive_reason",
   "source_type",
   "explicitly_staged",
-  "move_to_active_context",
   "archived_at",
+  "removed_at",
+  "audit_item_id",
+  "from_strength_audit",
+  "strength_class",
+  "praise_class",
+  "core_differentiator",
+  "conversion_impact_score",
+  "listing_placement",
+  "listing_placements",
   // Market Intel / Active Context canonical fields
   "origin_module",
   "user_selected_boolean",
@@ -74,6 +102,8 @@ const ALLOWED_METADATA_KEYS = new Set([
   "active_context_section",
   "confidence_score",
   "data_origin",
+  "signal_cluster",
+  "cluster_category",
 ]);
 
 function slimMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -100,17 +130,59 @@ function throwIfVaultUpdateError(error: { message: string } | null): void {
   throw new Error(error.message);
 }
 
+function resolveItemLifecycleStatus(
+  item: Pick<OptimizationQueueItem, "type" | "status" | "metadata">,
+  inputStatus?: SignalLifecycleStatus,
+): SignalLifecycleStatus | undefined {
+  if (item.type !== "competitor_strength") return undefined;
+  if (inputStatus && isSignalLifecycleStatus(inputStatus)) return inputStatus;
+  return readSignalLifecycleStatus(item);
+}
+
+function normalizeLifecycleFromInput(raw: unknown): SignalLifecycleStatus | undefined {
+  if (!isSignalLifecycleStatus(raw)) {
+    return readSignalLifecycleStatus({
+      type: "competitor_strength",
+      metadata: typeof raw === "string" ? { status: raw } : {},
+    });
+  }
+  return raw;
+}
+
+function applyLifecycleToItem(
+  existing: OptimizationQueueItem,
+  status: SignalLifecycleStatus,
+  metadataPatch?: Record<string, unknown>,
+): OptimizationQueueItem {
+  return {
+    ...existing,
+    status,
+    metadata: stripLegacyLifecycleMetadata({
+      ...(existing.metadata ?? {}),
+      ...(metadataPatch ?? {}),
+    }),
+  };
+}
+
 function slimQueueItem(
   item: OptimizationQueueItem,
   locale: OptimizationQueueLocale,
   now: string,
 ): OptimizationQueueItem {
   const category = resolveQueueItemCategory(item);
-  const meta = slimMetadata(item.metadata);
+  const meta = stripLegacyLifecycleMetadata(slimMetadata(item.metadata));
+  const signalCluster = resolveSignalCluster({
+    ...item,
+    category,
+    metadata: meta,
+  });
+  const lifecycleStatus = resolveItemLifecycleStatus(item, item.status);
   return {
     id: item.id,
     type: item.type,
     category,
+    ...(signalCluster ? { signalCluster } : {}),
+    ...(lifecycleStatus ? { status: lifecycleStatus } : {}),
     content: item.content.trim().slice(0, MAX_CONTENT_LEN),
     source: item.source,
     sourceContext: item.sourceContext?.slice(0, 120),
@@ -121,6 +193,9 @@ function slimQueueItem(
       ...meta,
       category,
       source_origin: meta.source_origin ?? item.source,
+      ...(signalCluster
+        ? { signal_cluster: signalCluster, cluster_category: signalCluster }
+        : {}),
     },
   };
 }
@@ -134,45 +209,60 @@ function normalizeQueueItem(
   locale: OptimizationQueueLocale,
   now: string,
 ): OptimizationQueueItem {
+  validateManualQueueInput(input);
+  const resolvedInput = withResolvedSignalCluster(input);
+
   const enriched = enrichStagingVaultMetadata({
-    signalType: input.type,
-    source: input.source,
-    sourceContext: input.sourceContext,
-    category: input.category,
-    metadata: input.metadata,
+    signalType: resolvedInput.type,
+    source: resolvedInput.source,
+    sourceContext: resolvedInput.sourceContext,
+    category: resolvedInput.category,
+    metadata: resolvedInput.metadata,
     userSelected:
-      input.metadata?.user_selected_boolean === true ||
-      input.metadata?.from_keyword_spotlight === true ||
-      input.metadata?.from_keyword_curation === true,
+      resolvedInput.metadata?.user_selected_boolean === true ||
+      resolvedInput.metadata?.from_keyword_spotlight === true ||
+      resolvedInput.metadata?.from_keyword_curation === true,
   });
 
   const category: OptimizationQueueCategory = assertQueueCategory(
-    enriched.active_context_section ?? inferCategoryForInput(input),
+    enriched.active_context_section ?? inferCategoryForInput(resolvedInput),
   );
+
+  const signalCluster = inferSignalCluster({
+    ...resolvedInput,
+    category,
+    metadata: resolvedInput.metadata,
+  });
 
   const metadata = {
     ...enriched,
     category,
-    source_origin: enriched.origin_module ?? input.source,
+    source_origin: enriched.origin_module ?? resolvedInput.source,
+    ...(signalCluster
+      ? { signal_cluster: signalCluster, cluster_category: signalCluster }
+      : {}),
   };
 
   const stagedAt =
-    typeof input.metadata?.staged_date === "string" && input.metadata.staged_date.trim()
-      ? input.metadata.staged_date
-      : typeof input.metadata?.original_staged_at === "string" &&
-          input.metadata.original_staged_at.trim()
-        ? input.metadata.original_staged_at
+    typeof resolvedInput.metadata?.staged_date === "string" &&
+    resolvedInput.metadata.staged_date.trim()
+      ? resolvedInput.metadata.staged_date
+      : typeof resolvedInput.metadata?.original_staged_at === "string" &&
+          resolvedInput.metadata.original_staged_at.trim()
+        ? resolvedInput.metadata.original_staged_at
         : now;
 
   return slimQueueItem(
     {
       id: `oq-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      type: input.type,
+      type: resolvedInput.type,
       category,
-      content: input.content.trim(),
-      source: input.source,
-      sourceContext: input.sourceContext,
-      sourceContextId: input.sourceContextId,
+      ...(signalCluster ? { signalCluster } : {}),
+      ...(resolvedInput.status ? { status: resolvedInput.status } : {}),
+      content: resolvedInput.content.trim(),
+      source: resolvedInput.source,
+      sourceContext: resolvedInput.sourceContext,
+      sourceContextId: resolvedInput.sourceContextId,
       language: locale,
       stagedAt,
       metadata,
@@ -380,6 +470,7 @@ export async function addSignalToQueue(
   const seen = new Set(queue.items.map(sectionDedupeKey));
   const added: OptimizationQueueItem[] = [];
   let skippedCount = 0;
+  let lifecycleUpdates = 0;
 
   for (const input of inputs) {
     const content = input.content.trim();
@@ -388,6 +479,26 @@ export async function addSignalToQueue(
     const candidate = normalizeQueueItem(input, locale, now);
     const key = sectionDedupeKey(candidate);
     if (seen.has(key)) {
+      const existingIdx = queue.items.findIndex((i) => sectionDedupeKey(i) === key);
+      const existing = existingIdx >= 0 ? queue.items[existingIdx] : undefined;
+      const rawStatus = candidate.status ?? candidate.metadata?.status;
+      const nextStatus =
+        candidate.type === "competitor_strength"
+          ? normalizeLifecycleFromInput(rawStatus) ?? readSignalLifecycleStatus(candidate)
+          : undefined;
+      if (
+        existing?.type === "competitor_strength" &&
+        candidate.type === "competitor_strength" &&
+        nextStatus
+      ) {
+        queue.items[existingIdx] = slimQueueItem(
+          applyLifecycleToItem(existing, nextStatus, candidate.metadata),
+          locale,
+          now,
+        );
+        lifecycleUpdates += 1;
+        continue;
+      }
       skippedCount += 1;
       continue;
     }
@@ -395,7 +506,7 @@ export async function addSignalToQueue(
     added.push(candidate);
   }
 
-  if (added.length === 0) {
+  if (added.length === 0 && lifecycleUpdates === 0) {
     if (options?.insertAtIndex !== undefined && inputs.length === 1) {
       const repositioned = repositionExistingQueueItem(
         queue.items,
@@ -432,6 +543,33 @@ export async function addSignalToQueue(
       }
     }
     return { items: queue.items, addedCount: 0, skippedCount };
+  }
+
+  if (added.length === 0 && lifecycleUpdates > 0) {
+    const nextItems = queue.items.slice(0, MAX_ITEMS);
+    features[QUEUE_FEATURE] = { items: nextItems, updatedAt: now };
+    const nextState = {
+      ...row.branch,
+      features,
+      metadata: {
+        ...(row.branch.metadata as Record<string, unknown>),
+        last_producer: "optimization_queue",
+        last_producer_timestamp: now,
+      },
+    };
+    const activeFeatures = new Set(row.activeFeatures);
+    activeFeatures.add(QUEUE_FEATURE);
+    const { error } = await supabase
+      .from("workspace_staging_vault")
+      .update({
+        [row.stateKey]: nextState,
+        active_features: [...activeFeatures],
+        updated_at: now,
+        last_modified_by: options?.userId ?? null,
+      })
+      .eq("id", row.id);
+    throwIfVaultUpdateError(error);
+    return { items: nextItems, addedCount: lifecycleUpdates, skippedCount };
   }
 
   const nextItems = mergeItemsAtIndex(
@@ -490,8 +628,19 @@ export async function removeFromOptimizationQueue(
   const now = new Date().toISOString();
   const features = { ...(row.branch.features as Record<string, unknown>) };
   const queue = parseQueueState(features[QUEUE_FEATURE]);
-  const nextItems = queue.items.filter((i) => i.id !== itemId);
-  if (nextItems.length === queue.items.length) return false;
+  const target = queue.items.find((i) => i.id === itemId);
+  if (!target) return false;
+
+  let nextItems: typeof queue.items;
+  if (target.type === "competitor_strength") {
+    nextItems = queue.items.map((item) =>
+      item.id === itemId
+        ? slimQueueItem(demoteCompetitorStrengthItem(item), locale, now)
+        : item,
+    );
+  } else {
+    nextItems = queue.items.filter((i) => i.id !== itemId);
+  }
 
   features[QUEUE_FEATURE] = { items: nextItems, updatedAt: now };
   const nextState = { ...row.branch, features };

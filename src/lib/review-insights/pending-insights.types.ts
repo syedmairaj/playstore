@@ -1,4 +1,5 @@
 import type { IssueItem, IssueSeverity } from "@/lib/gemini/generate-review-analysis";
+import type { GrowthStrategyTag } from "@/lib/review-insights/growth-strategy-tags";
 
 /** ASO cluster categories returned by review analysis. */
 export type ReviewInsightCategory =
@@ -39,6 +40,9 @@ export type PendingReviewInsight = {
   clusterIndex: number;
   createdAt: string;
   updatedAt: string;
+  /** ASO Growth: defensive product fix vs offensive competitor exploit. */
+  growthStrategyTag?: GrowthStrategyTag;
+  impactPercent?: number;
 };
 
 export type IssueItemWithCategory = IssueItem & {

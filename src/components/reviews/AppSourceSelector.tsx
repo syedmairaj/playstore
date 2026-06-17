@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, Shield, Swords } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 
@@ -116,7 +116,7 @@ function AppTab({ id, label, subtitle, isSelected, variant, iconUrl, onSelect }:
         <span
           aria-hidden
           className={cn(
-            "flex size-7 shrink-0 items-center justify-center rounded-lg text-base",
+            "flex size-7 shrink-0 items-center justify-center rounded-lg",
             isSelected
               ? isDefensive
                 ? "bg-sky-500/20"
@@ -124,7 +124,21 @@ function AppTab({ id, label, subtitle, isSelected, variant, iconUrl, onSelect }:
               : "bg-zinc-800",
           )}
         >
-          {isDefensive ? "🛡️" : "⚔️"}
+          {isDefensive ? (
+            <Shield
+              className={cn(
+                "size-3.5",
+                isSelected ? "text-sky-300" : "text-zinc-500",
+              )}
+            />
+          ) : (
+            <Swords
+              className={cn(
+                "size-3.5",
+                isSelected ? "text-orange-300" : "text-zinc-500",
+              )}
+            />
+          )}
         </span>
       )}
 

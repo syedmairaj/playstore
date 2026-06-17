@@ -111,8 +111,8 @@ function buildPillarsConfig(
         ar: "نقاط قوة المنافس",
       },
       description: {
-        en: "→ positioning angles to counter in long description",
-        ar: "← زوايا تموضع للرد عليها في الوصف الطويل",
+        en: "→ audit-approved strengths · read-only · woven into App Features + What's New",
+        ar: "← نقاط قوة معتمدة من التدقيق · للعرض فقط · تُنسج في الميزات + ما الجديد",
       },
       icon: "ShieldCheck",
       color: {
@@ -204,8 +204,8 @@ export default function StagingWorkspace({
             localeOverride={localeProp}
             chipDisplayOptions={{
               showRemoveButton: config.enableInlineRemoval,
-              showCategory: true,
-              showMetadata: true,
+              showCategory: pillar.id !== "competitor_keywords",
+              showMetadata: pillar.id !== "competitor_keywords",
               animateOnRemove: config.animateTransitions,
             }}
           />

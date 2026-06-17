@@ -1,6 +1,9 @@
 import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
+import type { ClusterSynthesisPayload } from "@/lib/optimization-queue/build-active-context-synthesis";
+import { activeContextHasSignals } from "@/lib/optimization-queue/build-active-context-synthesis";
+import { buildStrategyModePromptBlock } from "@/lib/prompts/aso-strategy-mode";
 
-const PROMPT_VERSION = "listing-optimizer-v12.0";
+const PROMPT_VERSION = "listing-optimizer-v15.0";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -234,7 +237,6 @@ const TONE_BRIEF: Record<ToneStyle, string> = {
 
 // ── Prompt token-budget constants ─────────────────────────────────────────────
 const PROMPT_MAX_KEYWORDS = 25;
-const PROMPT_MAX_EXPLOIT_TARGETS = 5;
 
 function truncateKeywords(raw: string[]): string[] {
   const seen = new Set<string>();
@@ -249,13 +251,6 @@ function truncateKeywords(raw: string[]): string[] {
     if (out.length >= PROMPT_MAX_KEYWORDS) break;
   }
   return out;
-}
-
-function truncateExploitTargets(raw: string[]): string[] {
-  return raw
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, PROMPT_MAX_EXPLOIT_TARGETS);
 }
 
 // ── Legacy markdown export (used by docs / evals only) ───────────────────────
@@ -282,7 +277,40 @@ Rules:
 ${targetArabic ? "- Language: Natural modern Arabic (MSA/Gulf mix for MENA)." : ""}
 `.trim();
 
-// ── System message (v11) ─────────────────────────────────────────────────────
+// ── CVR synthesis strategy (injected into system instruction) ───────────────
+function buildClusterStrategyBlock(targetArabic: boolean): string {
+  if (targetArabic) {
+    return (
+      "حلّل إشارات offensive لتحديد مواضع الكلمات عالية النية. " +
+      "حلّل إشارات defensive لمعالجة نقاط ألم المستخدم في الوصف الطويل. " +
+      "أعطِ الأولوية لإشارات defensive لرفع معدل التحويل (CVR)، وإشارات offensive للاكتشاف والظهور."
+    );
+  }
+  return (
+    "Analyze offensive signals for high-intent keyword placement. " +
+    "Analyze defensive signals to address user pain points in the long description. " +
+    "Prioritize defensive signals to increase conversion rate (CVR) and offensive signals for discovery."
+  );
+}
+
+function buildCvrSynthesisStrategyBlock(targetArabic: boolean): string {
+  if (targetArabic) {
+    return (
+      "أنت خبير ASO. هدفك الأساسي هو تعظيم معدل التحويل (CVR). " +
+      "استراتيجية دفاعية: قارن تطبيقنا بإشارات defensive وعالج كل نقطة ألم في الوصف الطويل. " +
+      "استراتيجية هجومية: ادمج إشارات offensive في العنوان والوصف مع إعطاء الأولوية للفوائد. " +
+      "الإشارات الدفاعية حرجة — إهمالها فشل استراتيجي."
+    );
+  }
+  return (
+    "You are an ASO expert. Your primary goal is to maximize conversion rate (CVR). " +
+    "Defensive Strategy: Contrast our app against defensive signals and resolve each pain point in the long description. " +
+    "Offensive Strategy: Weave offensive signals into title and description — benefits over stuffing. " +
+    "Priority Weighting: defensive signals are CRITICAL; failing to address them is a strategy failure."
+  );
+}
+
+// ── System message (v14) ─────────────────────────────────────────────────────
 //
 // v11 redesign: "World's Leading ASO Strategist" framing with explicit
 // SYNTHESIS LOGIC hierarchy (Fix → Capture → Convert → Tone). This
@@ -305,6 +333,10 @@ function buildSystemMessage(targetArabic: boolean): string {
       "Your mandate is to synthesize the queued signals into a unified, persuasive, search-optimised Play Store presence " +
       "that maximises both CVR and install rate.",
 
+    buildCvrSynthesisStrategyBlock(targetArabic),
+
+    buildClusterStrategyBlock(targetArabic),
+
     // ── Clean room rule ──────────────────────────────────────────────────────
     "CLEAN ROOM RULE — CRITICAL: Treat every generation as a fresh brief. " +
       "The ONLY inputs that count are the fields provided in the current request. " +
@@ -314,15 +346,14 @@ function buildSystemMessage(targetArabic: boolean): string {
 
     // ── Synthesis workflow ───────────────────────────────────────────────────
     "In ONE response (no tool calls), execute this SYNTHESIS WORKFLOW internally: " +
-      "(1) BRIEF ANALYSIS: Identify the single strongest USP, the primary user transformation, " +
-      "the market gap, all staged review issues, all market spotlight keywords, and all competitor weaknesses. " +
+      "(1) BRIEF ANALYSIS: Parse the structured cluster JSON — offensive, defensive, market — " +
+      "plus Keyword Tracker signals when present. Identify the single strongest USP and primary user transformation. " +
       "(2) SYNTHESIS HIERARCHY — apply in this exact priority order: " +
       "PRIORITY 0 KEYWORD TRACKER: If Keyword Tracker signals are provided, they are the PRIMARY foundation for title, shortDescription, fullDescription, and ASO score. " +
       "High-confidence terms (≥75%) MUST appear naturally in title and shortDescription. Medium-confidence (50–74%) weave into fullDescription. " +
-      "Explain keyword impact in ctaSuggestions[0] (WHY THIS RANKS) and strategySummary. " +
-      "PRIORITY 1 FIX: Address ALL provided review issues directly in fullDescription + whatsNew. Reassure users these specific issues are resolved. " +
-      "PRIORITY 2 CAPTURE: Use provided market spotlight keywords as the foundation for title and shortDescription (after Keyword Tracker terms). " +
-      "PRIORITY 3 CONVERT: Use competitor weaknesses to position this app as the superior alternative in fullDescription. " +
+      "PRIORITY 1 DEFEND (defensive): CRITICAL — address every defensive signal in fullDescription + whatsNew to lift CVR. " +
+      "PRIORITY 2 CAPTURE (market): Use market cluster keywords in title and shortDescription after Keyword Tracker terms. " +
+      "PRIORITY 3 ATTACK (offensive): Weave offensive signals for discovery — benefits first, no stuffing. " +
       "PRIORITY 4 TONE: Apply the requested tone consistently across ALL fields. " +
       "(3) SEMANTIC MAPPING: Map all keywords to natural language INTENT — never insert keyword strings verbatim if awkward. " +
       "(4) DRAFT all fields with hierarchy active. " +
@@ -403,6 +434,17 @@ function buildSystemMessage(targetArabic: boolean): string {
       "positioned against competitors missing social features, applied bold tone throughout.' " +
       "If targetArabic: write in natural Arabic.",
 
+    "  strategicRationale: object — MANDATORY when Strategy Mode block is present. Shown BEFORE metadata in UI. " +
+      "strategicIntent (≤500 chars): why Defensive or Offensive angle was chosen. " +
+      "exploitationResolutionSummary (≤800 chars): top 3 staged issues addressed with Impact %; if Offensive, how copy positions against competitor failure (no rival names). " +
+      "roiPrediction (≤500 chars): how metadata alignment targets Impact % for conversion + visibility. ",
+
+    "  listingVariants: object with aggressive + growth — BOTH required when Strategy Mode block is present. " +
+      "Each variant: title (≤30), shortDescription (≤80), fullDescription (≤4000), whatsNew (≤500). " +
+      "aggressive = high-velocity acquisition (urgency, contrast, bold hooks). " +
+      "growth = sustainable conversion (trust, clarity, retention). " +
+      "Root title/shortDescription/fullDescription/whatsNew MUST equal listingVariants.growth values.",
+
     // ── v8 fields (unchanged) ────────────────────────────────────────────────
     "  whatsNew: string ≤500 chars. Play Store 'What's New' release notes. " +
       "SYNTHESIS PRIORITY 1 (FIX): If review issues are present, MUST open with the primary fix/resolution. " +
@@ -482,14 +524,58 @@ function formatTrackedKeywordLine(
   return parts.join(" · ");
 }
 
+function labelsFromContext(ctx: ClusterSynthesisPayload) {
+  return {
+    offensive: ctx.offensive.map((s) => s.label),
+    defensive: ctx.defensive.map((s) => s.label),
+    market: ctx.market.map((s) => s.label),
+  };
+}
+
+function buildStructuredActiveContextBlock(
+  activeContext: ClusterSynthesisPayload,
+  targetArabic: boolean,
+): string {
+  const labels = labelsFromContext(activeContext);
+  return [
+    "",
+    "═══════════════════════════════════════════",
+    targetArabic
+      ? "عناقيد السياق النشط (JSON — Cluster-to-Generate)"
+      : "ACTIVE CONTEXT CLUSTERS (Structured JSON — Cluster-to-Generate)",
+    "═══════════════════════════════════════════",
+    targetArabic
+      ? "استخدم هذا الكائن فقط. البنية: { offensive, defensive, market }."
+      : "Consume ONLY this object. Shape: { offensive, defensive, market }.",
+    "",
+    JSON.stringify(activeContext, null, 2),
+    "",
+    targetArabic ? "ملخص سريع:" : "Quick reference:",
+    targetArabic
+      ? `• defensive (حرج · CVR): [${labels.defensive.join("، ")}]`
+      : `• defensive (CRITICAL · CVR): [${labels.defensive.join(", ")}]`,
+    targetArabic
+      ? `• offensive (اكتشاف): [${labels.offensive.join("، ")}]`
+      : `• offensive (discovery): [${labels.offensive.join(", ")}]`,
+    targetArabic
+      ? `• market: [${labels.market.join("، ")}]`
+      : `• market: [${labels.market.join(", ")}]`,
+  ].join("\n");
+}
+
 function buildUserMessage(
   input: ListingOptimizerInput,
   keywords: string[],
-  exploitTargets: string[],
   targetArabic: boolean,
 ): string {
   const toneBrief = TONE_BRIEF[input.toneStyle];
   const trackedSignals = input.trackedKeywordSignals ?? [];
+  const activeContext = input.activeContext;
+  const hasStructuredContext = activeContext && activeContextHasSignals(activeContext);
+  const ctxLabels = hasStructuredContext
+    ? labelsFromContext(activeContext)
+    : { offensive: [], defensive: [], market: [] };
+
   const highConfTracked = trackedSignals
     .filter((s) => s.confidence >= 75)
     .sort((a, b) => b.confidence - a.confidence);
@@ -497,23 +583,39 @@ function buildUserMessage(
     .filter((s) => s.confidence >= 50 && s.confidence < 75)
     .sort((a, b) => b.confidence - a.confidence);
 
-  // ── Classify signals from exploitTargets ─────────────────────────────────
-  // market_spotlight: prefix → market demand keywords (CAPTURE DEMAND)
-  // All others → review issues / backlog pain points (FIX FIRST)
-  const spotlightKeywords = exploitTargets
+  // Legacy fallback when activeContext is absent (older API clients)
+  const legacySpotlightKeywords = (input.exploitTargets ?? [])
     .filter((t) => t.startsWith("market_spotlight:"))
     .map((t) => t.replace(/^market_spotlight:/, "").trim())
     .filter(Boolean);
-
-  const reviewIssues = exploitTargets
+  const legacyReviewIssues = (input.exploitTargets ?? [])
     .filter((t) => !t.startsWith("market_spotlight:"))
     .filter(Boolean);
 
-  // Competitor weaknesses come from userInstruction (injected by the Exploit bridge)
-  // They are extracted from the instruction text — no separate field needed here
-  // since they already arrive as the inversionDirective prepended to userInstruction.
+  const reviewIssues = hasStructuredContext
+    ? activeContext!.defensive
+        .filter((s) => s.type === "review_pain_point" || s.type === "feature_request")
+        .map((s) => s.label)
+    : legacyReviewIssues;
+  const spotlightKeywords = hasStructuredContext ? ctxLabels.market : legacySpotlightKeywords;
+  const defensiveSignals = hasStructuredContext ? ctxLabels.defensive : [];
+  const offensiveSignals = hasStructuredContext ? ctxLabels.offensive : [];
+  const marketDominatingStrengths = hasStructuredContext
+    ? activeContext!.offensive
+        .filter(
+          (s) =>
+            s.strengthClass === "market_dominating" ||
+            s.type === "competitor_strength" ||
+            s.coreDifferentiator === true,
+        )
+        .map((s) => s.label)
+    : [];
+  const coreDifferentiators = hasStructuredContext
+    ? activeContext!.offensive
+        .filter((s) => s.coreDifferentiator === true)
+        .map((s) => s.label)
+    : [];
 
-  // ── Core identity block ──────────────────────────────────────────────────
   const identityBlock = [
     "═══════════════════════════════════════════",
     "APP IDENTITY",
@@ -535,109 +637,129 @@ function buildUserMessage(
     input.appFeatures,
   ].join("\n");
 
-  // ── Active Optimization Inputs section ──────────────────────────────────
-  // Only rendered when at least one signal type is present.
+  const structuredContextBlock =
+    hasStructuredContext && activeContext
+      ? buildStructuredActiveContextBlock(activeContext, targetArabic)
+      : "";
+
   const hasAnySignals =
-    trackedSignals.length > 0 || reviewIssues.length > 0 || spotlightKeywords.length > 0;
+    trackedSignals.length > 0 ||
+    reviewIssues.length > 0 ||
+    spotlightKeywords.length > 0 ||
+    defensiveSignals.length > 0 ||
+    offensiveSignals.length > 0;
 
-  const optimizationInputsBlock = hasAnySignals
-    ? [
-        "",
-        "═══════════════════════════════════════════",
-        "CURATED OPTIMIZATION QUEUE (Integrate ALL of these into the listing — no other signals exist)",
-        "═══════════════════════════════════════════",
+  const optimizationInputsBlock = hasStructuredContext
+    ? structuredContextBlock
+    : hasAnySignals
+      ? [
+          "",
+          "═══════════════════════════════════════════",
+          "CURATED OPTIMIZATION QUEUE (Integrate ALL of these into the listing — no other signals exist)",
+          "═══════════════════════════════════════════",
+          trackedSignals.length > 0
+            ? [
+                "",
+                "0. KEYWORD TRACKER (Primary ASO Foundation — Highest Priority):",
+                "   These validated keywords drive 70–80% of organic visibility. Prioritize in title, shortDescription, and fullDescription.",
+                highConfTracked.length > 0
+                  ? `   High confidence (≥75%): ${highConfTracked.map(formatTrackedKeywordLine).join("; ")}`
+                  : null,
+                mediumConfTracked.length > 0
+                  ? `   Medium opportunity (50–74%): ${mediumConfTracked.map(formatTrackedKeywordLine).join("; ")}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join("\n")
+            : null,
+          reviewIssues.length > 0
+            ? [
+                "",
+                "1. REVIEW ISSUES (Critical Fixes — Highest Priority):",
+                `   Active issues: [${reviewIssues.join(", ")}]`,
+              ].join("\n")
+            : null,
+          spotlightKeywords.length > 0
+            ? [
+                "",
+                "2. MARKET OPPORTUNITIES:",
+                `   Trending keywords: [${spotlightKeywords.join(", ")}]`,
+              ].join("\n")
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "";
 
-        // Signal 0: Keyword Tracker (highest priority)
-        trackedSignals.length > 0
-          ? [
-              "",
-              "0. KEYWORD TRACKER (Primary ASO Foundation — Highest Priority):",
-              "   These validated keywords drive 70–80% of organic visibility. Prioritize in title, shortDescription, and fullDescription.",
-              highConfTracked.length > 0
-                ? `   High confidence (≥75%): ${highConfTracked.map(formatTrackedKeywordLine).join("; ")}`
-                : null,
-              mediumConfTracked.length > 0
-                ? `   Medium opportunity (50–74%): ${mediumConfTracked.map(formatTrackedKeywordLine).join("; ")}`
-                : null,
-              "   • Title + shortDescription: lead with highest-confidence term(s) — semantic weaving only, never awkward stuffing.",
-              "   • fullDescription: distribute medium-confidence terms in benefit bullets and bridge sentences.",
-              "   • ASO score: reward natural inclusion of high-confidence terms in title (+title breakdown) and shortDescription.",
-              "   • ctaSuggestions[0] (WHY THIS RANKS): cite which Keyword Tracker terms were placed and expected visibility impact.",
-              "   • strategySummary: mention Keyword Tracker terms woven and ranking potential.",
-            ]
-              .filter(Boolean)
-              .join("\n")
-          : null,
+  const keywordTrackerBlock =
+    hasStructuredContext && trackedSignals.length > 0
+      ? [
+          "",
+          "═══════════════════════════════════════════",
+          targetArabic
+            ? "متتبع الكلمات المفتاحية (أولوية ASO)"
+            : "KEYWORD TRACKER (Primary ASO Foundation — Highest Priority)",
+          "═══════════════════════════════════════════",
+          highConfTracked.length > 0
+            ? `High confidence (≥75%): ${highConfTracked.map(formatTrackedKeywordLine).join("; ")}`
+            : null,
+          mediumConfTracked.length > 0
+            ? `Medium opportunity (50–74%): ${mediumConfTracked.map(formatTrackedKeywordLine).join("; ")}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "";
 
-        // Signal 1: Review Issues
-        reviewIssues.length > 0
-          ? [
-              "",
-              "1. REVIEW ISSUES (Critical Fixes — Highest Priority):",
-              "   CLEAN ROOM: These are the ONLY review issues to address. Do NOT infer others.",
-              `   Active issues: [${reviewIssues.join(", ")}]`,
-              "   • These are UX/trust signals — do NOT insert as keywords.",
-              "   • Map each issue type to the correct displacement language:",
-              "     Stability/crash → 'zero crashes', 'rock-solid', 'battle-tested reliability'",
-              "     Inaccurate data → 'verified', 'trusted', 'validated' (never claim 'perfect')",
-              "     Ad friction → smooth experience, fair pricing, zero interruptions",
-              "     Missing features → depth, comprehensive, power-user capabilities",
-              "     Poor UX → intuitive design, fast onboarding, clean interface",
-              "     Other → infer strongest displacement angle assertively",
-              "   • Do NOT name competitors. Displacement must read as genuine positioning.",
-            ].join("\n")
-          : null,
-
-        // Signal 2: Market Opportunities
-        spotlightKeywords.length > 0
-          ? [
-              "",
-              "2. MARKET OPPORTUNITIES (Trending Keywords — from real-time top-10 chart analysis):",
-              `   Trending keywords: [${spotlightKeywords.join(", ")}]`,
-              "   • Use as the primary foundation for title and shortDescription.",
-              "   • Weave semantically into fullDescription — never as a keyword list.",
-              "   • Exploit the category gap these keywords reveal: position this app as what the top 10 don't offer.",
-              "   • Max one spotlight keyword per sentence. Never force-fit irrelevant terms.",
-            ].join("\n")
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n")
-    : "";
-
-  // ── Synthesis Logic block ─────────────────────────────────────────────────
-  // Always present — defines the hierarchy the model must follow.
   const synthesisBlock = [
     "",
     "═══════════════════════════════════════════",
     "SYNTHESIS LOGIC (Hierarchy of Operations — follow in this exact order)",
     "═══════════════════════════════════════════",
     trackedSignals.length > 0
-      ? `0. KEYWORD TRACKER FIRST: Weave [${trackedSignals.map((s) => s.keyword).join(", ")}] as the primary search foundation. High-confidence in title + shortDescription; medium in fullDescription. Boost ASO score when placed naturally.`
+      ? `0. KEYWORD TRACKER FIRST: Weave [${trackedSignals.map((s) => s.keyword).join(", ")}] as the primary search foundation. High-confidence in title + shortDescription; medium in fullDescription.`
       : "0. KEYWORD TRACKER: No tracked keywords staged — use seed keywords as primary search foundation.",
     reviewIssues.length > 0
-      ? `1. FIX: Address [${reviewIssues.join(", ")}] directly in fullDescription (hook must open with resolution promise) AND whatsNew (must be first thing the user reads). Reassure users these specific issues are resolved.`
-      : "1. FIX: No review issues staged this session — skip this step.",
+      ? `1. DEFEND (defensive): Address [${reviewIssues.join(", ")}] + all defensive cluster signals in fullDescription + whatsNew.`
+      : defensiveSignals.length > 0
+        ? `1. DEFEND (defensive — CRITICAL): Address [${defensiveSignals.join(", ")}] in fullDescription + whatsNew for CVR.`
+        : "1. DEFEND (defensive): No defensive cluster staged — skip.",
     spotlightKeywords.length > 0
-      ? `2. CAPTURE DEMAND: Use [${spotlightKeywords.join(", ")}] in title and shortDescription after Keyword Tracker terms to maximize search visibility.`
-      : "2. CAPTURE DEMAND: No market spotlight keywords staged — supplement with seed keywords.",
-    typeof input.userInstruction === "string" && input.userInstruction.trim().startsWith("Tracked competitor analysis")
-      ? "3. CONVERT BETTER: Competitor weaknesses are described in PRODUCT OWNER DIRECTION below. Write the fullDescription to position this app as the superior alternative to those rival failures."
-      : "3. CONVERT BETTER: No competitor weaknesses staged — focus on app's own differentiation in fullDescription.",
+      ? `2. CAPTURE (market): Use [${spotlightKeywords.join(", ")}] in title and shortDescription after Keyword Tracker terms.`
+      : "2. CAPTURE (market): No market cluster staged — supplement with seed keywords.",
+    offensiveSignals.length > 0
+      ? `3. ATTACK (offensive): Weave [${offensiveSignals.join(", ")}] for discovery — benefits first.`
+      : "3. ATTACK (offensive): No offensive cluster staged — skip.",
+    marketDominatingStrengths.length > 0
+      ? `3b. MARKET-DOMINATING STRENGTHS (ROI · CVR): Mirror these audited competitor strengths in fullDescription App Features bullets AND whatsNew — they drive conversion, not baseline hygiene: [${marketDominatingStrengths.join(", ")}].`
+      : "3b. MARKET-DOMINATING STRENGTHS: None staged — do not invent competitor praise features.",
+    coreDifferentiators.length > 0
+      ? `3c. CORE DIFFERENTIATORS: Tag these as primary value props in whatsNew opening line + first feature bullet: [${coreDifferentiators.join(", ")}].`
+      : null,
     "4. TONE CONSISTENCY: The entire output must strictly follow the requested TONE / STYLE above. No drift across any field.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-  // ── Product owner direction (competitor inversion + user refinements) ─────
   const refinement =
     typeof input.userInstruction === "string" && input.userInstruction.trim()
       ? [
           "",
           "═══════════════════════════════════════════",
-          "PRODUCT OWNER DIRECTION (overrides defaults where conflicting)",
+          targetArabic
+            ? "توجيهات المالك (تتجاوز الافتراضيات عند التعارض)"
+            : "PRODUCT OWNER DIRECTION (overrides defaults where conflicting)",
           "═══════════════════════════════════════════",
           input.userInstruction.trim(),
         ].join("\n")
       : "";
+
+  const strategyModeBlock = buildStrategyModePromptBlock({
+    strategyMode: input.strategyMode ?? "defensive",
+    topStagedIssues: input.topStagedIssues ?? [],
+    trackedKeywordSignals: input.trackedKeywordSignals,
+    targetArabic,
+  });
 
   // ── Final quality checklist ──────────────────────────────────────────────
   const reminderBlock = [
@@ -664,6 +786,7 @@ function buildUserMessage(
     "9. asoScore = exact sum of scoreBreakdown values?",
     "10. improvementTips: last tip is 'Rationale for Ranking'?",
     "11. whatsNew: ≤500 chars? SYNTHESIS CHECK — opens with review issue fix if supplied? " +
+      "If Market-Dominating Strengths or Core Differentiators are staged, lead with the highest-CVR feature proof — not generic praise? " +
       "Specific to THIS app — not generic? Tone-consistent? Arabic if targetArabic?",
     "12. screenshotCaptions: exactly 5 items? ≤80 chars each? All outcome-driven, bold-impact? " +
       "SYNTHESIS CHECK — caption 1 reflects spotlight keyword if supplied? " +
@@ -673,10 +796,20 @@ function buildUserMessage(
       "Hypothesis references THIS app's category + user segment? Arabic if targetArabic?",
     "14. strategySummary: ≤400 chars? One sentence? Consultant-grade, specific, human-readable? " +
       "Covers all signal types present (review fix / market keywords / competitor / tone)?",
+    "15. strategicRationale: all three sub-fields present? References Impact % and Strategy Mode?",
+    "16. listingVariants: aggressive + growth both complete? Root fields match growth variant?",
     "If ANY item fails — rewrite the affected field. Then output the single JSON object.",
   ].join("\n");
 
-  return [identityBlock, optimizationInputsBlock, synthesisBlock, refinement, reminderBlock].join("\n");
+  return [
+    identityBlock,
+    optimizationInputsBlock,
+    keywordTrackerBlock,
+    strategyModeBlock,
+    synthesisBlock,
+    refinement,
+    reminderBlock,
+  ].join("\n");
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -703,10 +836,9 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
 
   // Token-budget enforcement
   const keywords = truncateKeywords(input.targetKeywords);
-  const exploitTargets = truncateExploitTargets(input.exploitTargets ?? []);
 
   const system = buildSystemMessage(targetArabic);
-  const user = buildUserMessage(input, keywords, exploitTargets, targetArabic);
+  const user = buildUserMessage(input, keywords, targetArabic);
 
   return { system, user };
 }

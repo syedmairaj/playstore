@@ -11,6 +11,12 @@ import {
   refundWorkspaceAiCredits,
 } from "@/lib/features/billing/wallet";
 import { recoverSentimentJson } from "@/lib/gemini/json-recovery";
+import {
+  migrateLegacyPraiseTerms,
+  normalizePraiseSignals,
+  praiseTermsFromSignals,
+  type PraiseSignal,
+} from "@/lib/competitor-spy/praise-signal-curation";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 
@@ -19,13 +25,28 @@ const CREDIT_COST = 3;
 
 const EMPTY_SENTIMENT: SentimentAnalysisResult = {
   topPraiseKeywords: [],
+  praiseSignals: [],
   reportedBugsKeywords: [],
   featureRequestsKeywords: [],
+};
+
+const PRAISE_SIGNAL_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    term: { type: SchemaType.STRING },
+    conversionImpactScore: { type: SchemaType.NUMBER },
+    classification: { type: SchemaType.STRING },
+  },
+  required: ["term", "conversionImpactScore", "classification"],
 };
 
 const SENTIMENT_RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
+    praiseSignals: {
+      type: SchemaType.ARRAY,
+      items: PRAISE_SIGNAL_SCHEMA,
+    },
     topPraiseKeywords: {
       type: SchemaType.ARRAY,
       items: { type: SchemaType.STRING },
@@ -39,7 +60,7 @@ const SENTIMENT_RESPONSE_SCHEMA = {
       items: { type: SchemaType.STRING },
     },
   },
-  required: ["topPraiseKeywords", "reportedBugsKeywords", "featureRequestsKeywords"],
+  required: ["praiseSignals", "reportedBugsKeywords", "featureRequestsKeywords"],
 };
 
 function parseSentimentFromText(jsonText: string): SentimentAnalysisResult {
@@ -51,11 +72,19 @@ function parseSentimentFromText(jsonText: string): SentimentAnalysisResult {
     .trim();
 
   try {
-    const parsed = JSON.parse(cleaned);
-    return {
+    const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+    const praiseSignals = normalizePraiseSignals({
+      praiseSignals: Array.isArray(parsed.praiseSignals)
+        ? (parsed.praiseSignals as PraiseSignal[])
+        : undefined,
       topPraiseKeywords: Array.isArray(parsed.topPraiseKeywords)
-        ? parsed.topPraiseKeywords.slice(0, 6).map(String)
-        : [],
+        ? parsed.topPraiseKeywords.map(String)
+        : undefined,
+    });
+
+    return {
+      praiseSignals,
+      topPraiseKeywords: praiseTermsFromSignals(praiseSignals),
       reportedBugsKeywords: Array.isArray(parsed.reportedBugsKeywords)
         ? parsed.reportedBugsKeywords.slice(0, 6).map(String)
         : [],
@@ -65,7 +94,15 @@ function parseSentimentFromText(jsonText: string): SentimentAnalysisResult {
     };
   } catch (parseError) {
     const recovered = recoverSentimentJson(cleaned);
-    if (recovered) return recovered;
+    if (recovered) {
+      const praiseSignals = migrateLegacyPraiseTerms(recovered.topPraiseKeywords);
+      return {
+        praiseSignals,
+        topPraiseKeywords: praiseTermsFromSignals(praiseSignals),
+        reportedBugsKeywords: recovered.reportedBugsKeywords,
+        featureRequestsKeywords: recovered.featureRequestsKeywords,
+      };
+    }
     console.error(`[${ROUTE}] JSON parse failed:`, parseError);
     return EMPTY_SENTIMENT;
   }
@@ -94,6 +131,9 @@ const bodySchema = z.object({
 });
 
 export type SentimentAnalysisResult = {
+  /** ROI-scored praise — SSOT for curation. */
+  praiseSignals: PraiseSignal[];
+  /** Derived flat list for legacy readers. */
   topPraiseKeywords: string[];
   reportedBugsKeywords: string[];
   featureRequestsKeywords: string[];
@@ -197,23 +237,31 @@ export async function POST(request: Request, context: Ctx) {
 
 Analyze the competitor app "${competitorPackageName}" in the "${countryCode}" market.${seedContext}
 
-Based on typical user review patterns and Play Store signals for this type of app, generate three curated lists:
+Return structured review intelligence with ROI scoring.
 
-1. topPraiseKeywords: 4–6 short keyword phrases (2–4 words max each) representing features or qualities users frequently praise in reviews for this competitor.
-2. reportedBugsKeywords: 4–6 short phrases representing common bugs, crashes, or pain points users report.
-3. featureRequestsKeywords: 4–6 short phrases representing features users frequently request or wish the app had.
+1. praiseSignals: 4–6 items. Each praise phrase must include:
+   - term: 2–4 words, lowercase, ASO-friendly
+   - conversionImpactScore: 0–100 (estimated install/CVR impact if we mirror this in listing)
+   - classification:
+     • "user_appreciated" = baseline hygiene users like (table stakes, low differentiation)
+     • "market_dominating" = strategic strength driving category leadership (only if conversionImpactScore ≥ 65)
+
+2. reportedBugsKeywords: 4–6 pain points (strings)
+3. featureRequestsKeywords: 4–6 requested features (strings)
 
 Rules:
-- Each item must be 1–4 words, lowercase, Play Store ASO-friendly
-- Make them specific to the app category inferred from the package name
+- Do NOT classify generic praise ("easy to use", "nice app") as market_dominating
+- market_dominating requires high conversionImpactScore (≥65) AND clear SERP/listing differentiation value
 - Do NOT repeat items across lists
-- Respond ONLY with valid JSON, no markdown, no explanation
+- Respond ONLY with valid JSON
 
 Exact JSON shape:
 {
-  "topPraiseKeywords": ["...", "..."],
-  "reportedBugsKeywords": ["...", "..."],
-  "featureRequestsKeywords": ["...", "..."]
+  "praiseSignals": [
+    { "term": "...", "conversionImpactScore": 72, "classification": "market_dominating" }
+  ],
+  "reportedBugsKeywords": ["..."],
+  "featureRequestsKeywords": ["..."]
 }`;
 
   let result: SentimentAnalysisResult = EMPTY_SENTIMENT;

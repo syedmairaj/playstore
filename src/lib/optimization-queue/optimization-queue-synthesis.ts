@@ -2,7 +2,22 @@ import type {
   OptimizationQueueItem,
   OptimizationQueueSynthesisPayload,
 } from "@/lib/optimization-queue/optimization-queue.types";
+import {
+  buildActiveContextSynthesis,
+  type ActiveContextSynthesisPayload,
+} from "@/lib/optimization-queue/build-active-context-synthesis";
 import { resolveQueueItemCategory } from "@/lib/optimization-queue/queue-routing";
+import {
+  resolveActiveContextStrategyMode,
+  topStagedIssuesByImpact,
+} from "@/lib/optimization-queue/resolve-strategy-mode";
+import {
+  readGrowthStrategyTag,
+  readImpactPercent,
+} from "@/lib/review-insights/growth-strategy-tags";
+
+export type { ClusterSynthesisPayload, ActiveContextSynthesisPayload, ActiveContextSynthesisSignal } from "@/lib/optimization-queue/build-active-context-synthesis";
+export { buildActiveContextSynthesis, activeContextHasSignals } from "@/lib/optimization-queue/build-active-context-synthesis";
 
 function metaString(meta: Record<string, unknown>, key: string): string | undefined {
   const v = meta[key];
@@ -17,10 +32,12 @@ export function buildSynthesisFromOptimizationQueue(
   items: OptimizationQueueItem[],
   seedKeywords: string[] = [],
 ): OptimizationQueueSynthesisPayload {
+  const activeContext = buildActiveContextSynthesis(items);
   const trackedKeywordSignals: OptimizationQueueSynthesisPayload["trackedKeywordSignals"] = [];
   const exploitTargets: string[] = [];
   const reviewIssueLabels: string[] = [];
   const competitorWeaknesses: string[] = [];
+  const reviewStagedSignals: OptimizationQueueSynthesisPayload["reviewStagedSignals"] = [];
   const mergedKeywordSet = new Set<string>();
 
   for (const item of items) {
@@ -28,6 +45,7 @@ export function buildSynthesisFromOptimizationQueue(
     if (!term) continue;
 
     const category = resolveQueueItemCategory(item);
+    const meta = item.metadata ?? {};
 
     switch (category) {
       case "tracker": {
@@ -35,20 +53,16 @@ export function buildSynthesisFromOptimizationQueue(
         trackedKeywordSignals.push({
           keyword: term,
           confidence:
-            typeof item.metadata.confidence === "number"
-              ? item.metadata.confidence
-              : undefined,
+            typeof meta.confidence === "number" ? meta.confidence : undefined,
           difficulty:
-            typeof item.metadata.difficulty === "number"
-              ? item.metadata.difficulty
-              : undefined,
+            typeof meta.difficulty === "number" ? meta.difficulty : undefined,
           searchVolume:
-            typeof item.metadata.searchVolume === "number"
-              ? item.metadata.searchVolume
-              : typeof item.metadata.search_volume === "number"
-                ? item.metadata.search_volume
+            typeof meta.searchVolume === "number"
+              ? meta.searchVolume
+              : typeof meta.search_volume === "number"
+                ? meta.search_volume
                 : undefined,
-          liveRankSummary: metaString(item.metadata, "liveRankSummary"),
+          liveRankSummary: metaString(meta, "liveRankSummary"),
         });
         break;
       }
@@ -60,6 +74,13 @@ export function buildSynthesisFromOptimizationQueue(
         break;
       }
       case "review": {
+        const growthStrategyTag = readGrowthStrategyTag(meta);
+        const impactPercent = readImpactPercent(meta);
+        reviewStagedSignals.push({
+          label: term,
+          impactPercent,
+          growthStrategyTag,
+        });
         reviewIssueLabels.push(term);
         break;
       }
@@ -77,28 +98,35 @@ export function buildSynthesisFromOptimizationQueue(
     if (t) mergedKeywordSet.add(t);
   }
 
+  for (const signal of activeContext.defensive) {
+    if (!competitorWeaknesses.includes(signal.label)) {
+      competitorWeaknesses.push(signal.label);
+    }
+  }
+
   const activeSignalTypes: OptimizationQueueSynthesisPayload["activeSignalTypes"] = [];
   if (trackedKeywordSignals.length > 0 || mergedKeywordSet.size > 0) {
     activeSignalTypes.push("keywords");
   }
-  if (reviewIssueLabels.length > 0) activeSignalTypes.push("reviews");
-  if (exploitTargets.length > 0) activeSignalTypes.push("market");
-  if (competitorWeaknesses.length > 0) activeSignalTypes.push("competitors");
-
-  const userInstructionParts: string[] = [];
-  if (competitorWeaknesses.length > 0) {
-    userInstructionParts.push(
-      `Tracked competitor analysis has surfaced the following active user pain-points across rival apps: ${competitorWeaknesses.join("; ")}. DO NOT mention these issues literally in the listing. Instead, aggressively position our app as the definitive solution — emphasise stability, accuracy, seamless synchronisation, and a clean ad-free experience that directly resolves each of these rival weaknesses.`,
-    );
+  if (activeContext.defensive.some((s) => s.type === "review_pain_point" || s.type === "feature_request")) {
+    activeSignalTypes.push("reviews");
+  }
+  if (activeContext.market.length > 0) activeSignalTypes.push("market");
+  if (activeContext.offensive.length > 0 || activeContext.defensive.length > 0) {
+    activeSignalTypes.push("competitors");
   }
 
   return {
+    activeContext,
     trackedKeywordSignals,
     exploitTargets,
     reviewIssueLabels,
     competitorWeaknesses,
+    reviewStagedSignals,
+    strategyMode: resolveActiveContextStrategyMode(reviewStagedSignals),
+    topStagedIssues: topStagedIssuesByImpact(reviewStagedSignals, 3),
     mergedKeywords: [...mergedKeywordSet].slice(0, 40),
     activeSignalTypes,
-    userInstructionParts,
+    userInstructionParts: [],
   };
 }
