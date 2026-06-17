@@ -53,7 +53,9 @@ export function buildSynthesisFromOptimizationQueue(
         trackedKeywordSignals.push({
           keyword: term,
           confidence:
-            typeof meta.confidence === "number" ? meta.confidence : undefined,
+            typeof meta.confidence === "number" && Number.isFinite(meta.confidence)
+              ? meta.confidence
+              : 0,
           difficulty:
             typeof meta.difficulty === "number" ? meta.difficulty : undefined,
           searchVolume:

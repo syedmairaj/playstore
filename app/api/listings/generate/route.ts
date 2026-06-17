@@ -98,6 +98,9 @@ export async function POST(request: NextRequest) {
     input = listingGenerateBodySchema.parse(body);
   } catch (e) {
     if (e instanceof ZodError) {
+      if (shouldLogGeminiDebug()) {
+        console.error("[listing-generate] validation_error", e.flatten());
+      }
       return NextResponse.json(
         {
           ok: false,
@@ -119,6 +122,7 @@ export async function POST(request: NextRequest) {
     activeSignalTypes,
     vaultLocale,
     queueHash,
+    clientQueueItemCount,
     ...listingInput
   } = input;
 
@@ -287,6 +291,7 @@ export async function POST(request: NextRequest) {
     locale: vaultLocale,
     appId: bodyAppId,
     clientQueueHash: queueHash,
+    clientQueueItemCount,
   });
 
   logActiveContextAudit(
@@ -302,6 +307,9 @@ export async function POST(request: NextRequest) {
         validation: queueHashValidation.ok ? "matched" : "mismatch",
         vaultLocale,
         vaultItemCount: queueHashValidation.itemCount,
+        ...(queueHashValidation.clientQueueItemCount != null
+          ? { clientQueueItemCount: queueHashValidation.clientQueueItemCount }
+          : {}),
       },
     }),
   );

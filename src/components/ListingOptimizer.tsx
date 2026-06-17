@@ -2678,6 +2678,8 @@ export function ListingOptimizer({
     setLoading(true);
     const queueForGeneration =
       runOptions?.queueOverride ?? optimizationQueueItems;
+    const queueForHash =
+      runOptions?.queueOverride ?? allOptimizationQueueItems;
     // Snapshot the queue before generation — used for "Optimization Factors" pills
     setGenerationQueueSnapshot(
       optimizationQueueItemsToImprovements(queueForGeneration),
@@ -2705,7 +2707,7 @@ export function ListingOptimizer({
       const mergedKeywords = queueSynthesis.mergedKeywords;
 
       const queueHash = await computeActiveContextQueueHashClient(
-        queueForGeneration,
+        queueForHash,
         locale,
       );
 
@@ -2721,7 +2723,7 @@ export function ListingOptimizer({
         targetArabic: opts.targetArabicOverride ?? locale === "ar",
         userInstruction: effectiveInstruction || undefined,
         queueSynthesis,
-        queueItemCount: queueForGeneration.length,
+        queueItemCount: queueForHash.length,
         vaultLocale: locale,
         queueHash,
       });
@@ -2737,6 +2739,8 @@ export function ListingOptimizer({
           setError(t("form.staleActiveContext"));
           void refetchOptimizationQueue();
           void refreshOptimizerContext();
+        } else if (generationResult.error.code === "validation_error") {
+          setError(t("form.validationInputError"));
         } else if (
           generationResult.status === 402 ||
           generationResult.error.code === "insufficient_credits"

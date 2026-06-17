@@ -1419,6 +1419,7 @@
       "invalidModelOutputRegenerating": "AI output was malformed. Auto-retrying with stricter formatting rules…",
       "truncatedModelOutput": "The AI response was cut off before it finished. Your credits were refunded — try again; we automatically retry with a higher output limit.",
       "staleActiveContext": "Your Active Context changed while you were editing. We refreshed your signals — review them and generate again.",
+      "validationInputError": "Some staged signals could not be sent to the generator. Refresh Active Context and try again.",
       "generateError": "Generation failed. Please try again.",
       "confirmCreditsTitle": "Use AI credits?",
       "confirmCreditsBody": "This will use {credits, plural, one {# AI credit} other {# AI credits}}. Continue?",

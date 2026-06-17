@@ -2,6 +2,10 @@ import type { OptimizationQueueSynthesisPayload } from "@/lib/optimization-queue
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { OptimizationQueueLocale } from "@/lib/optimization-queue/optimization-queue.types";
 import { logClientContextAudit } from "@/lib/client/context-audit-log-client";
+import {
+  sanitizeActiveContextForGenerate,
+  sanitizeTrackedKeywordSignalsForGenerate,
+} from "@/lib/listing/sanitize-listing-generate-payload";
 
 export type GenerateOptimizedListingSuccess = {
   ok: true;
@@ -62,6 +66,10 @@ export async function generateOptimizedListing(
 ): Promise<GenerateOptimizedListingResult> {
   const { queueSynthesis } = input;
   const effectiveInstruction = input.userInstruction?.trim();
+  const activeContext = sanitizeActiveContextForGenerate(queueSynthesis.activeContext);
+  const trackedKeywordSignals = sanitizeTrackedKeywordSignalsForGenerate(
+    queueSynthesis.trackedKeywordSignals,
+  );
 
   logClientContextAudit({
     workspaceId: input.workspaceId,
@@ -69,7 +77,7 @@ export async function generateOptimizedListing(
     queueItemCount: input.queueItemCount ?? 0,
     queueHash: input.queueHash,
     vaultLocale: input.vaultLocale,
-    synthesis: queueSynthesis,
+    synthesis: { ...queueSynthesis, activeContext, trackedKeywordSignals },
   });
 
   const res = await fetch("/api/listings/generate", {
@@ -87,11 +95,10 @@ export async function generateOptimizedListing(
       targetArabic: input.targetArabic,
       vaultLocale: input.vaultLocale,
       queueHash: input.queueHash,
+      clientQueueItemCount: input.queueItemCount ?? 0,
       ...(effectiveInstruction ? { userInstruction: effectiveInstruction } : {}),
-      activeContext: queueSynthesis.activeContext,
-      ...(queueSynthesis.trackedKeywordSignals.length > 0
-        ? { trackedKeywordSignals: queueSynthesis.trackedKeywordSignals }
-        : {}),
+      activeContext,
+      ...(trackedKeywordSignals.length > 0 ? { trackedKeywordSignals } : {}),
       strategyMode: queueSynthesis.strategyMode,
       ...(queueSynthesis.topStagedIssues.length > 0
         ? { topStagedIssues: queueSynthesis.topStagedIssues }

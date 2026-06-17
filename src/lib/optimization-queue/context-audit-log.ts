@@ -31,6 +31,7 @@ export type ContextAuditQueueHash = {
   validation: "matched" | "mismatch";
   vaultLocale: OptimizationQueueLocale;
   vaultItemCount: number;
+  clientQueueItemCount?: number;
 };
 
 export type ContextAuditSnapshot = {

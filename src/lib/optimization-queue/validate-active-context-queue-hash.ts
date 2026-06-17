@@ -11,12 +11,14 @@ export type QueueHashValidationResult =
       clientQueueHash: string;
       serverQueueHash: string;
       itemCount: number;
+      clientQueueItemCount?: number;
     }
   | {
       ok: false;
       clientQueueHash: string;
       serverQueueHash: string;
       itemCount: number;
+      clientQueueItemCount?: number;
     };
 
 export async function validateActiveContextQueueHash(
@@ -26,6 +28,7 @@ export async function validateActiveContextQueueHash(
     locale: OptimizationQueueLocale;
     appId?: string | null;
     clientQueueHash: string;
+    clientQueueItemCount?: number;
   },
 ): Promise<QueueHashValidationResult> {
   const vaultItems = await readOptimizationQueue(
@@ -40,6 +43,9 @@ export async function validateActiveContextQueueHash(
     clientQueueHash: args.clientQueueHash,
     serverQueueHash,
     itemCount: vaultItems.length,
+    ...(args.clientQueueItemCount != null
+      ? { clientQueueItemCount: args.clientQueueItemCount }
+      : {}),
   };
 
   if (serverQueueHash !== args.clientQueueHash) {

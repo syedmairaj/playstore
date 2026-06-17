@@ -69,19 +69,55 @@ describe("optimization-queue-hash", () => {
     expect(buildActiveContextQueueHashCanonical(mixed, "en")).not.toContain("تعطل");
   });
 
-  it("excludes auto-bridged review-derived rows from hash", () => {
-    const explicit = [sampleItem({ metadata: { explicitly_staged: true } })];
-    const bridged = [
-      sampleItem({
-        metadata: { review_derived: true, from_review_insights: true },
-      }),
-    ];
+  it("normalizes category and growth tags via SSOT resolvers", () => {
+    const storedCategoryOpportunity = sampleItem({
+      id: "oq-fr-1",
+      type: "feature_request",
+      category: "opportunity",
+      source: "competitor_spy",
+      content: "more recipe options",
+      metadata: { signal_cluster: "MARKET_INTEL" },
+    });
+    const withCompetitor = sampleItem({
+      id: "oq-str-1",
+      type: "competitor_strength",
+      category: "strength",
+      source: "competitor_spy",
+      content: "barcode scanner",
+      status: "ACTIVE",
+      metadata: {
+        competitor_name: "MyFitnessPal",
+        strength_class: "market_dominating",
+        conversion_impact_score: 85,
+      },
+    });
 
-    const explicitHash = computeActiveContextQueueHash(explicit, "en");
-    const bridgedHash = computeActiveContextQueueHash(bridged, "en");
-    const emptyHash = computeActiveContextQueueHash([], "en");
+    const hashA = computeActiveContextQueueHash([storedCategoryOpportunity], "en");
+    const hashB = computeActiveContextQueueHash(
+      [
+        sampleItem({
+          ...storedCategoryOpportunity,
+          category: "review",
+        }),
+      ],
+      "en",
+    );
+    expect(hashA).toBe(hashB);
 
-    expect(explicitHash).not.toBe(emptyHash);
-    expect(bridgedHash).toBe(emptyHash);
+    const hashStrength = computeActiveContextQueueHash([withCompetitor], "en");
+    const hashStrengthNoTag = computeActiveContextQueueHash(
+      [
+        sampleItem({
+          ...withCompetitor,
+          metadata: {
+            competitor_name: "MyFitnessPal",
+            strength_class: "market_dominating",
+            conversion_impact_score: 85,
+          },
+        }),
+      ],
+      "en",
+    );
+    expect(hashStrength).toBe(hashStrengthNoTag);
   });
 });

@@ -7,18 +7,35 @@ const toneStyleSchema = z.enum([
   "minimal",
 ]);
 
+function clampOptionalPercent(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function clampConfidence(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
 const activeContextSignalSchema = z.object({
   id: z.string().trim().min(1).max(120),
-  label: z.string().trim().min(1).max(200),
+  /** Matches optimization_queue MAX_CONTENT_LEN (500). */
+  label: z.string().trim().min(1).max(500),
   type: z.string().trim().min(1).max(80),
   signalCluster: z.enum(["OFFENSIVE_GROWTH", "DEFENSIVE_PAIN_POINT", "MARKET_INTEL"]),
   source: z.string().trim().max(80).optional(),
-  impactPercent: z.number().min(0).max(100).optional(),
+  impactPercent: z.preprocess(
+    clampOptionalPercent,
+    z.number().min(0).max(100).optional(),
+  ),
   growthStrategyTag: z.enum(["product_improvement", "oppositional_target"]).optional(),
   competitorName: z.string().trim().max(120).optional(),
   strengthClass: z.enum(["market_dominating", "user_appreciated"]).optional(),
   coreDifferentiator: z.boolean().optional(),
-  conversionImpactScore: z.number().min(0).max(100).optional(),
+  conversionImpactScore: z.preprocess(
+    clampOptionalPercent,
+    z.number().min(0).max(100).optional(),
+  ),
 });
 
 export const activeContextSynthesisSchema = z.object({
@@ -55,7 +72,10 @@ export const listingOptimizerRequestSchema = z.object({
     .array(
       z.object({
         keyword: z.string().trim().min(1).max(80),
-        confidence: z.number().min(0).max(100),
+        confidence: z.preprocess(
+          clampConfidence,
+          z.number().min(0).max(100),
+        ),
         difficulty: z.number().min(0).max(10).optional(),
         searchVolume: z.number().min(0).optional(),
         liveRankSummary: z.string().trim().max(120).optional(),
@@ -67,8 +87,11 @@ export const listingOptimizerRequestSchema = z.object({
   topStagedIssues: z
     .array(
       z.object({
-        label: z.string().trim().min(1).max(200),
-        impactPercent: z.number().min(0).max(100).optional(),
+        label: z.string().trim().min(1).max(500),
+        impactPercent: z.preprocess(
+          clampOptionalPercent,
+          z.number().min(0).max(100).optional(),
+        ),
         growthStrategyTag: z.enum(["product_improvement", "oppositional_target"]),
       }),
     )

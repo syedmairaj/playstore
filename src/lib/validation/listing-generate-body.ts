@@ -18,4 +18,6 @@ export const listingGenerateBodySchema = listingOptimizerRequestSchema.extend({
   vaultLocale: z.enum(["en", "ar"]),
   /** SHA-256 of canonical Active Context queue — must match server vault before debit. */
   queueHash: z.string().regex(/^[a-f0-9]{64}$/),
+  /** Client vault row count at hash time — diagnostics for hash mismatch audits. */
+  clientQueueItemCount: z.number().int().min(0).max(100).optional(),
 });
