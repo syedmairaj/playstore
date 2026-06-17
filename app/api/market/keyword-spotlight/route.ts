@@ -5,6 +5,7 @@ import {
   generateContentValidated,
   isModelGatewayError,
 } from "@/lib/ai/modelGateway";
+import { checkFinishReason } from "@/lib/ai/extract-model-text";
 import {
   AI_CREDIT_COSTS,
   buildInsufficientAiCreditsPayload,
@@ -24,6 +25,14 @@ import type {
   LegacyKeywordSpotlightResult,
   MarketIntelligenceReport,
 } from "@/lib/market/market-intel-signal-types";
+import {
+  KEYWORD_SPOTLIGHT_GENERATION_CONFIG,
+  KEYWORD_SPOTLIGHT_MAX_OUTPUT_TOKENS,
+} from "@/lib/market/spotlight-generation-config";
+import {
+  parseSpotlightJson,
+  SpotlightJsonParseError,
+} from "@/lib/market/parse-spotlight-json";
 
 const ROUTE = "POST /api/market/keyword-spotlight";
 const CREDIT_COST = AI_CREDIT_COSTS.market_keyword_spotlight;
@@ -98,18 +107,6 @@ type RequestBody = {
   ownAppId?: string | null;
 };
 
-function stripJsonFences(text: string): string {
-  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-}
-
-function parseSpotlightJson(text: string): RawCategorizedSpotlightModel {
-  const parsed = JSON.parse(stripJsonFences(text)) as RawCategorizedSpotlightModel;
-  if (!Array.isArray(parsed.growthKeywords)) {
-    throw new Error("Unexpected response shape from model");
-  }
-  return parsed;
-}
-
 function toChartApps(
   apps: Pick<TopChartApp, "appId" | "title" | "summary">[],
 ): ChartAppForThreats[] {
@@ -119,6 +116,27 @@ function toChartApps(
     summary: app.summary,
     rank: index + 1,
   }));
+}
+
+function reportHasSignals(report: MarketIntelligenceReport): boolean {
+  return (
+    report.growthKeywords.length > 0 ||
+    report.competitorThreats.length > 0 ||
+    report.uxSentimentInsights.length > 0
+  );
+}
+
+async function refundSpotlightCredits(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ledgerId: string,
+  userId: string,
+  reason: string,
+) {
+  await refundWorkspaceAiCredits(supabase, {
+    ledgerId,
+    userId,
+    reason,
+  });
 }
 
 export async function POST(request: Request) {
@@ -257,28 +275,24 @@ CRITICAL: Output strictly valid JSON only. No markdown fences, no commentary, no
   let result: MarketIntelligenceReport;
 
   try {
-    const { text, correlationId: modelCorrelationId, provider } = await generateContentValidated({
+    const { text, correlationId: modelCorrelationId, provider, result: genResult } =
+      await generateContentValidated({
       correlationId,
       modelConfig: {
-        temperature: 0.4,
-        topP: 0.9,
-        maxOutputTokens: 512,
-        responseMimeType: "application/json",
+        ...KEYWORD_SPOTLIGHT_GENERATION_CONFIG,
         responseSchema: SPOTLIGHT_RESPONSE_SCHEMA,
       },
       request: {
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.4,
-          topP: 0.9,
-          maxOutputTokens: 512,
-          responseMimeType: "application/json",
+          ...KEYWORD_SPOTLIGHT_GENERATION_CONFIG,
           responseSchema: SPOTLIGHT_RESPONSE_SCHEMA,
-          // @ts-expect-error — thinkingConfig valid for Gemini 2.5 Flash on Vertex
-          thinkingConfig: { thinkingBudget: 0 },
         },
       },
     });
+
+    const finish = checkFinishReason(genResult);
+    const outputTruncated = finish.truncated;
 
     console.info(`[${ROUTE}] AI spotlight generated`, {
       correlationId: modelCorrelationId,
@@ -286,20 +300,89 @@ CRITICAL: Output strictly valid JSON only. No markdown fences, no commentary, no
       workspaceId,
       category,
       country,
+      maxOutputTokens: KEYWORD_SPOTLIGHT_MAX_OUTPUT_TOKENS,
+      finishReason: finish.finishReason ?? "STOP",
+      outputTruncated,
+      textLength: text.length,
     });
 
-    const raw = parseSpotlightJson(text);
+    let parsedModel: RawCategorizedSpotlightModel;
+    let jsonRepaired = false;
+
+    try {
+      const parsed = parseSpotlightJson(text);
+      parsedModel = parsed.model;
+      jsonRepaired = parsed.jsonRepaired;
+    } catch (parseErr) {
+      if (parseErr instanceof SpotlightJsonParseError) {
+        throw parseErr;
+      }
+      if (parseErr instanceof SyntaxError) {
+        throw new SpotlightJsonParseError(parseErr.message, true);
+      }
+      throw parseErr;
+    }
+
     result = buildMarketIntelligenceReport(
-      raw,
+      parsedModel,
       { category, country, ownAppId: ownAppId ?? null },
       chartApps,
     );
-  } catch (err) {
-    await refundWorkspaceAiCredits(supabase, {
-      ledgerId,
-      userId: user.id,
-      reason: "AI Keyword Spotlight generation failed",
+
+    if (!reportHasSignals(result)) {
+      throw new SpotlightJsonParseError(
+        "Spotlight JSON parsed but contained no usable signals.",
+        jsonRepaired,
+      );
+    }
+
+    const partial = outputTruncated || jsonRepaired;
+
+    return NextResponse.json({
+      ok: true,
+      report: result,
+      /** @deprecated — use report */
+      spotlight: result,
+      partial: partial || undefined,
+      warning: partial
+        ? {
+            code: "partial_analysis",
+            message:
+              "Analysis completed with partial data — some signals may be missing because the AI response was truncated. Review results before staging.",
+          }
+        : undefined,
+      creditsUsed: CREDIT_COST,
+      creditsRemaining: remaining - CREDIT_COST,
+      correlationId: modelCorrelationId,
     });
+  } catch (err) {
+    await refundSpotlightCredits(
+      supabase,
+      ledgerId,
+      user.id,
+      "AI Keyword Spotlight generation failed",
+    );
+
+    if (err instanceof SpotlightJsonParseError) {
+      console.error(`[${ROUTE}] Spotlight JSON parse error`, {
+        correlationId,
+        message: err.message,
+        jsonRepaired: err.repairedAttempted,
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: "spotlight_parse_failed",
+            message:
+              "Could not parse the AI spotlight response. Your credits have been refunded — try again.",
+          },
+          correlationId,
+        },
+        { status: 422 },
+      );
+    }
 
     if (isModelGatewayError(err)) {
       console.error(`[${ROUTE}] ModelGatewayError`, {
@@ -313,38 +396,44 @@ CRITICAL: Output strictly valid JSON only. No markdown fences, no commentary, no
       return NextResponse.json(
         {
           ok: false,
-          error: "AI_GENERATION_FAILED",
-          message:
-            err.code === "AI_RESPONSE_BLOCKED"
-              ? "AI analysis was blocked by safety filters. Your credits have been refunded."
-              : "Could not generate market spotlight. Your credits have been refunded.",
+          error: {
+            code:
+              err.code === "AI_RESPONSE_BLOCKED"
+                ? "spotlight_blocked"
+                : "spotlight_generation_failed",
+            message:
+              err.code === "AI_RESPONSE_BLOCKED"
+                ? "AI analysis was blocked by safety filters. Your credits have been refunded."
+                : "Could not generate market spotlight. Your credits have been refunded.",
+          },
           correlationId: err.correlationId,
         },
-        { status: err.httpStatus >= 500 ? err.httpStatus : 502 },
+        { status: err.httpStatus >= 500 ? 503 : 422 },
       );
     }
 
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[${ROUTE}] Spotlight parse/generation error`, { correlationId, message });
+    const isJsonError =
+      err instanceof SyntaxError || /JSON|Unexpected token|Unterminated/i.test(message);
+
+    console.error(`[${ROUTE}] Spotlight generation error`, {
+      correlationId,
+      message,
+      isJsonError,
+    });
 
     return NextResponse.json(
       {
         ok: false,
-        error: "AI_GENERATION_FAILED",
-        message: "Could not generate spotlight. Your credits have been refunded.",
+        error: {
+          code: isJsonError ? "spotlight_parse_failed" : "spotlight_generation_failed",
+          message: isJsonError
+            ? "Could not parse the AI spotlight response. Your credits have been refunded — try again."
+            : "Could not generate spotlight. Your credits have been refunded.",
+        },
         correlationId,
       },
-      { status: 502 },
+      { status: 422 },
     );
   }
-
-  return NextResponse.json({
-    ok: true,
-    report: result,
-    /** @deprecated — use report */
-    spotlight: result,
-    creditsUsed: CREDIT_COST,
-    creditsRemaining: remaining - CREDIT_COST,
-    correlationId,
-  });
 }

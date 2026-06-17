@@ -34,7 +34,7 @@ export function checkFinishReason(
     return { ok: true, finishReason: finishReason || undefined };
   }
 
-  if (finishReason === "MAX_TOKENS") {
+  if (finishReason === "MAX_TOKENS" || finishReason === "LENGTH") {
     return { ok: false, finishReason, blocked: false, truncated: true };
   }
 

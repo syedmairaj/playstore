@@ -19,7 +19,7 @@ import type {
   ChipDisplayOptions,
 } from "@/lib/client/staging-workspace-types";
 
-const PILLAR_ROW_H = 28;
+import { ACTIVE_CONTEXT_ROW_MIN_HEIGHT } from "@/components/staging-workspace/active-context-tokens";
 
 const pillarIcons = {
   AlertTriangle,
@@ -129,7 +129,7 @@ export default function StagingWorkspacePillar({
           <ActiveContextSlotEmpty message={tSlot("noActiveSignals")} isRtl={isRtl} />
         )
       ) : (
-        <ActiveContextSignalList rowHeight={PILLAR_ROW_H}>
+        <ActiveContextSignalList rowHeight={ACTIVE_CONTEXT_ROW_MIN_HEIGHT}>
           {pillar.signals.map((signal) => (
             <StagingSignalChipRow
               key={
@@ -140,6 +140,7 @@ export default function StagingWorkspacePillar({
               signal={signal}
               locale={resolvedLocale}
               isRtl={isRtl}
+              isStaged
               isRemoving={removingId === signal.id}
               onRemove={
                 chipDisplayOptions.showRemoveButton ? handleRemove : () => Promise.resolve()

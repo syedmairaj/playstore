@@ -14,4 +14,8 @@ export const listingGenerateBodySchema = listingOptimizerRequestSchema.extend({
     .array(z.enum(["reviews", "market", "competitors", "keywords"]))
     .max(4)
     .optional(),
+  /** Vault locale branch used for Active Context queue hash verification. */
+  vaultLocale: z.enum(["en", "ar"]),
+  /** SHA-256 of canonical Active Context queue — must match server vault before debit. */
+  queueHash: z.string().regex(/^[a-f0-9]{64}$/),
 });

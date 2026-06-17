@@ -128,6 +128,7 @@ import {
   patchOptimizationQueueStore,
 } from "@/lib/client/optimization-queue-store";
 import { buildSynthesisFromOptimizationQueue } from "@/lib/optimization-queue";
+import { computeActiveContextQueueHashClient } from "@/lib/optimization-queue/optimization-queue-hash-client";
 import { pickTopAutoStageInsightInputs } from "@/lib/optimization-queue/auto-stage-top-insights";
 import type { OptimizationQueueItem } from "@/lib/optimization-queue";
 import { filterQueueForActiveContextDisplay } from "@/lib/competitor-spy/strength-audit-ssot";
@@ -153,6 +154,7 @@ import {
   adoptPendingInsightClient,
   dismissPendingInsightClient,
   fetchReviewCurationInsights,
+  type ReviewCurationResponse,
 } from "@/lib/client/review-derived-insights-client";
 import { cn } from "@/lib/utils";
 
@@ -637,6 +639,7 @@ export function ListingOptimizer({
   const [keywords, setKeywords] = useState("");
   const [features, setFeatures] = useState("");
   const [adoptingInsightId, setAdoptingInsightId] = useState<string | null>(null);
+  const [removingInsightId, setRemovingInsightId] = useState<string | null>(null);
   const [toneStyle, setToneStyle] = useState<ToneStyle>("professional");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1613,6 +1616,75 @@ export function ListingOptimizer({
       });
     },
     [],
+  );
+
+  const handleUnstageReviewInsight = useCallback(
+    async (insight: import("@/lib/review-insights/pending-insights.types").PendingReviewInsight) => {
+      const queueItemId = insight.queueItemId ?? insight.id;
+      const reviewKey = REVIEW_DERIVED_INSIGHTS_KEY(
+        workspaceId,
+        locale,
+        resolvedAppId ?? null,
+      );
+      const previousReview = queryClient.getQueryData<ReviewCurationResponse>(reviewKey);
+
+      setRemovingInsightId(insight.id);
+
+      queryClient.setQueryData<ReviewCurationResponse>(reviewKey, (prev) => {
+        if (!prev) return prev;
+        const removed = prev.adoptedInsights.find(
+          (row) => row.id === insight.id || row.queueItemId === queueItemId,
+        );
+        return {
+          ...prev,
+          adoptedInsights: prev.adoptedInsights.filter(
+            (row) => row.id !== insight.id && row.queueItemId !== queueItemId,
+          ),
+          pendingInsights:
+            removed && removed.status === "adopted"
+              ? prev.pendingInsights.some((row) => row.id === removed.id)
+                ? prev.pendingInsights
+                : [
+                    ...prev.pendingInsights,
+                    {
+                      ...removed,
+                      status: "pending" as const,
+                      queueItemId: null,
+                    },
+                  ]
+              : prev.pendingInsights,
+        };
+      });
+
+      try {
+        await removeQueueItem(queueItemId);
+        showActiveContextRemovedToast(
+          t("activeContext.removeReviewToast"),
+          `active-context-removed-review-${queueItemId}`,
+        );
+        await Promise.all([refetchReviewDerived(), refreshOptimizerContext()]);
+      } catch {
+        if (previousReview) {
+          queryClient.setQueryData(reviewKey, previousReview);
+        }
+        toast.error(t("activeContext.removeFromContextFailed"), {
+          position: ACTIVE_CONTEXT_TOAST_POSITION,
+        });
+      } finally {
+        setRemovingInsightId(null);
+      }
+    },
+    [
+      workspaceId,
+      locale,
+      resolvedAppId,
+      queryClient,
+      removeQueueItem,
+      showActiveContextRemovedToast,
+      refetchReviewDerived,
+      refreshOptimizerContext,
+      t,
+    ],
   );
 
   const handleRemoveFromStagingVault = useCallback(
@@ -2632,6 +2704,11 @@ export function ListingOptimizer({
 
       const mergedKeywords = queueSynthesis.mergedKeywords;
 
+      const queueHash = await computeActiveContextQueueHashClient(
+        queueForGeneration,
+        locale,
+      );
+
       const generationResult = await generateOptimizedListing({
         workspaceId,
         appId: selectedAppId.trim() || undefined,
@@ -2644,6 +2721,9 @@ export function ListingOptimizer({
         targetArabic: opts.targetArabicOverride ?? locale === "ar",
         userInstruction: effectiveInstruction || undefined,
         queueSynthesis,
+        queueItemCount: queueForGeneration.length,
+        vaultLocale: locale,
+        queueHash,
       });
       toast.dismiss(runToastId);
       if (!generationResult.ok) {
@@ -2651,6 +2731,12 @@ export function ListingOptimizer({
           setError(t("form.signInError"));
         } else if (generationResult.error.code === "duplicate_request") {
           return;
+        } else if (generationResult.error.code === "truncated_model_output") {
+          setError(t("form.truncatedModelOutput"));
+        } else if (generationResult.error.code === "stale_active_context") {
+          setError(t("form.staleActiveContext"));
+          void refetchOptimizationQueue();
+          void refreshOptimizerContext();
         } else if (
           generationResult.status === 402 ||
           generationResult.error.code === "insufficient_credits"
@@ -3901,8 +3987,10 @@ export function ListingOptimizer({
                           gateValid={reviewGateValid}
                           analysisStatus={reviewAnalysisStatus}
                           adoptingId={adoptingInsightId}
+                          removingId={removingInsightId}
                           onDismiss={(id) => void handleDismissPendingInsight(id)}
                           onAdopt={(insight) => void handleAdoptReviewInsight(insight)}
+                          onUnstage={(insight) => void handleUnstageReviewInsight(insight)}
                         />
                       }
                       onArchiveReviewIssue={(id, title) => {

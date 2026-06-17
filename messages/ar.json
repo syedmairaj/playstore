@@ -1723,7 +1723,16 @@
       "slotDescription": "← نقاط ألم المستخدم تُنسج في الوصف + ما هو جديد"
     },
     "activeContext": {
-      "unifiedStackHint": "يُعرض متتبع الكلمات ورؤى المراجعات وإشارات السوق معًا — انقر × لإزالة أي إشارة.",
+      "unifiedStackHint": "نسّق استراتيجيتك — أضف إشارات عبر نمو الكلمات ورفع التحويل والدفاع التنافسي لتشكيل قائمتك التالية.",
+      "legacyStackHint": "نسّق استراتيجيتك — استخدم + لإضافة الرؤى و× لضبط ما هو نشط.",
+      "strategicPillarKeywordGrowth": "نمو الكلمات",
+      "strategicPillarKeywordGrowthDesc": "كلمات عالية النية وفرص ترتيب توسّع قابلية الاكتشاف.",
+      "strategicPillarConversionUplift": "رفع التحويل",
+      "strategicPillarConversionUpliftDesc": "نقاط ألم ومشاعر من المراجعات تحسّن تحويل التثبيت.",
+      "strategicPillarCompetitiveDefense": "الدفاع التنافسي",
+      "strategicPillarCompetitiveDefenseDesc": "ذكاء السوق ونقاط قوة المنافس التي تُحكّم التموضع.",
+      "stagedBadge": "مُدرَج",
+      "stageSignal": "إضافة إشارة",
       "keywordTracker": "متتبع الكلمات",
       "keywordTrackerHelp": "كلمات عالية النية مع درجات الصعوبة وتقديرات حجم البحث وبيانات الترتيب الحي — تُعطى أولوية لتحسين العنوان والوصف.",
       "keywordTrackerModuleTip": "أضف الكلمات عالية النية هنا لترجيح العنوان والأوصاف نحو مصطلحات يمكنك الترتيب لها.",
@@ -1753,6 +1762,7 @@
       "keywordTrackerRemoved": "تمت إزالة \"{keyword}\" من متتبع الكلمات",
       "keywordTrackerRemoveFailed": "فشلت الإزالة",
       "removeMarketToast": "أُزيلت إشارة ذكاء السوق من السياق النشط",
+      "removeReviewToast": "أُزيلت رؤية المراجعة من السياق النشط",
       "removeCompetitorToast": "أُزيلت إشارة المنافس من السياق النشط",
       "removeFromContextFailed": "تعذّرت إزالة هذه الإشارة. أعد المحاولة.",
       "removeKeyword": "إزالة {keyword}",
@@ -1836,6 +1846,8 @@
       "generateSuccessToast": "تم إنشاء القائمة بنجاح!",
       "generateSuccessToastSaved": "تم توليد القائمة وحفظها",
       "invalidModelOutputRegenerating": "كان مخرج الذكاء الاصطناعي غير مكتمل. جارٍ إعادة المحاولة تلقائياً بقواعد تنسيق أشد…",
+      "truncatedModelOutput": "توقّف رد الذكاء الاصطناعي قبل اكتماله. أُعيدت أرصدتك — أعد المحاولة؛ نعيد التوليد تلقائياً بحد مخرجات أعلى.",
+      "staleActiveContext": "تغيّر السياق النشط أثناء التحرير. حدّثنا إشاراتك — راجعها ثم أعد التوليد.",
       "generateError": "فشل الإنشاء. يرجى المحاولة مرة أخرى.",
       "confirmCreditsTitle": "استخدام أرصدة الذكاء الاصطناعي؟",
       "confirmCreditsBody": "سيتم استخدام {credits, plural, one {رصيد # من ذكاء اصطناعي} other {# أرصدة ذكاء اصطناعي}}. هل تريد المتابعة؟",
@@ -2719,7 +2731,10 @@
       "stageSuccess": "تمت إضافة {count, plural, one {إشارة واحدة} other {# إشارات}} إلى السياق النشط",
       "stageAlreadyAll": "الإشارات المحددة موجودة بالفعل في السياق النشط",
       "stageError": "تعذّرت إضافة الإشارات. حاول مرة أخرى.",
-      "allStaged": "جميع الإشارات القابلة للتنفيذ في السياق النشط"
+      "allStaged": "جميع الإشارات القابلة للتنفيذ في السياق النشط",
+      "partialAnalysis": "اكتمل التحليل ببيانات جزئية — قد تكون بعض الإشارات ناقصة. راجع النتائج قبل الإضافة إلى السياق النشط.",
+      "parseFailedRefund": "تعذّر تحليل استجابة الذكاء الاصطناعي. أُعيدت أرصدتك — أعد المحاولة.",
+      "generationFailedRefund": "تعذّر توليد البؤرة. أُعيدت أرصدتك."
     }
   },
   "screenshotStudio": {

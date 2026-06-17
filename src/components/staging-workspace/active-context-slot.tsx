@@ -145,7 +145,7 @@ export function ActiveContextSlotEmpty({
   return (
     <p
       className={cn(
-        "py-1 text-[11px] leading-relaxed text-white/28",
+        "py-2 text-[11px] leading-relaxed text-white/28",
         isRtl ? "text-right font-arabic" : "text-left",
       )}
     >

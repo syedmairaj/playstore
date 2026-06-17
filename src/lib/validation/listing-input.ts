@@ -16,6 +16,9 @@ const activeContextSignalSchema = z.object({
   impactPercent: z.number().min(0).max(100).optional(),
   growthStrategyTag: z.enum(["product_improvement", "oppositional_target"]).optional(),
   competitorName: z.string().trim().max(120).optional(),
+  strengthClass: z.enum(["market_dominating", "user_appreciated"]).optional(),
+  coreDifferentiator: z.boolean().optional(),
+  conversionImpactScore: z.number().min(0).max(100).optional(),
 });
 
 export const activeContextSynthesisSchema = z.object({

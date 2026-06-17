@@ -21,7 +21,7 @@ import {
   type VaultLocale,
 } from "@/hooks/useOptimizerSync";
 
-const ROW_H = 28;
+import { ACTIVE_CONTEXT_ROW_MIN_HEIGHT } from "@/components/staging-workspace/active-context-tokens";
 
 export interface KeywordTrackerPanelProps {
   workspaceId: string;
@@ -134,7 +134,7 @@ export default function KeywordTrackerPanel({
             isRtl={isRtl}
           />
         ) : (
-          <ActiveContextSignalList rowHeight={ROW_H}>
+          <ActiveContextSignalList rowHeight={ACTIVE_CONTEXT_ROW_MIN_HEIGHT}>
             {sortedSignals.map((signal) => {
               const chip = keywordSignalToChipRowProps(
                 signal,
@@ -148,7 +148,8 @@ export default function KeywordTrackerPanel({
                   tags={chip.tags}
                   sourceTooltip={chip.sourceTooltip}
                   isRtl={isRtl}
-                  minHeight={ROW_H}
+                  isStaged
+                  minHeight={ACTIVE_CONTEXT_ROW_MIN_HEIGHT}
                   isRemoving={removingKeyword === signal.keyword}
                   removeLabel={t("removeKeyword", { keyword: signal.keyword })}
                   onRowClick={() => onOpenValidator(signal.keyword, signal)}

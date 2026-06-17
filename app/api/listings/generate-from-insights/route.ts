@@ -445,7 +445,14 @@ export async function POST(request: NextRequest) {
 
     if (e instanceof InvalidModelOutputError) {
       return NextResponse.json(
-        { ok: false, error: { code: "invalid_model_output", message: e.message } },
+        {
+          ok: false,
+          error: {
+            code: e.apiErrorCode,
+            message: e.message,
+            truncated: e.truncated ? true : undefined,
+          },
+        },
         { status: 422 },
       );
     }

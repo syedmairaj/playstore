@@ -1,13 +1,13 @@
 /** Premium Active Context tokens — sectional gravity, card-less structure. */
 
-/** Gap from previous section's last row to this zone's rule (32px). */
-export const ACTIVE_CONTEXT_SECTION_ZONE_GAP = "mt-8";
+/** Gap from previous section's last row to this zone's rule (40px). */
+export const ACTIVE_CONTEXT_SECTION_ZONE_GAP = "mt-10";
 
 /** 1px structural anchor between modules. */
 export const ACTIVE_CONTEXT_SECTION_ZONE_RULE = "border-t border-[#2a2a2a]";
 
-/** Space from rule to section header title unit (20px). */
-export const ACTIVE_CONTEXT_SECTION_ZONE_HEADER_PAD = "pt-5";
+/** Space from rule to section header title unit (24px). */
+export const ACTIVE_CONTEXT_SECTION_ZONE_HEADER_PAD = "pt-6";
 
 /** Combined zone opener — rule + header breathing room after prior section. */
 export const ACTIVE_CONTEXT_SECTION_ZONE = [
@@ -29,10 +29,16 @@ export const ACTIVE_CONTEXT_DESCRIPTION_CLASS =
 export const ACTIVE_CONTEXT_TITLE_UNIT_GAP = "mt-1.5";
 
 /** Header unit → signal list. */
-export const ACTIVE_CONTEXT_HEADER_UNIT_BOTTOM = "mb-3";
+export const ACTIVE_CONTEXT_HEADER_UNIT_BOTTOM = "mb-4";
+
+/** Default row height for premium spacing in signal lists. */
+export const ACTIVE_CONTEXT_ROW_MIN_HEIGHT = 40;
+
+/** Extra vertical gap baked into scroll max-height per row. */
+export const ACTIVE_CONTEXT_ROW_GAP = 8;
 
 export const ACTIVE_CONTEXT_ROW_HOVER =
-  "rounded-md transition-all duration-200 ease-out hover:bg-white/[0.035]";
+  "rounded-lg transition-all duration-300 ease-out hover:bg-white/[0.04]";
 
 export const ACTIVE_CONTEXT_ROW_DIVIDER = "border-b border-white/[0.04]";
 

@@ -1721,7 +1721,16 @@
       "slotDescription": "→ user pain points woven into description + what's new"
     },
     "activeContext": {
-      "unifiedStackHint": "Keyword Tracker, Review Insights, and Market Intelligence appear below — click × to remove any signal.",
+      "unifiedStackHint": "Curate your strategy — stage signals across Keyword Growth, Conversion Uplift, and Competitive Defense to shape your next listing.",
+      "legacyStackHint": "Curate your strategy — toggle + to stage insights and × to refine what's active.",
+      "strategicPillarKeywordGrowth": "Keyword Growth",
+      "strategicPillarKeywordGrowthDesc": "High-intent keywords and rank opportunities that expand discoverability.",
+      "strategicPillarConversionUplift": "Conversion Uplift",
+      "strategicPillarConversionUpliftDesc": "Review-derived pain points and sentiment signals that improve install conversion.",
+      "strategicPillarCompetitiveDefense": "Competitive Defense",
+      "strategicPillarCompetitiveDefenseDesc": "Market intel and competitor strengths that sharpen positioning.",
+      "stagedBadge": "Staged",
+      "stageSignal": "Stage signal",
       "keywordTracker": "Keyword Tracker",
       "keywordTrackerHelp": "High-intent keywords with difficulty scores, search volume estimates, and live rank data — prioritized for title and description optimization.",
       "keywordTrackerModuleTip": "Stage high-intent keywords here to weight your title and descriptions toward terms you can rank for.",
@@ -1751,6 +1760,7 @@
       "keywordTrackerRemoved": "Removed \"{keyword}\" from Keyword Tracker",
       "keywordTrackerRemoveFailed": "Removal failed",
       "removeMarketToast": "Market Intelligence signal removed from Active Context",
+      "removeReviewToast": "Review insight removed from Active Context",
       "removeCompetitorToast": "Competitor signal removed from Active Context",
       "removeFromContextFailed": "Could not remove this signal. Try again.",
       "removeKeyword": "Remove {keyword}",
@@ -1834,6 +1844,8 @@
       "generateSuccessToast": "Listing generated successfully!",
       "generateSuccessToastSaved": "Listing generated and saved",
       "invalidModelOutputRegenerating": "AI output was malformed. Auto-retrying with stricter formatting rules…",
+      "truncatedModelOutput": "The AI response was cut off before it finished. Your credits were refunded — try again; we automatically retry with a higher output limit.",
+      "staleActiveContext": "Your Active Context changed while you were editing. We refreshed your signals — review them and generate again.",
       "generateError": "Generation failed. Please try again.",
       "confirmCreditsTitle": "Use AI credits?",
       "confirmCreditsBody": "This will use {credits, plural, one {# AI credit} other {# AI credits}}. Continue?",
@@ -2717,7 +2729,10 @@
       "stageSuccess": "{count, plural, one {# signal staged} other {# signals staged}} to Active Context",
       "stageAlreadyAll": "Selected signals are already in Active Context",
       "stageError": "Could not stage signals. Try again.",
-      "allStaged": "All actionable signals are in Active Context"
+      "allStaged": "All actionable signals are in Active Context",
+      "partialAnalysis": "Analysis completed with partial data — some signals may be missing. Review results before staging.",
+      "parseFailedRefund": "Could not parse the AI spotlight response. Your credits have been refunded — try again.",
+      "generationFailedRefund": "Could not generate spotlight. Your credits have been refunded."
     }
   },
   "screenshotStudio": {

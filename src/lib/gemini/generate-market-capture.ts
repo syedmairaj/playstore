@@ -1,7 +1,9 @@
 import "server-only";
 import { SchemaType } from "@/lib/ai/schema-types";
+import { checkFinishReason, extractText, isBlockedFinishReason } from "@/lib/ai/extract-model-text";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import { parseGeminiJsonText } from "@/lib/gemini/parse-gemini-json-response";
 import {
   assembleMarketCaptureReport,
 } from "@/lib/market-capture/market-capture-engine";
@@ -57,27 +59,52 @@ export async function generateMarketCaptureWithGemini(
       responseSchema: MARKET_CAPTURE_RESPONSE_SCHEMA,
       temperature: 0.35,
       topP: 0.95,
-      maxOutputTokens: 8192,
+      maxOutputTokens: 16_384,
     },
   });
 
-  const rawText = result.text?.trim() ?? "";
-  if (!rawText) {
-    throw new InvalidModelOutputError("Market Capture model returned empty response.");
+  const finish = checkFinishReason(result);
+  const finishReason = finish.finishReason;
+  const truncated = finish.truncated;
+
+  if (!finish.ok && finish.blocked && isBlockedFinishReason(finishReason)) {
+    throw new InvalidModelOutputError(
+      `Market Capture model response blocked (${finishReason ?? "unknown"}).`,
+      { finishReason },
+    );
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    throw new InvalidModelOutputError("Market Capture model returned malformed JSON.");
+  if (truncated) {
+    console.warn("[market-capture] Output truncated — attempting JSON recovery", {
+      finishReason,
+    });
   }
+
+  const rawText = extractText(result);
+  if (!rawText.trim()) {
+    throw new InvalidModelOutputError("Market Capture model returned empty response.", {
+      truncated,
+      finishReason,
+    });
+  }
+
+  const jsonParse = parseGeminiJsonText(rawText, { truncated, finishReason });
+  if (!jsonParse.ok) {
+    throw new InvalidModelOutputError(
+      jsonParse.reason === "truncated"
+        ? "Market Capture output was truncated mid-JSON."
+        : "Market Capture model returned malformed JSON.",
+      { truncated: jsonParse.reason === "truncated", finishReason },
+    );
+  }
+
+  const parsed = jsonParse.value;
 
   const validated = marketCaptureModelOutputSchema.safeParse(parsed);
   if (!validated.success) {
     throw new InvalidModelOutputError(
       "Market Capture output failed schema validation.",
-      validated.error,
+      { zodError: validated.error, truncated, finishReason },
     );
   }
 
