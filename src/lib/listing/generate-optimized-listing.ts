@@ -1,5 +1,7 @@
 import type { OptimizationQueueSynthesisPayload } from "@/lib/optimization-queue";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
+import type { OptimizationQueueLocale } from "@/lib/optimization-queue/optimization-queue.types";
+import { logClientContextAudit } from "@/lib/client/context-audit-log-client";
 
 export type GenerateOptimizedListingSuccess = {
   ok: true;
@@ -45,6 +47,10 @@ export type GenerateOptimizedListingInput = {
   targetArabic: boolean;
   userInstruction?: string;
   queueSynthesis: OptimizationQueueSynthesisPayload;
+  /** Vault row count at synthesis time — for Context Audit only. */
+  queueItemCount?: number;
+  vaultLocale: OptimizationQueueLocale;
+  queueHash: string;
 };
 
 /**
@@ -56,6 +62,15 @@ export async function generateOptimizedListing(
 ): Promise<GenerateOptimizedListingResult> {
   const { queueSynthesis } = input;
   const effectiveInstruction = input.userInstruction?.trim();
+
+  logClientContextAudit({
+    workspaceId: input.workspaceId,
+    appId: input.appId,
+    queueItemCount: input.queueItemCount ?? 0,
+    queueHash: input.queueHash,
+    vaultLocale: input.vaultLocale,
+    synthesis: queueSynthesis,
+  });
 
   const res = await fetch("/api/listings/generate", {
     method: "POST",
@@ -70,6 +85,8 @@ export async function generateOptimizedListing(
       appFeatures: input.appFeatures,
       toneStyle: input.toneStyle,
       targetArabic: input.targetArabic,
+      vaultLocale: input.vaultLocale,
+      queueHash: input.queueHash,
       ...(effectiveInstruction ? { userInstruction: effectiveInstruction } : {}),
       activeContext: queueSynthesis.activeContext,
       ...(queueSynthesis.trackedKeywordSignals.length > 0

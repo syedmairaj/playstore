@@ -3,6 +3,7 @@ import { SchemaType } from "@/lib/ai/schema-types";
 import { clampListingGenerationParsed } from "@/lib/gemini/clamp-listing-generation-parsed";
 import type { ClampListingResult } from "@/lib/gemini/clamp-listing-generation-parsed";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
+import { checkFinishReason, extractText, isBlockedFinishReason } from "@/lib/ai/extract-model-text";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
   normalizeListingGenerationParsed,
@@ -13,11 +14,19 @@ import {
 } from "@/lib/prompts/listing-optimizer";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 import {
+  parseGeminiJsonText,
+} from "@/lib/gemini/parse-gemini-json-response";
+import {
   listingGenerationCoreSchema,
   listingGenerationOutputSchema,
   tryParseListingAsoBundle,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
+
+/** Headroom for full listing JSON (core + v11 variants + Arabic copy). */
+const LISTING_MAX_OUTPUT_TOKENS = 32_768;
+/** Second attempt after MAX_TOKENS — maximum practical ceiling for gemini-2.5-flash. */
+const LISTING_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS = 65_536;
 
 type ListingVariantFields = {
   title: string;
@@ -229,10 +238,17 @@ export type GenerateListingWithGeminiResult = {
 };
 
 // ── Core generation (single attempt) ─────────────────────────────────────────
+type AttemptGenerationOptions = {
+  isRetry: boolean;
+  /** Raised token ceiling when the prior attempt hit MAX_TOKENS. */
+  afterTruncation?: boolean;
+};
+
 async function attemptGeneration(
   input: ListingOptimizerInput,
-  isRetry: boolean,
+  options: AttemptGenerationOptions,
 ): Promise<GenerateListingWithGeminiResult> {
+  const { isRetry, afterTruncation = false } = options;
   const { system, user: baseUser } = buildListingOptimizerMessages(input);
   // On retry: append the strict-format addendum to the user message so the
   // model gets an explicit re-statement of every required field + constraint.
@@ -252,56 +268,66 @@ async function attemptGeneration(
       // inconsistent key counts that drove most schema-validation failures.
       temperature: isRetry ? 0.2 : 0.35,
       topP: 0.95,
-      // 8192 gives headroom for v9 output: ~1000 tokens for 4000-char description +
-      // ~600 for core fields + ~800 for v8 fields (whatsNew, screenshotCaptions,
-      // abTestVariant) + ~400 for keywords/CTAs/tips. v9 prompt generates richer
-      // copy across all fields; 4096 was too tight and caused MAX_TOKENS truncation.
-      maxOutputTokens: 16384,
+      maxOutputTokens: afterTruncation
+        ? LISTING_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS
+        : LISTING_MAX_OUTPUT_TOKENS,
     },
   });
 
-  // ── Finish-reason guard ───────────────────────────────────────────────────
-  // Inspect the candidate first so we throw InvalidModelOutputError
-  // (which triggers a credit refund + 422) rather than an unclassified 500.
-  const candidate = result.candidates?.[0];
-  const finishReason = candidate?.finishReason as string | undefined;
-  const isBlocked = finishReason && finishReason !== "STOP" && finishReason !== "1";
+  const finish = checkFinishReason(result);
+  const finishReason = finish.finishReason;
+  const truncated = finish.truncated;
 
   if (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1") {
     console.log(`[listing-generate${isRetry ? "/retry" : ""}] finishReason:`, finishReason ?? "unknown");
-    console.log(`[listing-generate${isRetry ? "/retry" : ""}] raw preview:`, candidate?.content?.parts?.[0]?.text?.slice(0, 300) ?? "(empty)");
-  }
-
-  if (isBlocked) {
-    throw new InvalidModelOutputError(
-      `Model response blocked (finishReason: ${finishReason ?? "unknown"}). Please try again.`,
+    console.log(
+      `[listing-generate${isRetry ? "/retry" : ""}] maxOutputTokens:`,
+      afterTruncation ? LISTING_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS : LISTING_MAX_OUTPUT_TOKENS,
+    );
+    console.log(
+      `[listing-generate${isRetry ? "/retry" : ""}] raw preview:`,
+      extractText(result).slice(0, 300) || "(empty)",
     );
   }
 
-  // ── Extract text ──────────────────────────────────────────────────────────
-  const rawText = result.text ?? "";
+  if (!finish.ok && finish.blocked && isBlockedFinishReason(finishReason)) {
+    throw new InvalidModelOutputError(
+      `Model response blocked (finishReason: ${finishReason ?? "unknown"}). Please try again.`,
+      { finishReason },
+    );
+  }
+
+  if (truncated) {
+    console.warn(
+      `[listing-generate${isRetry ? "/retry" : ""}] Output truncated (${finishReason}) — attempting JSON recovery`,
+    );
+  }
+
+  const rawText = extractText(result);
   if (!rawText.trim()) {
-    throw new InvalidModelOutputError("Model returned empty/unreadable response.");
+    throw new InvalidModelOutputError(
+      truncated
+        ? "Model output was truncated before any JSON was returned. Please try again."
+        : "Model returned empty/unreadable response.",
+      { truncated, finishReason },
+    );
   }
 
-  // ── Truncation recovery ───────────────────────────────────────────────────
-  // Heals the most common truncation pattern (open braces > close braces) so
-  // a network-truncated response doesn't throw a hard JSON.parse error.
-  let text = rawText?.trim() ?? "";
-  if (text.startsWith("{") && !text.endsWith("}")) {
-    text = text.replace(/,\s*$/, "");
-    const opens = (text.match(/\{/g) ?? []).length;
-    const closes = (text.match(/\}/g) ?? []).length;
-    text += "}".repeat(Math.max(0, opens - closes));
+  const jsonParse = parseGeminiJsonText<unknown>(rawText, { truncated, finishReason });
+  if (!jsonParse.ok) {
+    throw new InvalidModelOutputError(
+      jsonParse.reason === "truncated"
+        ? "Model output was truncated mid-JSON. Please try again."
+        : "Model returned malformed JSON. Please try again.",
+      { truncated: jsonParse.reason === "truncated", finishReason },
+    );
   }
 
-  // ── Parse ─────────────────────────────────────────────────────────────────
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    throw new InvalidModelOutputError("Model returned malformed JSON. Please try again.");
+  if (jsonParse.recovered && (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1")) {
+    console.warn(`[listing-generate${isRetry ? "/retry" : ""}] JSON recovered after truncation/heal`);
   }
+
+  const parsed = jsonParse.value;
 
   // ── Normalize + clamp ─────────────────────────────────────────────────────
   // normalizeListingGenerationParsed handles snake_case legacy keys and the
@@ -323,7 +349,7 @@ async function attemptGeneration(
     }
     throw new InvalidModelOutputError(
       "Model output failed Play Store schema validation. Please try again.",
-      coreResult.error,
+      { zodError: coreResult.error, truncated, finishReason },
     );
   }
 
@@ -391,7 +417,7 @@ async function attemptGeneration(
   if (!final.success) {
     throw new InvalidModelOutputError(
       "Model output failed final schema validation. Please try again.",
-      final.error,
+      { zodError: final.error, truncated, finishReason },
     );
   }
 
@@ -415,19 +441,20 @@ export async function generateListingWithGemini(
   input: ListingOptimizerInput,
 ): Promise<GenerateListingWithGeminiResult> {
   try {
-    return await attemptGeneration(input, false);
+    return await attemptGeneration(input, { isRetry: false });
   } catch (firstErr) {
-    // Only retry on schema/parse failures — not on auth errors, blocked safety
-    // responses, or network errors (those are permanent for this request).
     if (!(firstErr instanceof InvalidModelOutputError)) {
       throw firstErr;
     }
     if (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1") {
-      console.warn("[listing-generate] first attempt failed, retrying once:", firstErr.message);
+      console.warn("[listing-generate] first attempt failed, retrying once:", firstErr.message, {
+        truncated: firstErr.truncated,
+        finishReason: firstErr.finishReason,
+      });
     }
-    // Second attempt: lower temperature (0.2) + strict-format addendum.
-    // If this also fails, the InvalidModelOutputError propagates to the API
-    // route which refunds credits and returns 422 to the client.
-    return await attemptGeneration(input, true);
+    return await attemptGeneration(input, {
+      isRetry: true,
+      afterTruncation: firstErr.truncated,
+    });
   }
 }

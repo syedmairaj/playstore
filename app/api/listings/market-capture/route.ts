@@ -169,10 +169,11 @@ export async function POST(request: NextRequest) {
       {
         ok: false,
         error: {
-          code: isModel ? "model_output" : "generation_failed",
+          code: isModel ? e.apiErrorCode : "generation_failed",
           message: isModel
             ? e.message
             : "Market Capture generation failed. Credits were refunded.",
+          ...(isModel && e.truncated ? { truncated: true } : {}),
         },
       },
       { status: isModel ? 422 : 500 },

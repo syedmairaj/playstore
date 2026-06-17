@@ -39,6 +39,7 @@ import type {
 } from "@/lib/client/staging-workspace-types";
 import StagingWorkspacePillar from "./StagingWorkspacePillar";
 import { ActiveContextSectionZone } from "@/components/staging-workspace/active-context-section-zone";
+import { StrategicPillarGroup } from "@/components/staging-workspace/strategic-pillar-group";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ACTIVE_CONTEXT_MODULE_ICON_COLOR } from "@/components/staging-workspace/active-context-tokens";
 import { cn } from "@/lib/utils";
@@ -170,50 +171,61 @@ export default function StagingWorkspace({
   );
 
   const stackSections = useMemo(() => {
-    const blocks: { key: string; node: React.ReactNode }[] = [];
+    type Block = { key: string; node: React.ReactNode };
+    const keywordGrowth: Block[] = [];
+    const conversionUplift: Block[] = [];
+    const competitiveDefense: Block[] = [];
 
     if (topSection) {
-      blocks.push({
+      keywordGrowth.push({
         key: "keyword-tracker",
-        node: (
-          <div data-slot="keyword-tracker">{topSection}</div>
-        ),
+        node: <div data-slot="keyword-tracker">{topSection}</div>,
       });
     }
 
     if (unifiedStack && middleSection) {
-      blocks.push({
+      conversionUplift.push({
         key: "review-insights",
-        node: (
-          <div data-slot="review-insights">{middleSection}</div>
-        ),
+        node: <div data-slot="review-insights">{middleSection}</div>,
       });
     }
 
     for (const pillar of pillars) {
-      blocks.push({
-        key: pillar.id,
-        node: (
-          <StagingWorkspacePillar
-            pillar={pillar}
-            locale={config.locale}
-            isRtl={config.isRtl}
-            isLoading={state.isLoading && pillar.count === 0}
-            onRemoveSignal={handleRemoveSignal}
-            workspaceId={workspaceId}
-            localeOverride={localeProp}
-            chipDisplayOptions={{
-              showRemoveButton: config.enableInlineRemoval,
-              showCategory: pillar.id !== "competitor_keywords",
-              showMetadata: pillar.id !== "competitor_keywords",
-              animateOnRemove: config.animateTransitions,
-            }}
-          />
-        ),
-      });
+      const node = (
+        <StagingWorkspacePillar
+          pillar={pillar}
+          locale={config.locale}
+          isRtl={config.isRtl}
+          isLoading={state.isLoading && pillar.count === 0}
+          onRemoveSignal={handleRemoveSignal}
+          workspaceId={workspaceId}
+          localeOverride={localeProp}
+          chipDisplayOptions={{
+            showRemoveButton: config.enableInlineRemoval,
+            showCategory: pillar.id !== "competitor_keywords",
+            showMetadata: pillar.id !== "competitor_keywords",
+            animateOnRemove: config.animateTransitions,
+          }}
+        />
+      );
+
+      if (pillar.id === "review_issues") {
+        conversionUplift.push({ key: pillar.id, node });
+      } else {
+        competitiveDefense.push({ key: pillar.id, node });
+      }
     }
 
-    return blocks;
+    const groups: {
+      key: string;
+      blocks: Block[];
+    }[] = [
+      { key: "keyword_growth", blocks: keywordGrowth },
+      { key: "conversion_uplift", blocks: conversionUplift },
+      { key: "competitive_defense", blocks: competitiveDefense },
+    ];
+
+    return groups.filter((group) => group.blocks.length > 0);
   }, [
     topSection,
     unifiedStack,
@@ -253,9 +265,7 @@ export default function StagingWorkspace({
           <p className="mt-2 max-w-lg text-[11px] font-normal leading-relaxed text-white/32">
             {unifiedStack
               ? t("unifiedStackHint")
-              : config.locale === "ar"
-                ? "سيتم دمج جميع الإشارات أدناه تلقائياً في القائمة. اضغط × لإزالة أي إشارة."
-                : "All signals below will be woven into your listing automatically. Click × to remove any signal."}
+              : t("legacyStackHint")}
           </p>
         </div>
 
@@ -276,16 +286,47 @@ export default function StagingWorkspace({
         </div>
       )}
 
-      {/* Module slots — sectional gravity zones, no cards */}
-      <div data-active-context-slots className="flex flex-col">
-        {stackSections.map((block, index) => (
-          <ActiveContextSectionZone
-            key={block.key}
-            showSectionRule={index > 0}
-          >
-            {block.node}
-          </ActiveContextSectionZone>
-        ))}
+      {/* Module slots — grouped by strategic pillar, card-less structure */}
+      <div data-active-context-slots className="flex flex-col gap-2">
+        {stackSections.map((group, groupIndex) => {
+          const pillarTitleKey =
+            group.key === "keyword_growth"
+              ? "strategicPillarKeywordGrowth"
+              : group.key === "conversion_uplift"
+                ? "strategicPillarConversionUplift"
+                : "strategicPillarCompetitiveDefense";
+          const pillarDescKey =
+            group.key === "keyword_growth"
+              ? "strategicPillarKeywordGrowthDesc"
+              : group.key === "conversion_uplift"
+                ? "strategicPillarConversionUpliftDesc"
+                : "strategicPillarCompetitiveDefenseDesc";
+
+          return (
+            <StrategicPillarGroup
+              key={group.key}
+              pillarId={
+                group.key as
+                  | "keyword_growth"
+                  | "conversion_uplift"
+                  | "competitive_defense"
+              }
+              title={t(pillarTitleKey)}
+              description={t(pillarDescKey)}
+              isRtl={config.isRtl}
+              showTopRule={groupIndex > 0}
+            >
+              {group.blocks.map((block, index) => (
+                <ActiveContextSectionZone
+                  key={block.key}
+                  showSectionRule={index > 0}
+                >
+                  {block.node}
+                </ActiveContextSectionZone>
+              ))}
+            </StrategicPillarGroup>
+          );
+        })}
       </div>
 
       {/* Global state info (development) */}

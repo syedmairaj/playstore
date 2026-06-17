@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
 import { Coins, Lock, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -211,6 +212,7 @@ export function MarketIntelligenceClient({
   defaultCategory = "APPLICATION",
   isRtl = false,
 }: MarketIntelligenceClientProps) {
+  const tSpotlight = useTranslations("market.spotlight");
   const [category,   setCategory]   = useState(defaultCategory);
   // Arabic users default to Saudi Arabia — their primary market
   const [country,    setCountry]    = useState(isRtl ? "sa" : "us");
@@ -323,16 +325,25 @@ export function MarketIntelligenceClient({
         ok: boolean;
         report?: MarketIntelligenceReport;
         spotlight?: unknown;
+        partial?: boolean;
+        warning?: { code?: string; message?: string };
         creditsUsed?: number;
         creditsRemaining?: number;
-        error?: { message: string; code?: string };
+        error?: { message?: string; code?: string };
       };
 
       if (!json.ok) {
         if (json.error?.code === "insufficient_credits") {
           toast.error("Not enough credits for AI Spotlight. Top up to continue.");
+        } else if (json.error?.code === "spotlight_parse_failed") {
+          toast.error(tSpotlight("parseFailedRefund"));
         } else {
-          toast.error(json.error?.message ?? "Could not generate spotlight.");
+          toast.error(
+            json.error?.code === "spotlight_generation_failed" ||
+              json.error?.code === "spotlight_blocked"
+              ? tSpotlight("generationFailedRefund")
+              : (json.error?.message ?? tSpotlight("generationFailedRefund")),
+          );
         }
         return;
       }
@@ -362,13 +373,16 @@ export function MarketIntelligenceClient({
         if (json.creditsUsed) {
           toast.success(`AI Spotlight unlocked · ${json.creditsUsed} credits used`);
         }
+        if (json.partial || json.warning?.code === "partial_analysis") {
+          toast.warning(tSpotlight("partialAnalysis"));
+        }
       }
     } catch {
       toast.error("Network error. Please try again.");
     } finally {
       setLoadingSpot(false);
     }
-  }, [apps, category, country, workspaceId, ownAppId]);
+  }, [apps, category, country, workspaceId, ownAppId, tSpotlight]);
 
   useEffect(() => {
     loadChart();

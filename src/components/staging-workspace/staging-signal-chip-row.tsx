@@ -61,6 +61,7 @@ export type StagingSignalChipRowProps = {
   signal: StagingSignal;
   locale: "en" | "ar";
   isRtl: boolean;
+  isStaged?: boolean;
   isRemoving?: boolean;
   onRemove: (signalId: string, source: string) => void;
   removeLabel?: string;
@@ -70,6 +71,7 @@ export function StagingSignalChipRow({
   signal,
   locale,
   isRtl,
+  isStaged = true,
   isRemoving = false,
   onRemove,
   removeLabel,
@@ -113,6 +115,7 @@ export function StagingSignalChipRow({
       tags={tags}
       sourceTooltip={sourceTooltip}
       isRtl={isRtl}
+      isStaged={isStaged}
       isRemoving={isRemoving}
       removeLabel={removeLabel ?? t("removeSignal")}
       onRemove={() => onRemove(signal.id, signal.source)}

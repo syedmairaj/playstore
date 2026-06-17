@@ -31,6 +31,11 @@ import {
   acquireGenerationLock,
   releaseGenerationLock,
 } from "@/lib/server/generation-idempotency-lock";
+import {
+  buildContextAuditSnapshot,
+  logActiveContextAudit,
+} from "@/lib/optimization-queue/context-audit-log";
+import { validateActiveContextQueueHash } from "@/lib/optimization-queue/validate-active-context-queue-hash";
 
 const ROUTE = "POST /api/listings/generate";
 const LOCK_ACTION = "listing_generate";
@@ -108,7 +113,14 @@ export async function POST(request: NextRequest) {
     throw e;
   }
 
-  const { workspaceId, appId: bodyAppId, activeSignalTypes, ...listingInput } = input;
+  const {
+    workspaceId,
+    appId: bodyAppId,
+    activeSignalTypes,
+    vaultLocale,
+    queueHash,
+    ...listingInput
+  } = input;
 
   // ── Signal quality computation ────────────────────────────────────────────
   // Counts active signal channels (keywords, reviews, market, competitors).
@@ -269,6 +281,61 @@ export async function POST(request: NextRequest) {
   }
 
   let ledgerId: string | null = null;
+
+  const queueHashValidation = await validateActiveContextQueueHash(supabase, {
+    workspaceId,
+    locale: vaultLocale,
+    appId: bodyAppId,
+    clientQueueHash: queueHash,
+  });
+
+  logActiveContextAudit(
+    buildContextAuditSnapshot({
+      route: ROUTE,
+      workspaceId,
+      appId: bodyAppId,
+      listing: listingInput,
+      activeSignalTypes,
+      queueHash: {
+        client: queueHash,
+        server: queueHashValidation.serverQueueHash,
+        validation: queueHashValidation.ok ? "matched" : "mismatch",
+        vaultLocale,
+        vaultItemCount: queueHashValidation.itemCount,
+      },
+    }),
+  );
+
+  if (!queueHashValidation.ok) {
+    releaseGenerationLock(workspaceId, LOCK_ACTION);
+    await logUsage(admin, {
+      route: ROUTE,
+      clientIp,
+      success: false,
+      durationMs: Date.now() - started,
+      errorMessage: "stale_active_context",
+      meta: {
+        user_id: user.id,
+        workspace_id: workspaceId,
+        vault_locale: vaultLocale,
+        client_queue_hash: queueHash,
+        server_queue_hash: queueHashValidation.serverQueueHash,
+        vault_item_count: queueHashValidation.itemCount,
+      },
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "stale_active_context",
+          message:
+            "Active Context changed since this page loaded. Refresh your signals and try again.",
+        },
+      },
+      { status: 409 },
+    );
+  }
+
   const debit = await consumeWorkspaceAiCredits(supabase, {
     workspaceId,
     userId: user.id,
@@ -395,15 +462,20 @@ export async function POST(request: NextRequest) {
         clientIp,
         success: false,
         durationMs: Date.now() - started,
-        errorMessage: "invalid_model_output",
-        meta: { user_id: user.id, workspace_id: workspaceId },
+        errorMessage: e.truncated ? "truncated_model_output" : "invalid_model_output",
+        meta: {
+          user_id: user.id,
+          workspace_id: workspaceId,
+          finish_reason: e.finishReason,
+        },
       });
       return NextResponse.json(
         {
           ok: false,
           error: {
-            code: "invalid_model_output",
+            code: e.apiErrorCode,
             message: e.message,
+            truncated: e.truncated ? true : undefined,
           },
         },
         { status: 422 },

@@ -33,6 +33,12 @@ export type { QueueInputDiffResult } from "@/lib/optimization-queue/queue-routin
 
 export { buildSynthesisFromOptimizationQueue } from "@/lib/optimization-queue/optimization-queue-synthesis";
 export {
+  buildActiveContextQueueHashCanonical,
+  filterItemsForActiveContextQueueHash,
+  queueItemFingerprint,
+} from "@/lib/optimization-queue/optimization-queue-hash-canonical";
+export { computeActiveContextQueueHashClient } from "@/lib/optimization-queue/optimization-queue-hash-client";
+export {
   buildActiveContextSynthesis,
   activeContextHasSignals,
 } from "@/lib/optimization-queue/build-active-context-synthesis";
