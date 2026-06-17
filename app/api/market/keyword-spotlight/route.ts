@@ -15,53 +15,110 @@ import {
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
 import { getCategoryLabel } from "@/lib/market/category-labels";
+import {
+  buildMarketIntelligenceReport,
+  type RawCategorizedSpotlightModel,
+} from "@/lib/market/categorize-market-intel";
+import type {
+  ChartAppForThreats,
+  LegacyKeywordSpotlightResult,
+  MarketIntelligenceReport,
+} from "@/lib/market/market-intel-signal-types";
 
 const ROUTE = "POST /api/market/keyword-spotlight";
 const CREDIT_COST = AI_CREDIT_COSTS.market_keyword_spotlight;
 
-export type KeywordSpotlightResult = {
-  /** Top recurring keyword themes from the chart titles/descriptions */
-  trendingKeywords: string[];
-  /** 1–2 sentence human insight about what's driving this category right now */
-  narrative: string;
-  /** Key takeaway for the user's own listing */
-  asoTip: string;
-};
+/** @deprecated Use MarketIntelligenceReport — kept for session-cache migration. */
+export type KeywordSpotlightResult = LegacyKeywordSpotlightResult;
+
+export type { MarketIntelligenceReport };
 
 const SPOTLIGHT_RESPONSE_SCHEMA = {
   type: "OBJECT",
   properties: {
-    trendingKeywords: {
+    growthKeywords: {
       type: "ARRAY",
-      items: { type: "STRING" },
+      items: {
+        type: "OBJECT",
+        properties: {
+          term: { type: "STRING" },
+          searchVolumeScore: { type: "NUMBER" },
+          conversionImpactScore: { type: "NUMBER" },
+        },
+        required: ["term", "searchVolumeScore", "conversionImpactScore"],
+      },
     },
-    narrative: { type: "STRING" },
-    asoTip: { type: "STRING" },
+    competitorThreats: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          term: { type: "STRING" },
+          competitorTitle: { type: "STRING" },
+          competitorAppId: { type: "STRING" },
+          threatScore: { type: "NUMBER" },
+          searchVolumeScore: { type: "NUMBER" },
+          conversionImpactScore: { type: "NUMBER" },
+        },
+        required: [
+          "term",
+          "competitorTitle",
+          "threatScore",
+          "searchVolumeScore",
+          "conversionImpactScore",
+        ],
+      },
+    },
+    uxSentimentInsights: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          headline: { type: "STRING" },
+          body: { type: "STRING" },
+          insightKind: { type: "STRING" },
+        },
+        required: ["headline", "body", "insightKind"],
+      },
+    },
   },
-  required: ["trendingKeywords", "narrative", "asoTip"],
+  required: ["growthKeywords", "competitorThreats", "uxSentimentInsights"],
 } as const;
 
 type RequestBody = {
   /** Top apps (we use top 10 titles + summaries) */
-  apps: Pick<TopChartApp, "title" | "summary">[];
+  apps: Pick<TopChartApp, "appId" | "title" | "summary">[];
   /** gplay category ID e.g. "HEALTH_AND_FITNESS" */
   category: string;
   /** ISO country code */
   country: string;
   /** Workspace ID — required for credit deduction */
   workspaceId: string;
+  /** Optional — excludes own app from competitor threat enrichment */
+  ownAppId?: string | null;
 };
 
 function stripJsonFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 }
 
-function parseSpotlightJson(text: string): KeywordSpotlightResult {
-  const parsed = JSON.parse(stripJsonFences(text)) as KeywordSpotlightResult;
-  if (!Array.isArray(parsed.trendingKeywords) || typeof parsed.narrative !== "string") {
+function parseSpotlightJson(text: string): RawCategorizedSpotlightModel {
+  const parsed = JSON.parse(stripJsonFences(text)) as RawCategorizedSpotlightModel;
+  if (!Array.isArray(parsed.growthKeywords)) {
     throw new Error("Unexpected response shape from model");
   }
   return parsed;
+}
+
+function toChartApps(
+  apps: Pick<TopChartApp, "appId" | "title" | "summary">[],
+): ChartAppForThreats[] {
+  return apps.slice(0, 10).map((app, index) => ({
+    appId: app.appId,
+    title: app.title,
+    summary: app.summary,
+    rank: index + 1,
+  }));
 }
 
 export async function POST(request: Request) {
@@ -88,7 +145,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { apps, category, country, workspaceId } = body;
+  const { apps, category, country, workspaceId, ownAppId } = body;
 
   if (!workspaceId) {
     return NextResponse.json(
@@ -144,10 +201,10 @@ export async function POST(request: Request) {
   }
 
   const ledgerId = consumeResult.ledgerId;
-  const top10 = apps.slice(0, 10);
+  const chartApps = toChartApps(apps);
   const categoryLabel = getCategoryLabel(category);
 
-  const appLines = top10
+  const appLines = chartApps
     .map((a, i) => `${i + 1}. "${a.title}"${a.summary ? ` — ${a.summary}` : ""}`)
     .join("\n");
 
@@ -160,17 +217,44 @@ Chart type: Top Free Apps
 Here are the top 10 apps by title and short description:
 ${appLines}
 
-Analyse these 10 apps and return a JSON object with exactly these three fields:
+Categorise every insight into exactly three buckets. Return JSON only:
 
 {
-  "trendingKeywords": [array of 6–10 keyword strings that appear repeatedly across these titles/descriptions — single words or short phrases, no duplicates, ordered by frequency/importance],
-  "narrative": "One or two sentences explaining what theme or user intent is dominating this category right now based on the chart. Be specific and data-driven.",
-  "asoTip": "One actionable sentence telling an app developer what they should do with their listing based on this chart intelligence."
+  "growthKeywords": [
+    {
+      "term": "short keyword or phrase users search for",
+      "searchVolumeScore": 0-100,
+      "conversionImpactScore": 0-100
+    }
+  ],
+  "competitorThreats": [
+    {
+      "term": "positioning keyword or phrase a top competitor owns",
+      "competitorTitle": "exact app title from the chart",
+      "competitorAppId": "optional package id if obvious",
+      "threatScore": 0-100,
+      "searchVolumeScore": 0-100,
+      "conversionImpactScore": 0-100
+    }
+  ],
+  "uxSentimentInsights": [
+    {
+      "headline": "short label",
+      "body": "1-2 sentences of qualitative UX/sentiment/category narrative — NOT a keyword",
+      "insightKind": "category_narrative | aso_recommendation | sentiment_theme"
+    }
+  ]
 }
+
+Rules:
+- growthKeywords: 6–10 actionable search terms, ordered by searchVolumeScore then conversionImpactScore (highest first). No duplicates.
+- competitorThreats: 3–6 threats where a specific chart app owns a keyword pattern that could displace the user's app. Reference real titles from the list.
+- uxSentimentInsights: 2–4 qualitative insights only (user intent themes, sentiment shifts, listing tone). Do NOT put keywords here.
+- Scores are relative estimates within this category/market (100 = strongest).
 
 CRITICAL: Output strictly valid JSON only. No markdown fences, no commentary, no trailing text.`;
 
-  let result: KeywordSpotlightResult;
+  let result: MarketIntelligenceReport;
 
   try {
     const { text, correlationId: modelCorrelationId, provider } = await generateContentValidated({
@@ -204,7 +288,12 @@ CRITICAL: Output strictly valid JSON only. No markdown fences, no commentary, no
       country,
     });
 
-    result = parseSpotlightJson(text);
+    const raw = parseSpotlightJson(text);
+    result = buildMarketIntelligenceReport(
+      raw,
+      { category, country, ownAppId: ownAppId ?? null },
+      chartApps,
+    );
   } catch (err) {
     await refundWorkspaceAiCredits(supabase, {
       ledgerId,
@@ -251,6 +340,8 @@ CRITICAL: Output strictly valid JSON only. No markdown fences, no commentary, no
 
   return NextResponse.json({
     ok: true,
+    report: result,
+    /** @deprecated — use report */
     spotlight: result,
     creditsUsed: CREDIT_COST,
     creditsRemaining: remaining - CREDIT_COST,

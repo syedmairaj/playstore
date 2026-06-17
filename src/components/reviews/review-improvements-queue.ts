@@ -28,6 +28,9 @@ export type ListingImprovementItem = {
   packageName: string | null;
   isUtilized: boolean;
   createdAt: string;
+  title?: string;
+  impactPercent?: number;
+  growthStrategyTag?: "product_improvement" | "oppositional_target";
 };
 
 async function fetchListingImprovementsResponse(
@@ -171,8 +174,18 @@ export function buildListingImprovementsGenerateDirective(
   if (!items.length) return "";
   const themes = items.map((item) => {
     const tag = item.sentimentTag?.trim() || "User feedback";
+    const impact =
+      item.impactPercent != null && item.impactPercent > 0
+        ? ` (Impact: ${item.impactPercent}%)`
+        : "";
+    const strategy =
+      item.growthStrategyTag === "oppositional_target"
+        ? " [Oppositional Target]"
+        : item.growthStrategyTag === "product_improvement"
+          ? " [Product Improvement]"
+          : "";
     const snippet = item.reviewText.trim().replace(/\s+/g, " ").slice(0, 160);
-    return snippet ? `${tag}: ${snippet}` : tag;
+    return snippet ? `${tag}${strategy}${impact}: ${snippet}` : `${tag}${strategy}${impact}`;
   });
   return [
     "The following user review themes are queued for this optimization run.",

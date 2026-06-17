@@ -1,4 +1,7 @@
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
+import type { ActiveContextStrategyMode } from "@/lib/optimization-queue/resolve-strategy-mode";
+import type { PrioritizedStagedIssue } from "@/lib/optimization-queue/resolve-strategy-mode";
+import type { ClusterSynthesisPayload } from "@/lib/optimization-queue/build-active-context-synthesis";
 
 export type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
 
@@ -30,6 +33,17 @@ export type ListingOptimizerInput = {
    * Keyword Tracker signals from workspace_staging_vault (highest synthesis priority).
    */
   trackedKeywordSignals?: TrackedKeywordSignalInput[];
+  /**
+   * Dominant ASO Growth strategy mode from Active Context review signals.
+   */
+  strategyMode?: ActiveContextStrategyMode;
+  /** Top staged issues by Impact % — drives Strategic Rationale in model output. */
+  topStagedIssues?: PrioritizedStagedIssue[];
+  /**
+   * Unified Active Context — structured synthesis feedback loop for the LLM.
+   * Replaces flat exploitTargets / prose userInstruction for queue signals.
+   */
+  activeContext?: ClusterSynthesisPayload;
 };
 
 /** Gemini listing JSON shape (includes optional Certified ASO Score metadata). */

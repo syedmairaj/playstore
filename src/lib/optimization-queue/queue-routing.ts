@@ -68,6 +68,7 @@ export function inferCategoryFromType(type: OptimizationQueueItemType): Optimiza
       return "review";
     case "competitor_strength":
     case "competitor_weakness":
+    case "competitor_keyword":
       return "strength";
     case "market_keyword":
       return "opportunity";
@@ -158,6 +159,9 @@ export function inferCategoryForInput(
       return "review";
     }
     if (input.type === "competitor_strength" || input.type === "competitor_weakness") {
+      return "strength";
+    }
+    if (input.type === "competitor_keyword") {
       return "strength";
     }
     return "opportunity";

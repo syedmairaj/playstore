@@ -2,6 +2,10 @@
 
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
+import {
+  isActiveContextReconnecting,
+  networkQueryRetryOptions,
+} from "@/lib/client/query-network-retry";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type {
@@ -39,6 +43,17 @@ import {
   patchAllOptimizationQueueStores,
   syncOptimizationQueueCaches,
 } from "@/lib/client/optimization-queue-cache-sync";
+import { withResolvedSignalCluster } from "@/lib/optimization-queue/signal-cluster";
+import { useCategorizedManualQueueAdd } from "@/hooks/useCategorizedManualQueueAdd";
+import {
+  demoteCompetitorStrengthItem,
+  filterQueueForActiveContextDisplay,
+} from "@/lib/competitor-spy/strength-audit-ssot";
+import { applySignalLifecycleStatus } from "@/lib/signals/signal-lifecycle";
+import {
+  returnStrengthAuditToQueue,
+  STRENGTH_AUDIT_UPDATED_EVENT,
+} from "@/lib/client/competitor-strength-audit-store";
 
 function buildOptimisticItems(
   prev: OptimizationQueueItem[],
@@ -48,6 +63,7 @@ function buildOptimisticItems(
   const now = new Date().toISOString();
   const seen = new Set(prev.map(sectionDedupeKey));
   const optimistic: OptimizationQueueItem[] = [];
+  let next = [...prev];
 
   for (const input of inputs) {
     const content = input.content.trim();
@@ -68,6 +84,7 @@ function buildOptimisticItems(
       id: `oq-opt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       type: input.type,
       category,
+      ...(input.status ? { status: input.status } : {}),
       content,
       source: input.source,
       sourceContext: input.sourceContext,
@@ -83,12 +100,21 @@ function buildOptimisticItems(
     };
 
     const key = sectionDedupeKey(candidate);
-    if (seen.has(key)) continue;
+    if (seen.has(key)) {
+      if (input.type === "competitor_strength" && input.status) {
+        next = next.map((item) =>
+          sectionDedupeKey(item) === key
+            ? applySignalLifecycleStatus(item, input.status!)
+            : item,
+        );
+      }
+      continue;
+    }
     seen.add(key);
     optimistic.push(candidate);
   }
 
-  return [...optimistic, ...prev];
+  return [...optimistic, ...next];
 }
 
 export function useOptimizationQueue(
@@ -99,13 +125,18 @@ export function useOptimizationQueue(
   const queryClient = useQueryClient();
   const key = OPTIMIZATION_QUEUE_KEY(workspaceId, locale, appId);
   const storeKey = optimizationQueueStoreKey(workspaceId, locale, appId);
+  const { prepareInputs, modal: categorizationModal } = useCategorizedManualQueueAdd(
+    locale === "ar",
+  );
 
-  const { data, isFetching, error, refetch, isPending } = useQuery({
+  const { data, isFetching, error, refetch, isPending, isError, failureCount } = useQuery({
     queryKey: key,
     queryFn: () => fetchOptimizationQueue(workspaceId, locale, appId),
     enabled: Boolean(workspaceId),
     placeholderData: keepPreviousData,
     ...queryDefaultsFor("activeContext"),
+    refetchOnMount: true,
+    ...networkQueryRetryOptions,
   });
 
   useEffect(() => {
@@ -135,17 +166,24 @@ export function useOptimizationQueue(
     () => getOptimizationQueueSnapshot(storeKey),
   );
 
-  const items =
+  const rawItems =
     storeSnapshot.version > 0 ? storeSnapshot.items : (data?.items ?? storeSnapshot.items);
+
+  const items = filterQueueForActiveContextDisplay(rawItems);
+  const allItems = rawItems;
 
   const addItems = useCallback(
     async (inputs: AddOptimizationQueueInput[]) => {
+      const resolvedInputs = await prepareInputs(
+        inputs.map((i) => withResolvedSignalCluster(i)),
+      );
+
       const previousSnapshot: OptimizationQueueStoreSnapshot =
         getOptimizationQueueSnapshot(storeKey);
       const previousQuery = queryClient.getQueryData<typeof data>(key);
 
       patchAllOptimizationQueueStores(workspaceId, locale, (prev) =>
-        buildOptimisticItems(prev, inputs, locale),
+        buildOptimisticItems(prev, resolvedInputs, locale),
       );
 
       queryClient.setQueriesData(
@@ -153,9 +191,9 @@ export function useOptimizationQueue(
         (prev: typeof data | undefined) => {
           if (!prev) {
             return {
-              items: buildOptimisticItems([], inputs, locale),
+              items: buildOptimisticItems([], resolvedInputs, locale),
               stats: {
-                total: inputs.length,
+                total: resolvedInputs.length,
                 byType: {} as never,
                 lastSyncAt: new Date().toISOString(),
               },
@@ -163,7 +201,7 @@ export function useOptimizationQueue(
           }
           return {
             ...prev,
-            items: buildOptimisticItems(prev.items, inputs, locale),
+            items: buildOptimisticItems(prev.items, resolvedInputs, locale),
           };
         },
       );
@@ -172,7 +210,7 @@ export function useOptimizationQueue(
         const result = await addToOptimizationQueueClient(
           workspaceId,
           locale,
-          inputs,
+          resolvedInputs,
           appId,
         );
 
@@ -211,7 +249,7 @@ export function useOptimizationQueue(
         throw err;
       }
     },
-    [workspaceId, locale, appId, queryClient, key, storeKey],
+    [workspaceId, locale, appId, queryClient, key, storeKey, prepareInputs],
   );
 
   const removeItem = useCallback(
@@ -219,11 +257,29 @@ export function useOptimizationQueue(
       const previousSnapshot: OptimizationQueueStoreSnapshot =
         getOptimizationQueueSnapshot(storeKey);
       const previousQuery = queryClient.getQueryData<typeof data>(key);
+      const target = previousSnapshot.items.find((i) => i.id === itemId);
+      const isCompetitorStrength = target?.type === "competitor_strength";
 
-      optimisticallyRemoveOptimizationQueueItem(storeKey, itemId);
+      if (isCompetitorStrength) {
+        patchOptimizationQueueStore(storeKey, (prev) =>
+          prev.map((item) =>
+            item.id === itemId ? demoteCompetitorStrengthItem(item) : item,
+          ),
+        );
+      } else {
+        optimisticallyRemoveOptimizationQueueItem(storeKey, itemId);
+      }
 
       queryClient.setQueryData(key, (prev: typeof data | undefined) => {
         if (!prev) return prev;
+        if (isCompetitorStrength) {
+          return {
+            ...prev,
+            items: prev.items.map((item) =>
+              item.id === itemId ? demoteCompetitorStrengthItem(item) : item,
+            ),
+          };
+        }
         return {
           ...prev,
           items: prev.items.filter((i) => i.id !== itemId),
@@ -232,12 +288,26 @@ export function useOptimizationQueue(
 
       try {
         await removeFromOptimizationQueueClient(workspaceId, locale, itemId, appId);
+        if (isCompetitorStrength && target) {
+          const auditItemId =
+            typeof target.metadata?.audit_item_id === "string"
+              ? target.metadata.audit_item_id
+              : undefined;
+          if (auditItemId) {
+            returnStrengthAuditToQueue(workspaceId, auditItemId);
+          }
+        }
         await queryClient.invalidateQueries({
           queryKey: optimizationQueueQueryPrefix(workspaceId, locale),
         });
         await queryClient.invalidateQueries({
           queryKey: ["optimizer-context", workspaceId, locale],
         });
+        window.dispatchEvent(
+          new CustomEvent(STRENGTH_AUDIT_UPDATED_EVENT, {
+            detail: { workspaceId },
+          }),
+        );
       } catch (err) {
         restoreOptimizationQueueSnapshot(storeKey, {
           items: previousSnapshot.items,
@@ -268,17 +338,30 @@ export function useOptimizationQueue(
     [items],
   );
 
+  const isReconnecting = isActiveContextReconnecting({
+    isFetching,
+    isError,
+    failureCount,
+    error,
+    hasCachedData: items.length > 0,
+  });
+
   return {
     items,
+    allItems,
     stats: storeSnapshot.stats ?? data?.stats,
     storeVersion: storeSnapshot.version,
     /** True only on first load with no cached data (not background refetch). */
     isLoading: isPending && !data,
     isFetching,
+    isError,
+    isReconnecting,
+    failureCount,
     error,
     refetch,
     addItems,
     removeItem,
     isQueued,
+    categorizationModal,
   };
 }

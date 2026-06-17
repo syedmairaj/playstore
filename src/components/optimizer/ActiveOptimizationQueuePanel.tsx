@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import type { ListingImprovementItem } from "@/components/reviews/review-improvements-queue";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { GrowthStrategyTag } from "@/lib/review-insights/growth-strategy-tags";
 
 /** Returns true when this queue item came from Market Intelligence Spotlight. */
 function isSpotlightItem(item: ListingImprovementItem): boolean {
@@ -98,10 +99,14 @@ function ReviewPillTooltipContent({ item, ownPackageName, t }: { item: ListingIm
       ? getFlagEmoji(countryCode)
       : null;
 
-  // Derive source classification using the workspace's own package name as ground truth.
-  const isOwnApp = ownPackageName
-    ? item.packageName?.trim() === ownPackageName.trim()
-    : item.appId !== null && (item.packageName === null || item.packageName === item.appId);
+  const strategyTag: GrowthStrategyTag | undefined = item.growthStrategyTag;
+
+  // Derive source classification using growth tag first, then package name heuristic.
+  const isOwnApp = strategyTag
+    ? strategyTag === "product_improvement"
+    : ownPackageName
+      ? item.packageName?.trim() === ownPackageName.trim()
+      : item.appId !== null && (item.packageName === null || item.packageName === item.appId);
 
   return (
     <div className="space-y-2 text-start">
@@ -116,6 +121,12 @@ function ReviewPillTooltipContent({ item, ownPackageName, t }: { item: ListingIm
       >
         {isOwnApp ? t("infoTooltip.pillDefensive") : t("infoTooltip.pillOffensive")}
       </span>
+
+      {item.impactPercent != null && item.impactPercent > 0 ? (
+        <p className="text-[11px] font-medium tabular-nums text-amber-300/90">
+          {t("infoTooltip.impactBadge", { pct: item.impactPercent })}
+        </p>
+      ) : null}
 
       {/* Header: name • flag • app • stars */}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -252,6 +263,13 @@ export function ActiveOptimizationQueuePanel({
             >
               <CheckCircle2 className="size-3 shrink-0 text-zinc-600" aria-hidden />
               {queueImprovementBadgeLabel(item)}
+              {!isSpotlightItem(item) &&
+              item.impactPercent != null &&
+              item.impactPercent > 0 ? (
+                <span className="text-[10px] tabular-nums text-zinc-600">
+                  {item.impactPercent}%
+                </span>
+              ) : null}
             </span>
           ))}
         </div>
@@ -391,6 +409,13 @@ export function ActiveOptimizationQueuePanel({
                               <CheckCircle2 className="size-3 shrink-0 text-rose-400" aria-hidden />
                             )}
                             {queueImprovementBadgeLabel(item)}
+                            {!isSpotlightItem(item) &&
+                            item.impactPercent != null &&
+                            item.impactPercent > 0 ? (
+                              <span className="text-[10px] font-medium tabular-nums text-amber-400/80">
+                                {t("infoTooltip.impactBadge", { pct: item.impactPercent })}
+                              </span>
+                            ) : null}
 
                             {onRemoveItem && (
                               <button

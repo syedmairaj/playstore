@@ -34,6 +34,8 @@ import {
   buildOptimizerActionUrl,
 } from "@/lib/client/competitor-spy-staging-flow";
 import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import { useOptimizationQueueOnboarding } from "@/hooks/useOptimizationQueueOnboarding";
+import { OptimizationQueueOnboardingPopover } from "@/components/optimization-queue/optimization-queue-onboarding-popover";
 import { QueueStatusBadge } from "@/components/competitor-spy/queue-status-badge";
 
 export interface KeywordCurationFloatingBarProps {
@@ -138,6 +140,7 @@ export function KeywordCurationFloatingBar({
   onStagingComplete,
 }: KeywordCurationFloatingBarProps) {
   const locale = useLocale();
+  const vaultLocale = locale === "ar" ? "ar" : "en";
   const router = useRouter();
   const queryClient = useQueryClient();
   const labels = getComponentLabels(locale);
@@ -147,7 +150,12 @@ export function KeywordCurationFloatingBar({
   const [showPostStagingPrompt, setShowPostStagingPrompt] = useState(false);
   const [stagedSignalId, setStagedSignalId] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
-  const vaultLocale = locale === "ar" ? "ar" : "en";
+  const {
+    onboardingOpen,
+    setOnboardingOpen,
+    notifyQueuedSuccess,
+    dismissOnboarding,
+  } = useOptimizationQueueOnboarding();
   const { items: queueItems } = useOptimizationQueue(workspaceId, vaultLocale, appId);
 
   const queuedSelectionCount = useMemo(() => {
@@ -255,6 +263,7 @@ export function KeywordCurationFloatingBar({
       // Notify parent component of successful staging
       onSuccess?.(stagingResult.signalId || "");
       onStagingComplete?.(stagingResult.signalId || "", selectedKeywords.length);
+      notifyQueuedSuccess();
 
       // ⚠️ DO NOT CLEAR HERE - Let post-staging prompt show first
       // Clear is called after user chooses action (Continue or Go to Optimizer)
@@ -474,39 +483,49 @@ export function KeywordCurationFloatingBar({
             )}
 
             {/* Action Button */}
-            <motion.button
-              whileHover={!isSubmitting ? { scale: 1.02 } : {}}
-              whileTap={!isSubmitting ? { scale: 0.98 } : {}}
-              onClick={handleSend}
-              disabled={isSubmitting}
-              className={cn(
-                "w-full py-2.5 px-4 rounded-lg",
-                "font-medium text-sm transition-all duration-150",
-                "flex items-center justify-center gap-2",
-                isRtl && "flex-row-reverse",
-                !isSubmitting
-                  ? "bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-100 cursor-pointer"
-                  : "bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 opacity-60 cursor-wait"
-              )}
-            >
-              {isSubmitting ? (
-                <>
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                    className="w-4 h-4"
-                  >
-                    <Send className="w-4 h-4" />
-                  </motion.div>
-                  <span>{labels.sendingButton}</span>
-                </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" />
-                  <span>{labels.sendButton}</span>
-                </>
-              )}
-            </motion.button>
+            <OptimizationQueueOnboardingPopover
+              open={onboardingOpen}
+              onOpenChange={setOnboardingOpen}
+              onDismiss={dismissOnboarding}
+              isRtl={isRtl}
+              side="top"
+              align={isRtl ? "start" : "end"}
+              anchor={
+                <motion.button
+                  whileHover={!isSubmitting ? { scale: 1.02 } : {}}
+                  whileTap={!isSubmitting ? { scale: 0.98 } : {}}
+                  onClick={handleSend}
+                  disabled={isSubmitting}
+                  className={cn(
+                    "w-full py-2.5 px-4 rounded-lg",
+                    "font-medium text-sm transition-all duration-150",
+                    "flex items-center justify-center gap-2",
+                    isRtl && "flex-row-reverse",
+                    !isSubmitting
+                      ? "bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-100 cursor-pointer"
+                      : "bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 opacity-60 cursor-wait"
+                  )}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                        className="w-4 h-4"
+                      >
+                        <Send className="w-4 h-4" />
+                      </motion.div>
+                      <span>{labels.sendingButton}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>{labels.sendButton}</span>
+                    </>
+                  )}
+                </motion.button>
+              }
+            />
 
             {/* Helper Text */}
             <div className={cn(

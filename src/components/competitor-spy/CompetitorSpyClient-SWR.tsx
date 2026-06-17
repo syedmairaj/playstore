@@ -22,7 +22,7 @@ import { useI18n } from '@/i18n/client';
 import useSWRCache from '@/hooks/useSWRCache';
 import { getCachedStagingService } from '@/lib/cache/cached-staging-service';
 import { createBrowserClient } from '@/lib/supabase/client';
-import KeywordSurfacesInline from './keyword-surfaces-inline';
+import { CompetitorKeywordSurfacesReadonly } from "@/components/competitor-spy/competitor-keyword-surfaces-readonly";
 import CompetitorSpyHeader from './competitor-spy-header';
 import KeywordCurationModeProvider from '@/contexts/KeywordCurationModeContext';
 import KeywordSelectionProvider from '@/contexts/KeywordSelectionContext';
@@ -280,14 +280,10 @@ export default function CompetitorSpyClient({
                   {competitor.name}
                 </h3>
 
-                {/* Keyword Surfaces */}
-                <KeywordSurfacesInline
-                  competitorId={competitor.id}
-                  competitorName={competitor.name}
-                  initialKeywords={competitor.keywords}
-                  language={language}
-                  workspaceId={workspaceId}
-                  onKeywordSelect={handleKeywordSelect}
+                {/* Keyword Surfaces — read-only; strengths staged via Audit Queue */}
+                <CompetitorKeywordSurfacesReadonly
+                  keywords={competitor.keywords ?? []}
+                  isRtl={language === "ar"}
                 />
               </div>
             ))}

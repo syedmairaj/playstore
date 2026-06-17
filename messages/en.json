@@ -947,7 +947,7 @@
       "metricsValue": "{count, plural, one {# term} other {# terms}}",
       "sendOptimizer": "Send to AI Listing Optimizer",
       "sendOptimizerTooltip": "Best for Foundational Setup (New Apps & Core Research). Extracts base keyword footprints from this competitor's top terms and gap opportunities.",
-      "curateHint": "Select keywords below, then click Add to Optimization Queue. Nothing is sent to the AI until you generate from the Listing Optimizer.",
+      "curateHint": "Keyword surfaces are read-only here. Approve high-CVR strengths from Review Sentiment → Audit Queue below.",
       "emptyBody": "Run an analyze to pin a competitor snapshot here."
     },
     "playStore": {
@@ -1097,7 +1097,7 @@
       "bucketRequestsTitle": "Feature Requests",
       "bucketRequestsSubtitle": "What their users want next — ship it first.",
       "exploitCta": "Add to Optimization Queue",
-      "exploitTooltip": "Add review insights to your optimization queue. They will be used when you click Generate in the Listing Optimizer.",
+      "exploitTooltip": "Queue for Vulnerability Conquest: Adding this insight to your Active Context instructs our AI to directly combat this competitor weakness. When you click 'Generate,' your store metadata will be rewritten to convert this specific competitor flaw into your unique selling proposition.",
       "queueSuccess": "Added to Optimization Queue",
       "queueSuccessDetail": "{count, plural, one {# signal queued} other {# signals queued}}",
       "queueError": "Could not add to optimization queue. Try again.",
@@ -1105,6 +1105,9 @@
       "queueAlreadyAll": "All selected items are already in your optimization strategy.",
       "exploitCtaAlreadyQueued": "Already Queued",
       "exploitEmptyHint": "Run AI analysis to extract review insights before adding to the queue.",
+      "optimizationOnboardingTitle": "How Optimization Signals Work",
+      "optimizationOnboardingBody": "You've just staged your first high-impact insight. (1) Staging: The signal is now part of your 'Active Context' for prioritized AI rewriting. (2) Audit: You can review all staged insights in the 'Issues Queued for Optimization' section. (3) Execution: Click 'Generate' to synthesize these signals into conversion-optimized store assets.",
+      "optimizationOnboardingDismiss": "Got it",
       "exploitCtaTooltip": "Best for High-Conversion (Offensive Marketing). Converts competitor user complaints into your positive feature copy advantages.",
       "insightDisclaimer": "Insights are AI-inferred from keyword and gap analysis — not scraped from live reviews.",
       "praisePrefix": "Users praise: ",
@@ -1132,9 +1135,26 @@
       "summaryBugs": "{count, plural, one {# bug found} other {# bugs found}}",
       "summaryRequests": "{count, plural, one {# feature request} other {# feature requests}}",
       "summaryEmpty": "No review insights yet — run Analyze to generate signals.",
-      "bucketPraiseTitle": "Top praise",
+      "bucketBaselineTitle": "User-appreciated (baseline)",
+      "bucketBaselineHint": "Table-stakes praise — informational only, not auto-staged.",
+      "bucketStrategicTitle": "Market-dominating (strategic)",
+      "bucketStrategicHint": "High-CVR strengths — enter the Audit Queue before Active Context.",
       "bucketBugsTitle": "Bugs & pain points",
       "bucketRequestsTitle": "Feature requests"
+    },
+    "strengthAudit": {
+      "title": "Competitor Strengths Audit Queue",
+      "subtitle": "Approve high-impact praise before it enters Active Context.",
+      "impactMeta": "CVR impact {score}/100",
+      "approveCore": "Core Differentiator",
+      "approveStandard": "Approve strength",
+      "dismiss": "Dismiss",
+      "approveSuccess": "Strength staged to Active Context",
+      "approveError": "Could not stage strength. Try again.",
+      "alreadyStaged": "Already in Active Context",
+      "stagedBadge": "STAGED",
+      "readonlyKeywordCount": "{count, plural, one {# keyword surface} other {# keyword surfaces}}",
+      "readonlyHint": "Keyword surfaces are read-only here. Stage high-CVR strengths via Review Sentiment → Audit Queue below."
     },
     "asoAudit": {
       "sectionTitle": "ASO Asset Audit",
@@ -1243,14 +1263,37 @@
       "stageQuoteError": "Could not stage this quote. Try again."
     },
     "appSelector": {
-      "sectionLabel": "Review source",
-      "myApp": "🛡️ My App",
-      "myAppSubtitle": "Defensive — improve your own metadata",
-      "competitorPrefix": "⚔️",
-      "competitorSubtitle": "Offensive — exploit their weaknesses",
+      "sectionLabel": "Review source mode",
+      "modeToggleAria": "Select review source: Defensive or Offensive mode",
+      "myApp": "My App",
+      "myAppSubtitle": "Defensive Mode (QA / Retention)",
+      "competitorPrefix": "Competitor",
+      "competitorSubtitle": "Offensive Mode (Market Capture)",
       "loadingCompetitors": "Loading competitors…",
       "noCompetitors": "No tracked competitors yet",
       "noCompetitorsHint": "Add competitors in Competitor Spy to unlock this filter."
+    },
+    "growthMode": {
+      "defensiveDashboardTitle": "Quality & Retention Intelligence",
+      "defensiveDashboardSubtitle": "Defensive Mode — friction and bugs from your own users, prioritized by Impact %.",
+      "offensiveDashboardTitle": "Competitive Exploitation Intelligence",
+      "offensiveDashboardSubtitle": "Offensive Mode — rival review themes to counter in your store metadata.",
+      "expertTipLabel": "Expert Tip",
+      "defensiveTip": "Identify friction points and technical bugs reported by your users. Prioritize fixes based on Impact % to protect your rating.",
+      "offensiveTip": "Identify competitor review themes (e.g., UI bugs, paywall complaints) to target in your store metadata. Use these to position your app as the superior alternative.",
+      "tagProductImprovement": "Product Improvement",
+      "tagOppositionalTarget": "Oppositional Target",
+      "impactLabel": "Impact {pct}%"
+    },
+    "marketUxInsights": {
+      "title": "UX & Sentiment Insights",
+      "subtitle": "Qualitative category themes from Market Intelligence — routed here to keep keyword staging focused.",
+      "sourceMeta": "From AI Keyword Spotlight · {category} · {country}",
+      "kinds": {
+        "category_narrative": "Category narrative",
+        "aso_recommendation": "ASO recommendation",
+        "sentiment_theme": "Sentiment theme"
+      }
     },
     "recent": {
       "kicker": "Inbox",
@@ -1689,9 +1732,11 @@
       "marketIntelSlotDescription": "High-potential keyword opportunities and category trends surfaced from market data to expand reach and uncover gaps.",
       "marketIntelModuleTip": "Curate trending keywords from Market Intel to expand reach into underserved search demand.",
       "competitorSlotTitle": "Competitor Strengths",
-      "competitorSlotDescription": "Key strengths and successful messaging patterns from top competitors — benchmarked for differentiation in your listing.",
-      "competitorModuleTip": "Counter competitor strengths in your long description to differentiate your app.",
+      "competitorSlotDescription": "Audit-approved market-dominating strengths only — read-only in Active Context. Remove returns the signal to dismissed status in the vault.",
+      "competitorModuleTip": "Audit-approved strengths only. Remove dismisses the signal back to the vault — re-approve from Competitor Spy → Review Sentiment if needed.",
       "noActiveSignals": "No signals yet — explore Market Intel or Reviews to add powerful insights.",
+      "reconnecting": "Reconnecting…",
+      "reconnectingDetail": "Network connection changed. Retrying to load your Active Context signals.",
       "syncRequiredInline": "Sync required — run Sync Insights in Reviews to unlock review-derived signals.",
       "reviewInsightsSyncCta": "Sync Insights in Reviews",
       "syncExpiredHeaderWarning": "Sync expired — re-run Sync Insights to refresh pain points",
@@ -1717,6 +1762,34 @@
       "liveRankWatchlist": "Live Rank Watchlist",
       "otherKeywords": "Other",
       "openValidatorCta": "Open Keyword Validator"
+    },
+    "marketCapture": {
+      "title": "Market Capture",
+      "subtitle": "Dual listing strategies against {competitor} — review staged changes before applying to your draft.",
+      "generateCta": "Generate A/B Proposals ({credits, plural, one {# credit} other {# credits}})",
+      "generating": "Building oppositional + growth versions…",
+      "versionA": "Version A — Oppositional",
+      "versionB": "Version B — Growth",
+      "stagedChanges": "Staged Changes",
+      "stagedHint": "Approve fields to merge into your listing draft. Nothing is auto-applied.",
+      "rationale": "Strategic rationale",
+      "current": "Current",
+      "proposed": "Proposed",
+      "approve": "Approve",
+      "reject": "Reject",
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "applyApproved": "Apply approved to draft",
+      "appliedToast": "Approved staged changes applied to your listing draft.",
+      "noReport": "Run Market Capture to generate Version A (exploit rival pain points) and Version B (keyword growth).",
+      "fieldTitle": "Title",
+      "fieldShort": "Short description",
+      "fieldLong": "Long description",
+      "fieldWhatsNew": "What's New",
+      "chars": "{count} chars",
+      "density": "{percent}% keyword density",
+      "competitorPlaceholder": "Competitor App"
     },
     "form": {
       "appName": "App name",
@@ -1782,6 +1855,15 @@
       "confirmCreditsSpyLink": "Go to Competitor Spy →",
       "confirmCreditsYes": "Yes, Generate",
       "confirmCreditsCancel": "Cancel",
+      "generationGuardrail": {
+        "title": "Maximize Your Credit Value",
+        "body": "You currently have no insights in your Optimization Queue. Generating now will result in generic metadata. For the best ROI on your credits, we recommend adding at least 3 high-impact competitor vulnerabilities to your queue.",
+        "autoStage": "Auto-Stage Top 3 Insights",
+        "continueGeneric": "Continue with Generic Listing",
+        "autoStageSuccess": "{count, plural, one {# insight staged — starting generation…} other {# insights staged — starting generation…}}",
+        "autoStageEmpty": "No competitor vulnerabilities found to stage. Visit Competitor Spy or Reviews to add insights first.",
+        "autoStageError": "Could not auto-stage insights. Try again or continue with a generic listing."
+      },
       "autofill": {
         "button": "✦ Let AI Generate",
         "tooltip": "Drafts from app name and category • Tuned for Google Play ASO",
@@ -1815,6 +1897,26 @@
       "queueEmpty": "No specific feedback themes added yet. AI will generate standard strategic updates based on metadata defaults.",
       "queueLoading": "Loading queued feedback…"
     },
+    "signalCategorization": {
+      "title": "Categorize signal",
+      "description": "Manual entries must be classified before joining the optimization queue. This powers Cluster-to-Generate synthesis.",
+      "cancel": "Cancel",
+      "confirm": "Add to queue",
+      "clusters": {
+        "OFFENSIVE_GROWTH": {
+          "label": "Offensive growth",
+          "hint": "High-intent keywords and competitor gaps for discovery."
+        },
+        "DEFENSIVE_PAIN_POINT": {
+          "label": "Defensive pain point",
+          "hint": "User pain, weaknesses, and trust issues — prioritize for CVR."
+        },
+        "MARKET_INTEL": {
+          "label": "Market intel",
+          "hint": "Trending category keywords and demand gaps."
+        }
+      }
+    },
     "activeQueue": {
       "title": "Issues Queued for Optimization",
       "subtext": "Review themes below will be used by the AI to write improved store metadata.",
@@ -1839,8 +1941,11 @@
         "strategyCompetitorBody": "Pain points reported in rival app reviews — the AI highlights how your app avoids these problems in the generated copy.",
         "expectedResultLabel": "HOW TO USE:",
         "expectedResultBody": "Add issues from Review Insights → select a tone → click Generate. The AI incorporates all queued items automatically.",
-        "pillDefensive": "Your App Review",
-        "pillOffensive": "Competitor Review"
+        "pillDefensive": "Defensive · Product Improvement",
+        "pillOffensive": "Offensive · Oppositional Target",
+        "impactBadge": "Impact {pct}%",
+        "strategyProductImprovement": "Product Improvement",
+        "strategyOppositionalTarget": "Oppositional Target"
       },
       "removeSuccess": "Insight removed from queue.",
       "removeError": "Failed to remove insight. Please try again.",
@@ -1982,6 +2087,20 @@
       "shortDescClampedHint": "Length auto-adjusted to fit the 80-character limit — all content is complete and ready to upload.",
       "longLimitHint": "Google Play long description limit: 4,000 characters.",
       "longDescriptionHint": "Use clear sections, short paragraphs, and bullets where helpful. Avoid ALL CAPS spam; plain text pastes cleanly into Play Console.",
+      "strategyRationale": {
+        "heading": "Strategic Rationale",
+        "modeDefensive": "Defensive Mode (QA / Retention)",
+        "modeOffensive": "Offensive Mode (Market Capture)",
+        "intentLabel": "Strategic Intent",
+        "resolutionLabel": "Exploitation / Resolution Summary",
+        "roiLabel": "ROI Prediction"
+      },
+      "metadataVariant": {
+        "label": "Metadata version",
+        "ariaLabel": "Select metadata version",
+        "aggressive": "Aggressive",
+        "growth": "Growth"
+      },
       "regenerate": {
         "label": "Regenerate",
         "punchier": "Make it punchier",
@@ -2580,16 +2699,25 @@
     "title": "Market Intelligence",
     "subheadline": "See what's ranking at the top of your category — and the keyword patterns driving those apps. Updated every 6 hours.",
     "howItWorksSummary": "How this works",
-    "howItWorksDetail": "We pull the live top-chart ranking directly from Google Play for any category and market you choose. The AI Keyword Spotlight analyses the top 10 app titles and descriptions to surface the keyword themes dominating the chart right now — so you can align your listing before your next optimisation run.",
+    "howItWorksDetail": "We pull the live top-chart ranking directly from Google Play for any category and market you choose. The AI Keyword Spotlight analyses the top 10 app titles and descriptions, then categorises signals into Growth Keywords and Competitor Threats for staging — qualitative UX and sentiment themes are routed to Review Insights.",
     "spotlight": {
-      "curationHint": "Select trending keywords to stage into Active Context. Staged keywords sync to Market Intelligence Signals in the AI Listing Optimizer.",
-      "stageSelected": "Stage {count, plural, one {# keyword} other {# keywords}} to Active Context",
-      "stageSelectedEmpty": "Select keywords to stage",
+      "title": "AI Keyword Spotlight",
+      "subtitle": "Growth keywords and competitor threats — prioritised by volume and CVR impact",
+      "growthKeywords": "Growth keywords",
+      "competitorThreats": "Competitor threats",
+      "emptyGrowth": "No growth keywords identified for this chart.",
+      "emptyThreats": "No competitor threats detected in the top 10.",
+      "threatSource": "{app} · rank #{rank}",
+      "priorityMeta": "Vol {volume} · CVR {cvr} · priority {priority}",
+      "stagedBadge": "STAGED",
+      "curationHint": "Select growth keywords or competitor threats to stage into Active Context. Items already staged are flagged to avoid duplicate work.",
+      "stageSelected": "Stage {count, plural, one {# signal} other {# signals}} to Active Context",
+      "stageSelectedEmpty": "Select signals to stage",
       "staging": "Staging…",
-      "stageSuccess": "{count, plural, one {# keyword staged} other {# keywords staged}} to Active Context",
-      "stageAlreadyAll": "Selected keywords are already in Active Context",
-      "stageError": "Could not stage keywords. Try again.",
-      "allStaged": "All trending keywords are in Active Context"
+      "stageSuccess": "{count, plural, one {# signal staged} other {# signals staged}} to Active Context",
+      "stageAlreadyAll": "Selected signals are already in Active Context",
+      "stageError": "Could not stage signals. Try again.",
+      "allStaged": "All actionable signals are in Active Context"
     }
   },
   "screenshotStudio": {

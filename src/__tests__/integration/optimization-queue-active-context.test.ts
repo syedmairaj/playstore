@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { validateQueuePayload } from "@/lib/client/validate-and-queue";
-import { reviewExploitToQueueInputs } from "@/lib/client/optimization-queue-client";
+import {
+  competitorKeywordsToQueueInputs,
+  keywordGapsToQueueInputs,
+  reviewExploitToQueueInputs,
+} from "@/lib/client/optimization-queue-client";
+import {
+  isCompetitorSpyQueueItem,
+  partitionQueueForActiveContext,
+} from "@/lib/client/active-context-from-queue";
 import { partitionQueueItemsBySignalType } from "@/lib/staging/optimizer-context-adapter";
 import type { OptimizationQueueItem } from "@/lib/optimization-queue";
+import { resolveQueueItemCategory } from "@/lib/optimization-queue/queue-routing";
 
 describe("optimization queue active context", () => {
   it("rejects empty queue payloads", () => {
@@ -68,5 +77,163 @@ describe("optimization queue active context", () => {
     expect(partitioned.review_insights[0]?.payload.content).toBe(
       "Aggressive Paywall Blocks Features",
     );
+  });
+
+  it("routes competitor spy keyword gaps to Competitor Strengths (not Market Intel)", () => {
+    const inputs = keywordGapsToQueueInputs(
+      ["blood sugar tracker"],
+      "Rival App",
+      "com.rival.app",
+    );
+    const validation = validateQueuePayload(inputs, "en");
+    expect(validation.ok).toBe(true);
+
+    const queueItems: OptimizationQueueItem[] = validation.items.map((input, idx) => ({
+      id: `spy-gap-${idx}`,
+      type: input.type,
+      category: resolveQueueItemCategory({
+        type: input.type,
+        category: input.category,
+        metadata: input.metadata,
+        source: input.source,
+      }),
+      content: input.content,
+      source: input.source,
+      language: "en",
+      stagedAt: new Date().toISOString(),
+      metadata: input.metadata ?? {},
+    }));
+
+    expect(isCompetitorSpyQueueItem(queueItems[0]!)).toBe(true);
+
+    const partitioned = partitionQueueForActiveContext(queueItems);
+    expect(partitioned.market).toHaveLength(0);
+    expect(partitioned.offensive).toHaveLength(1);
+    expect(partitioned.competitorSpyPills).toHaveLength(0);
+  });
+
+  it("excludes legacy keyword curation from competitor spy pills", () => {
+    const inputs = competitorKeywordsToQueueInputs(
+      [{ term: "glucose monitor", category: "high_volume" }],
+      "Rival App",
+      "com.rival.app",
+    );
+    const validation = validateQueuePayload(inputs, "en");
+    expect(validation.ok).toBe(true);
+
+    const queueItems: OptimizationQueueItem[] = validation.items.map((input, idx) => ({
+      id: `spy-kw-${idx}`,
+      type: input.type,
+      category: (input.category ?? "strength") as OptimizationQueueItem["category"],
+      content: input.content,
+      source: input.source,
+      language: "en",
+      stagedAt: new Date().toISOString(),
+      metadata: input.metadata ?? {},
+    }));
+
+    const partitioned = partitionQueueForActiveContext(queueItems);
+    expect(partitioned.competitorSpyPills).toHaveLength(0);
+  });
+
+  it("includes ACTIVE competitor_strength in competitor spy pills", () => {
+    const queueItems: OptimizationQueueItem[] = [
+      {
+        id: "strength-1",
+        type: "competitor_strength",
+        category: "strength",
+        content: "barcode scanner",
+        source: "competitor_spy",
+        language: "en",
+        stagedAt: new Date().toISOString(),
+        status: "ACTIVE",
+        metadata: {
+          from_strength_audit: true,
+        },
+      },
+    ];
+
+    const partitioned = partitionQueueForActiveContext(queueItems);
+    expect(partitioned.competitorSpyPills).toHaveLength(1);
+    expect(partitioned.competitorSpyPills[0]?.label).toBe("barcode scanner");
+  });
+
+  it("excludes AUDIT strengths from competitor spy pills", () => {
+    const queueItems: OptimizationQueueItem[] = [
+      {
+        id: "audit-only",
+        type: "competitor_strength",
+        category: "strength",
+        content: "pending strength",
+        source: "competitor_spy",
+        language: "en",
+        stagedAt: new Date().toISOString(),
+        status: "AUDIT",
+        metadata: {},
+      },
+    ];
+
+    const partitioned = partitionQueueForActiveContext(queueItems);
+    expect(partitioned.competitorSpyPills).toHaveLength(0);
+  });
+
+  it("excludes legacy metadata-only flags without top-level status", () => {
+    const queueItems: OptimizationQueueItem[] = [
+      {
+        id: "strength-vault",
+        type: "competitor_strength",
+        category: "strength",
+        content: "offline sync",
+        source: "competitor_spy",
+        language: "en",
+        stagedAt: new Date().toISOString(),
+        metadata: {
+          move_to_active_context: true,
+          origin_module: "competitor_spy",
+        },
+      },
+    ];
+
+    const partitioned = partitionQueueForActiveContext(queueItems);
+    expect(partitioned.competitorSpyPills).toHaveLength(0);
+  });
+
+  it("isolates competitor spy items by vault locale branch", () => {
+    const enItem: OptimizationQueueItem = {
+      id: "en-only",
+      type: "competitor_strength",
+      category: "strength",
+      content: "EN strength",
+      source: "competitor_spy",
+      language: "en",
+      stagedAt: new Date().toISOString(),
+      status: "ACTIVE",
+      metadata: {
+        origin_module: "competitor_spy",
+      },
+    };
+    const arItem: OptimizationQueueItem = {
+      id: "ar-only",
+      type: "competitor_strength",
+      category: "strength",
+      content: "كلمة عربية",
+      source: "competitor_spy",
+      language: "ar",
+      stagedAt: new Date().toISOString(),
+      status: "ACTIVE",
+      metadata: {
+        origin_module: "competitor_spy",
+      },
+    };
+
+    const enPartition = partitionQueueForActiveContext(
+      [enItem, arItem].filter((i) => i.language === "en"),
+    );
+    const arPartition = partitionQueueForActiveContext(
+      [enItem, arItem].filter((i) => i.language === "ar"),
+    );
+
+    expect(enPartition.competitorSpyPills.map((p) => p.label)).toEqual(["EN strength"]);
+    expect(arPartition.competitorSpyPills.map((p) => p.label)).toEqual(["كلمة عربية"]);
   });
 });

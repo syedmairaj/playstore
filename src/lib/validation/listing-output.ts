@@ -86,6 +86,31 @@ export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
         hypothesis: z.string().min(1).max(300),
       })
       .optional(),
+
+    // ── v13 ASO Growth Strategy Mode ─────────────────────────────────────────
+    strategicRationale: z
+      .object({
+        strategicIntent: z.string().min(1).max(500),
+        exploitationResolutionSummary: z.string().min(1).max(800),
+        roiPrediction: z.string().min(1).max(500),
+      })
+      .optional(),
+    listingVariants: z
+      .object({
+        aggressive: z.object({
+          title: z.string().min(1).max(30),
+          shortDescription: z.string().min(1).max(80),
+          fullDescription: z.string().min(1).max(4000),
+          whatsNew: z.string().min(1).max(500).optional(),
+        }),
+        growth: z.object({
+          title: z.string().min(1).max(30),
+          shortDescription: z.string().min(1).max(80),
+          fullDescription: z.string().min(1).max(4000),
+          whatsNew: z.string().min(1).max(500).optional(),
+        }),
+      })
+      .optional(),
   }),
 );
 

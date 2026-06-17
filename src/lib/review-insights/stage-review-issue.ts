@@ -80,6 +80,10 @@ export async function stageReviewIssueToActiveContext(
   const stagedAt = new Date().toISOString();
   const impactScore = Math.round(input.issue.impact * 100);
   const competitorName = input.competitorName?.trim() || null;
+  const growthMode = competitorName ? "offensive" : "defensive";
+  const growthStrategyTag = competitorName
+    ? "oppositional_target"
+    : "product_improvement";
 
   try {
     const queueResult = await addToOptimizationQueue(
@@ -103,7 +107,10 @@ export async function stageReviewIssueToActiveContext(
             insight_category: category,
             severity: input.issue.severity,
             impact_percent: impactScore,
+            impactPercent: impactScore,
             original_impact_score: impactScore,
+            growth_mode: growthMode,
+            growth_strategy_tag: growthStrategyTag,
             description,
             quote: input.issue.quote?.trim() || "",
             package_name: input.packageName,

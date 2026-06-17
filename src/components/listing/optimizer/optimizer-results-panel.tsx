@@ -31,6 +31,10 @@ import { OptimizerAsoScoreCard } from "@/components/listing/optimizer/optimizer-
 import { OptimizerListingSkeleton } from "@/components/listing/optimizer/optimizer-listing-skeleton";
 import { OptimizerResultList } from "@/components/listing/optimizer/optimizer-result-list";
 import { KeywordStrategyPanel } from "@/components/listing/optimizer/keyword-strategy-panel";
+import {
+  MetadataVariantToggle,
+  StrategicRationaleCard,
+} from "@/components/listing/optimizer/strategic-rationale-card";
 
 type ApiMeta = {
   model?: string;
@@ -115,6 +119,9 @@ type Props = {
   canSaveToTracker?: boolean;
   /** Snapshot of queuedImprovements at generation time — drives Optimization Factors pills. */
   generationQueueSnapshot?: ListingImprovementItem[];
+  strategyMode?: import("@/lib/optimization-queue/resolve-strategy-mode").ActiveContextStrategyMode;
+  metadataVariant?: "aggressive" | "growth";
+  onMetadataVariantChange?: (variant: "aggressive" | "growth") => void;
 };
 
 export function OptimizerResultsPanel({
@@ -155,6 +162,9 @@ export function OptimizerResultsPanel({
   showGenerateSuccess = false,
   canSaveToTracker = false,
   generationQueueSnapshot = [],
+  strategyMode = "defensive",
+  metadataVariant = "growth",
+  onMetadataVariantChange,
 }: Props) {
   const t = useTranslations("optimizer");
 
@@ -237,6 +247,25 @@ export function OptimizerResultsPanel({
         >
           {t("results.asoScoreUnavailable")}
         </div>
+      ) : null}
+
+      {result.strategicRationale ? (
+        <StrategicRationaleCard
+          rationale={result.strategicRationale}
+          strategyMode={strategyMode}
+          isRtl={isRtl}
+          className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300"
+        />
+      ) : null}
+
+      {result.listingVariants ? (
+        <MetadataVariantToggle
+          value={metadataVariant}
+          onChange={(v) => onMetadataVariantChange?.(v)}
+          hasAggressive={Boolean(result.listingVariants.aggressive)}
+          hasGrowth={Boolean(result.listingVariants.growth)}
+          isRtl={isRtl}
+        />
       ) : null}
 
       {/* ── Strategy Summary card (v11) ────────────────────────────────────── */}

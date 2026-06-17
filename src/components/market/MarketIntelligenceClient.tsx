@@ -6,7 +6,9 @@ import { Coins, Lock, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { TopChartApp } from "@/lib/play-store/fetch-top-charts";
-import type { KeywordSpotlightResult } from "@/app/api/market/keyword-spotlight/route";
+import type { MarketIntelligenceReport } from "@/lib/market/market-intel-signal-types";
+import { coerceMarketIntelligenceReport } from "@/lib/market/categorize-market-intel";
+import { persistMarketUxInsights } from "@/lib/client/market-ux-insights-store";
 import { SELECTABLE_CATEGORIES, getCategoryLabel } from "@/lib/market/category-labels";
 import { TopChartRow, TopChartRowSkeleton } from "@/components/market/top-chart-row";
 import { SpotlightKeywordCuration } from "@/components/market/spotlight-keyword-curation";
@@ -147,7 +149,7 @@ function SpotlightLockedCard({
 const SPOTLIGHT_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 h
 
 type SpotlightCacheEntry = {
-  spotlight: KeywordSpotlightResult;
+  report: MarketIntelligenceReport;
   savedAt: number; // Date.now()
 };
 
@@ -159,17 +161,23 @@ function readSpotlightCache(
   workspaceId: string,
   category: string,
   country: string,
-): KeywordSpotlightResult | null {
+): MarketIntelligenceReport | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(spotlightCacheKey(workspaceId, category, country));
     if (!raw) return null;
-    const entry = JSON.parse(raw) as SpotlightCacheEntry;
+    const entry = JSON.parse(raw) as SpotlightCacheEntry & {
+      spotlight?: unknown;
+    };
     if (Date.now() - entry.savedAt > SPOTLIGHT_CACHE_TTL_MS) {
       sessionStorage.removeItem(spotlightCacheKey(workspaceId, category, country));
       return null;
     }
-    return entry.spotlight;
+    const payload = entry.report ?? entry.spotlight;
+    return coerceMarketIntelligenceReport(
+      payload,
+      { category, country },
+    );
   } catch {
     return null;
   }
@@ -179,11 +187,11 @@ function writeSpotlightCache(
   workspaceId: string,
   category: string,
   country: string,
-  spotlight: KeywordSpotlightResult,
+  report: MarketIntelligenceReport,
 ): void {
   if (typeof window === "undefined") return;
   try {
-    const entry: SpotlightCacheEntry = { spotlight, savedAt: Date.now() };
+    const entry: SpotlightCacheEntry = { report, savedAt: Date.now() };
     sessionStorage.setItem(spotlightCacheKey(workspaceId, category, country), JSON.stringify(entry));
   } catch { /* quota — non-fatal */ }
 }
@@ -209,7 +217,7 @@ export function MarketIntelligenceClient({
   const [collection, setCollection] = useState<Collection>("TOP_FREE");
 
   const [apps,          setApps]          = useState<TopChartApp[]>([]);
-  const [spotlight,     setSpotlight]     = useState<KeywordSpotlightResult | null>(null);
+  const [report,         setReport]         = useState<MarketIntelligenceReport | null>(null);
   // "locked" = chart loaded, spotlight not yet purchased for this category/country
   // Initialised to false if a cached spotlight exists — user doesn't re-pay on refresh.
   const [spotlightLocked, setSpotlightLocked] = useState(true);
@@ -240,10 +248,11 @@ export function MarketIntelligenceClient({
   useEffect(() => {
     const cached = readSpotlightCache(workspaceId, category, country);
     if (cached) {
-      setSpotlight(cached);
+      setReport(cached);
       setSpotlightLocked(false);
+      persistMarketUxInsights(workspaceId, cached.uxSentimentInsights, { category, country });
     } else {
-      setSpotlight(null);
+      setReport(null);
       setSpotlightLocked(true);
     }
   }, [workspaceId, category, country]);
@@ -298,15 +307,22 @@ export function MarketIntelligenceClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          apps: apps.slice(0, 10).map((a) => ({ title: a.title, summary: a.summary })),
+          apps: apps.slice(0, 10).map((a, index) => ({
+            appId: a.appId,
+            title: a.title,
+            summary: a.summary,
+            rank: index + 1,
+          })),
           category,
           country,
           workspaceId,
+          ownAppId: ownAppId ?? null,
         }),
       });
       const json = await res.json() as {
         ok: boolean;
-        spotlight?: KeywordSpotlightResult;
+        report?: MarketIntelligenceReport;
+        spotlight?: unknown;
         creditsUsed?: number;
         creditsRemaining?: number;
         error?: { message: string; code?: string };
@@ -321,11 +337,28 @@ export function MarketIntelligenceClient({
         return;
       }
 
-      if (json.spotlight) {
-        // Persist to sessionStorage so refresh doesn't lose the result
-        writeSpotlightCache(workspaceId, category, country, json.spotlight);
-        setSpotlight(json.spotlight);
+      const chartApps = apps.slice(0, 10).map((a, index) => ({
+        appId: a.appId,
+        title: a.title,
+        summary: a.summary,
+        rank: index + 1,
+      }));
+      const nextReport =
+        json.report ??
+        coerceMarketIntelligenceReport(json.spotlight, {
+          category,
+          country,
+          ownAppId: ownAppId ?? null,
+        }, chartApps);
+
+      if (nextReport) {
+        writeSpotlightCache(workspaceId, category, country, nextReport);
+        setReport(nextReport);
         setSpotlightLocked(false);
+        persistMarketUxInsights(workspaceId, nextReport.uxSentimentInsights, {
+          category,
+          country,
+        });
         if (json.creditsUsed) {
           toast.success(`AI Spotlight unlocked · ${json.creditsUsed} credits used`);
         }
@@ -335,7 +368,7 @@ export function MarketIntelligenceClient({
     } finally {
       setLoadingSpot(false);
     }
-  }, [apps, category, country, workspaceId]);
+  }, [apps, category, country, workspaceId, ownAppId]);
 
   useEffect(() => {
     loadChart();
@@ -469,7 +502,7 @@ export function MarketIntelligenceClient({
 
         {/* Right: AI spotlight (gated) */}
         <div className="lg:sticky lg:top-6 lg:self-start space-y-4">
-          {spotlightLocked || (!spotlight && !loadingSpot) ? (
+          {spotlightLocked || (!report && !loadingSpot) ? (
             <SpotlightLockedCard
               onUnlock={fetchSpotlight}
               loading={loadingSpot || loadingChart}
@@ -477,10 +510,10 @@ export function MarketIntelligenceClient({
           ) : (
             <>
               {loadingSpot ? (
-                <KeywordSpotlightCard spotlight={spotlight} loading isRtl={isRtl} />
-              ) : spotlight ? (
+                <KeywordSpotlightCard report={report} loading isRtl={isRtl} />
+              ) : report ? (
                 <SpotlightKeywordCuration
-                  spotlight={spotlight}
+                  report={report}
                   workspaceId={workspaceId}
                   appId={targetAppId}
                   isRtl={isRtl}
@@ -494,7 +527,7 @@ export function MarketIntelligenceClient({
                 />
               ) : null}
               {/* Refresh spotlight — costs credits again */}
-              {spotlight && !loadingSpot && (
+              {report && !loadingSpot && (
                 <button
                   type="button"
                   onClick={() => fetchSpotlight({ forceRefresh: true })}
@@ -513,7 +546,7 @@ export function MarketIntelligenceClient({
           )}
 
           {/* What to do next — shown after unlock */}
-          {!spotlightLocked && spotlight && !loadingSpot && (
+          {!spotlightLocked && report && !loadingSpot && (
             <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
               {/* Secondary guidance */}
               <div className="rounded-2xl border border-zinc-800 bg-white/[0.02] p-4">

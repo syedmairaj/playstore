@@ -86,6 +86,10 @@ export function getStagingFlowMessages(locale: string) {
     continueLater: isArabic
       ? "المتابعة لاحقاً"
       : "Continue Later",
+
+    deprecatedStrengthStaging: isArabic
+      ? "تم إيقاف إضافة نقاط القوة من هنا. اعتمد الإشارات عالية التأثير من قائمة تدقيق مشاعر المراجعات أدناه."
+      : "Direct strength staging is deprecated. Approve high-impact signals from the Review Sentiment Audit Queue instead.",
   };
 }
 
@@ -107,116 +111,25 @@ export function getStagingFlowMessages(locale: string) {
  * @returns Staging result with signal ID
  */
 export async function stageKeywordsNoNavigation(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  selectedKeywords: KeywordPayload[],
-  competitorName: string,
-  competitorId: string,
-  appId: string | undefined,
+  _supabase: SupabaseClient,
+  _workspaceId: string,
+  _selectedKeywords: KeywordPayload[],
+  _competitorName: string,
+  _competitorId: string,
+  _appId: string | undefined,
   locale: string
 ): Promise<StagingResult> {
   const isArabic = locale === "ar";
   const messages = getStagingFlowMessages(locale);
   const timestamp = new Date().toISOString();
 
-  console.log("[CompetitorSpyStagingFlow] 📍 STARTING STAGING (NO NAVIGATION):", {
-    workspaceId,
-    keywordCount: selectedKeywords.length,
-    competitorId,
-    competitorName,
-    appId,
-    locale,
+  // Legacy keyword curation → Competitor Strengths path is deprecated.
+  return {
+    success: false,
+    message: messages.deprecatedStrengthStaging,
     timestamp,
-  });
-
-  // ═════════════════════════════════════════════════════════════════════════
-  // VALIDATION: Check keyword payloads
-  // ═════════════════════════════════════════════════════════════════════════
-
-  if (!selectedKeywords || selectedKeywords.length === 0) {
-    console.warn("[CompetitorSpyStagingFlow] ⚠️ No keywords selected", {
-      workspaceId,
-      competitorId,
-    });
-
-    return {
-      success: false,
-      message: messages.emptySelection,
-      timestamp,
-      language: isArabic ? "ar" : "en",
-    };
-  }
-
-  // Validate each keyword has term and category
-  const invalidKeywords = selectedKeywords.filter(
-    (kw) => !kw.term || !kw.category || kw.term.trim().length === 0
-  );
-
-  if (invalidKeywords.length > 0) {
-    console.error("[CompetitorSpyStagingFlow] ❌ Invalid keyword payloads:", {
-      totalCount: selectedKeywords.length,
-      invalidCount: invalidKeywords.length,
-      invalidKeywords,
-    });
-
-    return {
-      success: false,
-      message: messages.invalidKeywords,
-      timestamp,
-      language: isArabic ? "ar" : "en",
-    };
-  }
-
-  try {
-    const { competitorKeywordsToQueueInputs, addToOptimizationQueueClient } =
-      await import("@/lib/client/optimization-queue-client");
-
-    const queueItems = competitorKeywordsToQueueInputs(
-      selectedKeywords,
-      competitorName,
-      competitorId,
-    );
-
-    const result = await addToOptimizationQueueClient(
-      workspaceId,
-      isArabic ? "ar" : "en",
-      queueItems,
-      appId,
-    );
-
-    console.log("[CompetitorSpyStagingFlow] ✅ QUEUE ADD SUCCESSFUL:", {
-      addedCount: result.addedCount,
-      keywordCount: selectedKeywords.length,
-      competitorName,
-      timestamp,
-    });
-
-    return {
-      success: true,
-      signalId: result.items[0]?.id,
-      message: messages.stagingSuccess,
-      timestamp,
-      language: isArabic ? "ar" : "en",
-    };
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-
-    console.error("[CompetitorSpyStagingFlow] ❌ STAGING FAILED:", {
-      workspaceId,
-      competitorId,
-      keywordCount: selectedKeywords.length,
-      errorMessage: errorMsg,
-      errorType: err instanceof Error ? err.constructor.name : typeof err,
-      timestamp,
-    });
-
-    return {
-      success: false,
-      message: isArabic ? `خطأ: ${errorMsg}` : `Error: ${errorMsg}`,
-      timestamp,
-      language: isArabic ? "ar" : "en",
-    };
-  }
+    language: isArabic ? "ar" : "en",
+  };
 }
 
 /**

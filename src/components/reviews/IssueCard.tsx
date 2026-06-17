@@ -63,8 +63,10 @@ export function IssueCard({
 }: IssueCardProps) {
   const locale = useLocale();
   const t = useTranslations("reviews.commonIssues");
+  const tGrowth = useTranslations("reviews.growthMode");
   const config = SEVERITY_CONFIG[issue.severity] ?? SEVERITY_CONFIG.MEDIUM;
   const impactPct = Math.round(issue.impact * 100);
+  const isOffensive = Boolean(competitorName?.trim());
   const [staging, setStaging] = useState(false);
   const [staged, setStaged] = useState(isStaged);
 
@@ -166,10 +168,24 @@ export function IssueCard({
         )}
 
         {staged ? (
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
-            <Check className="size-3.5 shrink-0" aria-hidden />
-            {t("inActiveContext")}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
+              <Check className="size-3.5 shrink-0" aria-hidden />
+              {t("inActiveContext")}
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center rounded-md px-2 py-1 text-[10px] font-semibold",
+                isOffensive
+                  ? "bg-orange-500/15 text-orange-300 ring-1 ring-orange-500/25"
+                  : "bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/25",
+              )}
+            >
+              {isOffensive
+                ? tGrowth("tagOppositionalTarget")
+                : tGrowth("tagProductImprovement")}
+            </span>
+          </div>
         ) : (
           <Button
             type="button"

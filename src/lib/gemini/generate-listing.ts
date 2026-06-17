@@ -19,6 +19,68 @@ import {
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
 
+type ListingVariantFields = {
+  title: string;
+  shortDescription: string;
+  fullDescription: string;
+  whatsNew?: string;
+};
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+  return v as Record<string, unknown>;
+}
+
+function parseStrategicRationale(
+  raw: unknown,
+): ListingGenerationOutput["strategicRationale"] | null {
+  const o = asRecord(raw);
+  if (!o) return null;
+  const strategicIntent =
+    typeof o.strategicIntent === "string" ? o.strategicIntent.trim() : "";
+  const exploitationResolutionSummary =
+    typeof o.exploitationResolutionSummary === "string"
+      ? o.exploitationResolutionSummary.trim()
+      : "";
+  const roiPrediction =
+    typeof o.roiPrediction === "string" ? o.roiPrediction.trim() : "";
+  if (!strategicIntent || !exploitationResolutionSummary || !roiPrediction) {
+    return null;
+  }
+  return {
+    strategicIntent: strategicIntent.slice(0, 500),
+    exploitationResolutionSummary: exploitationResolutionSummary.slice(0, 800),
+    roiPrediction: roiPrediction.slice(0, 500),
+  };
+}
+
+function parseVariantSlice(raw: unknown): ListingVariantFields | null {
+  const o = asRecord(raw);
+  if (!o) return null;
+  const title = typeof o.title === "string" ? o.title.trim() : "";
+  const shortDescription =
+    typeof o.shortDescription === "string" ? o.shortDescription.trim() : "";
+  const fullDescription =
+    typeof o.fullDescription === "string" ? o.fullDescription.trim() : "";
+  if (!title || !shortDescription || !fullDescription) return null;
+  const whatsNew =
+    typeof o.whatsNew === "string" && o.whatsNew.trim()
+      ? o.whatsNew.trim().slice(0, 500)
+      : undefined;
+  return { title, shortDescription, fullDescription, ...(whatsNew ? { whatsNew } : {}) };
+}
+
+function parseListingVariants(
+  raw: unknown,
+): ListingGenerationOutput["listingVariants"] | null {
+  const o = asRecord(raw);
+  if (!o) return null;
+  const aggressive = parseVariantSlice(o.aggressive);
+  const growth = parseVariantSlice(o.growth);
+  if (!aggressive || !growth) return null;
+  return { aggressive, growth };
+}
+
 // ── Structured-output schema ──────────────────────────────────────────────────
 // All keys are camelCase — matching the system prompt exactly (v5) so Gemini
 // never sees a contradiction between responseSchema and the text instructions.
@@ -74,6 +136,41 @@ const LISTING_RESPONSE_SCHEMA = {
     strategySummary: { type: SchemaType.STRING },
     // ctaSuggestion: single hero CTA (≤120 chars) — the best install call-to-action
     ctaSuggestion: { type: SchemaType.STRING },
+    strategicRationale: {
+      type: SchemaType.OBJECT,
+      properties: {
+        strategicIntent: { type: SchemaType.STRING },
+        exploitationResolutionSummary: { type: SchemaType.STRING },
+        roiPrediction: { type: SchemaType.STRING },
+      },
+      required: ["strategicIntent", "exploitationResolutionSummary", "roiPrediction"],
+    },
+    listingVariants: {
+      type: SchemaType.OBJECT,
+      properties: {
+        aggressive: {
+          type: SchemaType.OBJECT,
+          properties: {
+            title: { type: SchemaType.STRING },
+            shortDescription: { type: SchemaType.STRING },
+            fullDescription: { type: SchemaType.STRING },
+            whatsNew: { type: SchemaType.STRING },
+          },
+          required: ["title", "shortDescription", "fullDescription"],
+        },
+        growth: {
+          type: SchemaType.OBJECT,
+          properties: {
+            title: { type: SchemaType.STRING },
+            shortDescription: { type: SchemaType.STRING },
+            fullDescription: { type: SchemaType.STRING },
+            whatsNew: { type: SchemaType.STRING },
+          },
+          required: ["title", "shortDescription", "fullDescription"],
+        },
+      },
+      required: ["aggressive", "growth"],
+    },
   },
   required: [
     "title",
@@ -112,6 +209,9 @@ const STRICT_RETRY_ADDENDUM =
   "abTestVariant (object with titleB ≤30 chars + hypothesis ≤300 chars), " +
   "strategicNote (≤400 chars — one sentence: signals used), " +
   "strategySummary (≤400 chars — one consultant-grade sentence: Fixed X + Captured Y + Converted Z + Applied tone). " +
+  "strategicRationale (object: strategicIntent + exploitationResolutionSummary + roiPrediction). " +
+  "listingVariants (object: aggressive + growth — each with title, shortDescription, fullDescription, whatsNew). " +
+  "Root title/shortDescription/fullDescription/whatsNew MUST match listingVariants.growth. " +
   "Return ONLY the JSON object — no prose, no markdown.";
 
 export type GenerateListingWithGeminiResult = {
@@ -156,7 +256,7 @@ async function attemptGeneration(
       // ~600 for core fields + ~800 for v8 fields (whatsNew, screenshotCaptions,
       // abTestVariant) + ~400 for keywords/CTAs/tips. v9 prompt generates richer
       // copy across all fields; 4096 was too tight and caused MAX_TOKENS truncation.
-      maxOutputTokens: 8192,
+      maxOutputTokens: 16384,
     },
   });
 
@@ -264,6 +364,12 @@ async function attemptGeneration(
     // backward-compat: keep strategicNote if present
     ...(typeof clampedRecord.strategicNote === "string" && clampedRecord.strategicNote.trim()
       ? { strategicNote: clampedRecord.strategicNote.trim().slice(0, 400) }
+      : {}),
+    ...(parseStrategicRationale(clampedRecord.strategicRationale)
+      ? { strategicRationale: parseStrategicRationale(clampedRecord.strategicRationale)! }
+      : {}),
+    ...(parseListingVariants(clampedRecord.listingVariants)
+      ? { listingVariants: parseListingVariants(clampedRecord.listingVariants)! }
       : {}),
   };
   let asoScorePartial = false;
