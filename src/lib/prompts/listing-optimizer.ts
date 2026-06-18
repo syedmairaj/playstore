@@ -2,8 +2,9 @@ import type { ListingOptimizerInput, ToneStyle } from "@/lib/types/listing";
 import type { ClusterSynthesisPayload } from "@/lib/optimization-queue/build-active-context-synthesis";
 import { activeContextHasSignals } from "@/lib/optimization-queue/build-active-context-synthesis";
 import { buildStrategyModePromptBlock } from "@/lib/prompts/aso-strategy-mode";
+import { buildOrchestrationProtocolPromptBlock } from "@/lib/prompts/listing-orchestration-protocol";
 
-const PROMPT_VERSION = "listing-optimizer-v15.0";
+const PROMPT_VERSION = "listing-optimizer-v16.0";
 
 export function getListingOptimizerPromptVersion(): string {
   return PROMPT_VERSION;
@@ -445,6 +446,15 @@ function buildSystemMessage(targetArabic: boolean): string {
       "growth = sustainable conversion (trust, clarity, retention). " +
       "Root title/shortDescription/fullDescription/whatsNew MUST equal listingVariants.growth values.",
 
+    // ── v16 Orchestration Protocol ───────────────────────────────────────────
+    "  orchestration: object — MANDATORY. Three-phase discrete modules for independent UI regenerate:",
+    "    protocolVersion: \"1.0\"",
+    "    modules.anchor: { moduleId:\"anchor\", title≤30, lockedKeywords[], aiSuggestedKeywords[], keywordAnchor, hybridRationale? }",
+    "    modules.conversion: { moduleId:\"conversion\", activeStrategyProfile, shortVariations[3], selectedVariationId }",
+    "      shortVariations MUST include variationId defensive | offensive | primary — each ≤80 chars + rationale.",
+    "    modules.expansion: { moduleId:\"expansion\", keywordAnchor, blocks{ hook, features{categories[]}, trustClosing }, assembledFullDescription≤4000 }",
+    "  ROOT SYNC: title=anchor.title; shortDescription=primary variation; fullDescription=assembledFullDescription.",
+
     // ── v8 fields (unchanged) ────────────────────────────────────────────────
     "  whatsNew: string ≤500 chars. Play Store 'What's New' release notes. " +
       "SYNTHESIS PRIORITY 1 (FIX): If review issues are present, MUST open with the primary fix/resolution. " +
@@ -761,6 +771,23 @@ function buildUserMessage(
     targetArabic,
   });
 
+  const primaryPainPoint =
+    input.topStagedIssues?.[0]?.label ??
+    (hasStructuredContext
+      ? activeContext!.defensive.find(
+          (s) => s.type === "review_pain_point" || s.type === "feature_request",
+        )?.label
+      : undefined) ??
+    reviewIssues[0];
+
+  const orchestrationBlock = buildOrchestrationProtocolPromptBlock({
+    targetArabic,
+    lockedKeywords: keywords,
+    strategyMode: input.strategyMode ?? "defensive",
+    topReviewInsights: (input.topStagedIssues ?? []).map((i) => i.label),
+    primaryPainPoint,
+  });
+
   // ── Final quality checklist ──────────────────────────────────────────────
   const reminderBlock = [
     "",
@@ -798,6 +825,7 @@ function buildUserMessage(
       "Covers all signal types present (review fix / market keywords / competitor / tone)?",
     "15. strategicRationale: all three sub-fields present? References Impact % and Strategy Mode?",
     "16. listingVariants: aggressive + growth both complete? Root fields match growth variant?",
+    "17. orchestration: all three modules present? keywordAnchor consistent? primary short = root shortDescription?",
     "If ANY item fails — rewrite the affected field. Then output the single JSON object.",
   ].join("\n");
 
@@ -806,6 +834,7 @@ function buildUserMessage(
     optimizationInputsBlock,
     keywordTrackerBlock,
     strategyModeBlock,
+    orchestrationBlock,
     synthesisBlock,
     refinement,
     reminderBlock,

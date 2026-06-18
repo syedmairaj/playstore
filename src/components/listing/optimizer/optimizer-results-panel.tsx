@@ -35,6 +35,10 @@ import {
   MetadataVariantToggle,
   StrategicRationaleCard,
 } from "@/components/listing/optimizer/strategic-rationale-card";
+import { ModularListingPanel } from "@/components/listing/optimizer/modular-listing-panel";
+import type { ModularListingBlockId, ModularListingState } from "@/lib/listing/modular-listing.types";
+import { EMPTY_MODULAR_LISTING_STATE } from "@/lib/listing/modular-listing.types";
+import type { ModularLoadingState } from "@/hooks/useModularGeneration";
 
 type ApiMeta = {
   model?: string;
@@ -122,6 +126,19 @@ type Props = {
   strategyMode?: import("@/lib/optimization-queue/resolve-strategy-mode").ActiveContextStrategyMode;
   metadataVariant?: "aggressive" | "growth";
   onMetadataVariantChange?: (variant: "aggressive" | "growth") => void;
+  onRegenerateOrchestrationModule?: (
+    moduleId: "anchor" | "conversion" | "expansion",
+  ) => void;
+  regeneratingOrchestrationModule?: "anchor" | "conversion" | "expansion" | null;
+  /** Modular pipeline state — synced from orchestration or draft generation. */
+  modularState?: ModularListingState;
+  modularLoading?: ModularLoadingState;
+  onRegenerateModularBlock?: (blockId: ModularListingBlockId) => void;
+  onSelectModularShortVariation?: (index: number, variation: string) => void;
+  onModularTitleChange?: (value: string) => void;
+  onModularFinalize?: () => void;
+  modularFinalizeBusy?: boolean;
+  modularDraftReady?: boolean;
 };
 
 export function OptimizerResultsPanel({
@@ -165,8 +182,20 @@ export function OptimizerResultsPanel({
   strategyMode = "defensive",
   metadataVariant = "growth",
   onMetadataVariantChange,
+  onRegenerateOrchestrationModule,
+  regeneratingOrchestrationModule = null,
+  modularState,
+  modularLoading,
+  onRegenerateModularBlock,
+  onSelectModularShortVariation,
+  onModularTitleChange,
+  onModularFinalize,
+  modularFinalizeBusy = false,
+  modularDraftReady = false,
 }: Props) {
   const t = useTranslations("optimizer");
+  const hasOrchestration = Boolean(result.orchestration);
+  const showModularPanel = hasOrchestration || modularDraftReady;
 
   const inputRing =
     "rounded-xl border bg-black/30 px-3.5 py-3.5 text-[15px] text-white outline-none transition placeholder:text-white/35 disabled:opacity-50";
@@ -247,6 +276,24 @@ export function OptimizerResultsPanel({
         >
           {t("results.asoScoreUnavailable")}
         </div>
+      ) : null}
+
+      {showModularPanel && modularLoading && onRegenerateModularBlock ? (
+        <ModularListingPanel
+          orchestration={result.orchestration}
+          state={modularState ?? EMPTY_MODULAR_LISTING_STATE}
+          loading={modularLoading}
+          title={editedTitle}
+          shortDescription={editedShort}
+          longDescription={editedLong}
+          isRtl={isRtl}
+          isDraft={modularDraftReady && !listingGenerationId}
+          onRegenerateBlock={onRegenerateModularBlock}
+          onSelectShortVariation={onSelectModularShortVariation ?? (() => {})}
+          onTitleChange={onModularTitleChange}
+          onFinalize={onModularFinalize}
+          finalizeBusy={modularFinalizeBusy}
+        />
       ) : null}
 
       {result.strategicRationale ? (
@@ -385,6 +432,7 @@ export function OptimizerResultsPanel({
         </div>
       ) : null}
 
+      {!hasOrchestration ? (
       <Tabs defaultValue="title" className="w-full">
         <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
           <TabsTrigger value="title">{t("results.fieldsTabTitle")}</TabsTrigger>
@@ -604,6 +652,7 @@ export function OptimizerResultsPanel({
           </div>
         </TabsContent>
       </Tabs>
+      ) : null}
 
       <div className="flex w-full justify-center">
         <div

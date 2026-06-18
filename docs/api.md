@@ -292,11 +292,19 @@ Next.js route implementing `POST /listings/generate`. Requires **signed-in user*
       "longDescription": 37,
       "persuasiveness": 10
     },
-    "improvementTips": ["…", "…"]
+    "improvementTips": ["…", "…"],
+    "orchestration": {
+      "protocolVersion": "1.0",
+      "modules": {
+        "anchor": { "moduleId": "anchor", "title": "…", "keywordAnchor": "…", "lockedKeywords": ["…"], "aiSuggestedKeywords": ["…"] },
+        "conversion": { "moduleId": "conversion", "activeStrategyProfile": "defensive", "selectedVariationId": "primary", "shortVariations": [] },
+        "expansion": { "moduleId": "expansion", "keywordAnchor": "…", "blocks": { "hook": {}, "features": {}, "trustClosing": {} }, "assembledFullDescription": "…" }
+      }
+    }
   },
   "meta": {
     "model": "gemini-2.5-flash",
-    "promptVersion": "listing-optimizer-v4",
+    "promptVersion": "listing-optimizer-v16.0",
     "persisted": true,
     "generationId": "uuid",
     "savedAt": "2026-05-13T12:00:00.000Z"
@@ -305,6 +313,10 @@ Next.js route implementing `POST /listings/generate`. Requires **signed-in user*
 ```
 
 Optional **`meta.asoScorePartial`** (boolean, when `true`) means listing copy was validated but the certified ASO score block was dropped after validation.
+
+Optional **`data.orchestration`** (v16+) — discrete three-phase modules (`anchor`, `conversion`, `expansion`) for independent UI display and per-module regenerate; root `title` / `shortDescription` / `fullDescription` are synced from the active modules server-side. Schema: `lib/listing/orchestration-protocol.schema.ts`.
+
+**Modular generation (`generationStep`)** — Request body may include `generationStep`: `title` | `short` | `long` | `hook` | `features` | `closing` | `finalize` | `full` (default `full`). Modular steps return `{ ok, generationStep, modularData, meta: { creditsCharged: 0 } }` without debiting credits. `finalize` requires `modularListing` state and debits `listing_generation` credits; response matches the standard `{ ok, data, meta }` shape. Context Audit and `queueHash` validation apply to every step.
 
 **Errors**
 

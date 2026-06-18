@@ -96,6 +96,12 @@ export async function generateOptimizedListing(
       vaultLocale: input.vaultLocale,
       queueHash: input.queueHash,
       clientQueueItemCount: input.queueItemCount ?? 0,
+      generationStep: "full" as const,
+      lockedKeywords: input.targetKeywords
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 20),
       ...(effectiveInstruction ? { userInstruction: effectiveInstruction } : {}),
       activeContext,
       ...(trackedKeywordSignals.length > 0 ? { trackedKeywordSignals } : {}),

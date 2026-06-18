@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { orchestrationProtocolSchema } from "@/lib/listing/orchestration-protocol.schema";
 
 export const listingGenerationCoreSchema = z.object({
   title: z.string().min(1).max(30),
@@ -111,6 +112,9 @@ export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
         }),
       })
       .optional(),
+
+    /** Three-phase Orchestration Protocol — discrete modules for independent UI edit/regenerate. */
+    orchestration: orchestrationProtocolSchema.optional(),
   }),
 );
 

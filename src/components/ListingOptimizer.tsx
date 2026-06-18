@@ -9,6 +9,12 @@ import { toast } from "sonner";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import type { ListingOptimizerHydrationPayload } from "@/lib/listing/latest-listing-hydration";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
+import {
+  applyOrchestrationToListingOutput,
+  mergeOrchestrationModule,
+} from "@/lib/listing/apply-orchestration-output";
+import type { OrchestrationModuleId } from "@/lib/prompts/listing-orchestration-protocol";
+import { buildRegenerateOrchestrationModuleInstruction } from "@/lib/prompts/listing-orchestration-protocol";
 import { AddAppModal, type CreatedWorkspaceApp } from "@/components/app/add-app-modal";
 import { OptimizerLivePreviewPane } from "@/components/listing/optimizer/optimizer-live-preview-pane";
 import {
@@ -137,6 +143,11 @@ import {
   generateOptimizedListing,
   type GenerateOptimizedListingSuccess,
 } from "@/lib/listing/generate-optimized-listing";
+import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
+import type { ModularGenerateBaseInput } from "@/lib/client/modular-listing-generate-client";
+import { useModularGeneration } from "@/hooks/useModularGeneration";
+import type { ModularListingBlockId } from "@/lib/listing/modular-listing.types";
+import type { OptimizationQueueSynthesisPayload } from "@/lib/optimization-queue";
 import type { ActiveContextStrategyMode } from "@/lib/optimization-queue/resolve-strategy-mode";
 import { optimizationQueueItemsToImprovements } from "@/lib/client/optimization-queue-improvements";
 import { KeywordValidatorCard } from "@/components/keyword-tracker/KeywordValidatorCard";
@@ -655,6 +666,14 @@ export function ListingOptimizer({
   const [editedShort, setEditedShort] = useState("");
   const [editedLong, setEditedLong] = useState("");
   const [metadataVariant, setMetadataVariant] = useState<"aggressive" | "growth">("growth");
+  const [regeneratingOrchestrationModule, setRegeneratingOrchestrationModule] =
+    useState<OrchestrationModuleId | null>(null);
+  const [modularDraftReady, setModularDraftReady] = useState(false);
+  const modularBaseInputRef = useRef<ModularGenerateBaseInput | null>(null);
+  const generationSuccessContextRef = useRef<{
+    queueSynthesis: OptimizationQueueSynthesisPayload;
+  } | null>(null);
+  const orchestrationSyncedRef = useRef<string | null>(null);
   const [activeStrategyMode, setActiveStrategyMode] =
     useState<ActiveContextStrategyMode>("defensive");
   const [meta, setMeta] = useState<GenerateOptimizedListingSuccess["meta"]>();
@@ -2614,11 +2633,243 @@ export function ListingOptimizer({
     toast.success(t("results.exportSuccess"));
   }
 
+  const handleModularApiError = useCallback(
+    (message: string, code?: string) => {
+      if (code === "stale_active_context") {
+        setError(t("form.staleActiveContext"));
+        void refetchOptimizationQueue();
+        void refreshOptimizerContext();
+        return;
+      }
+      if (code === "validation_error") {
+        setError(t("form.validationInputError"));
+        return;
+      }
+      setError(message || t("form.networkError"));
+    },
+    [refetchOptimizationQueue, refreshOptimizerContext, t],
+  );
+
+  const applyFinalizeGenerationSuccess = useCallback(
+    (
+      json: GenerateOptimizedListingSuccess,
+      queueSynthesis: OptimizationQueueSynthesisPayload,
+    ) => {
+      const d = json.data;
+      setError(null);
+      suppressListingHydrationRef.current = false;
+      setPurgedAwaitingGenerate(false);
+      setModularDraftReady(false);
+      setResult(d);
+      const freshKeywordsText = d.keywordSuggestions?.length
+        ? d.keywordSuggestions.join(", ")
+        : keywords.trim();
+      const freshFeatures = d.fullDescription?.trim() || features.trim();
+      if (d.keywordSuggestions?.length) setKeywords(freshKeywordsText);
+      if (freshFeatures && freshFeatures !== features.trim()) {
+        setFeatures(freshFeatures);
+      }
+      const backlogIdsToArchive = queuedImprovements
+        .filter((item) => item.id.startsWith("backlog-"))
+        .map((item) => item.id.replace(/^backlog-/, ""));
+      if (workspaceId && backlogIdsToArchive.length > 0) {
+        for (const realId of backlogIdsToArchive) {
+          void fetch(`/api/workspaces/${workspaceId}/backlog/${realId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_implemented: true }),
+            credentials: "same-origin",
+          }).catch(() => {});
+        }
+      }
+      clearSpotlightStubsFromSession();
+      setQueuedImprovements([]);
+      setGenerateJustSucceeded(true);
+      setWizardStep(2);
+      setWizardPanelPeek({});
+      setMetadataVariant("growth");
+      setActiveStrategyMode(queueSynthesis.strategyMode);
+      setEditedTitle(d.title);
+      setEditedShort(d.shortDescription);
+      setEditedLong(d.fullDescription);
+      setMeta(json.meta);
+      const generationIdFromApi = json.meta?.generationId;
+      setListingGenerationId(generationIdFromApi);
+      const savedIso = json.meta?.savedAt ?? new Date().toISOString();
+      setLastGeneratedAtIso(savedIso);
+      const sid = selectedAppId.trim();
+      if (sid) {
+        writeFinalListingCache(
+          sid,
+          listingOutputToFinalListingCache(d, savedIso, generationIdFromApi),
+        );
+      }
+      if (json.meta?.persisted === false) {
+        toast.warning(t("results.persistWarning"));
+      } else {
+        toast.success(t("form.generateSuccessToastSaved"));
+      }
+    },
+    [
+      features,
+      keywords,
+      queuedImprovements,
+      selectedAppId,
+      t,
+      workspaceId,
+    ],
+  );
+
+  const modularGeneration = useModularGeneration({
+    getBaseInput: () => modularBaseInputRef.current,
+    lockedKeywords: keywords
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+    onError: handleModularApiError,
+    onFinalizeSuccess: (json) => {
+      const ctx = generationSuccessContextRef.current;
+      if (!ctx) return;
+      applyFinalizeGenerationSuccess(json, ctx.queueSynthesis);
+    },
+  });
+
+  useEffect(() => {
+    if (!result?.orchestration) {
+      orchestrationSyncedRef.current = null;
+      return;
+    }
+    const key = JSON.stringify(result.orchestration);
+    if (orchestrationSyncedRef.current === key) return;
+    orchestrationSyncedRef.current = key;
+    modularGeneration.syncFromOrchestration(result.orchestration, {
+      title: result.title,
+      shortDescription: result.shortDescription,
+      longDescription: result.fullDescription,
+    });
+    setEditedTitle(result.title);
+    setEditedShort(result.shortDescription);
+    setEditedLong(result.fullDescription);
+  }, [
+    result?.orchestration,
+    result?.title,
+    result?.shortDescription,
+    result?.fullDescription,
+    modularGeneration.syncFromOrchestration,
+  ]);
+
+  const modularPanelLoading = useMemo(
+    () => ({
+      ...modularGeneration.loading,
+      title:
+        modularGeneration.loading.title ||
+        regeneratingOrchestrationModule === "anchor",
+      short:
+        modularGeneration.loading.short ||
+        regeneratingOrchestrationModule === "conversion",
+      hook:
+        modularGeneration.loading.hook ||
+        regeneratingOrchestrationModule === "expansion",
+      features:
+        modularGeneration.loading.features ||
+        regeneratingOrchestrationModule === "expansion",
+      closing:
+        modularGeneration.loading.closing ||
+        regeneratingOrchestrationModule === "expansion",
+      finalize: modularGeneration.loading.finalize,
+    }),
+    [modularGeneration.loading, regeneratingOrchestrationModule],
+  );
+
+  const applyModularCopyToResult = useCallback(
+    (copy: { title: string; shortDescription: string; fullDescription: string }) => {
+      setEditedTitle(copy.title);
+      setEditedShort(copy.shortDescription);
+      setEditedLong(copy.fullDescription);
+      setResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              title: copy.title,
+              shortDescription: copy.shortDescription,
+              fullDescription: copy.fullDescription,
+            }
+          : prev,
+      );
+    },
+    [],
+  );
+
+  const handleModularBlockRegenerate = useCallback(
+    (blockId: ModularListingBlockId) => {
+      if (result?.orchestration) {
+        const moduleId: OrchestrationModuleId =
+          blockId === "title"
+            ? "anchor"
+            : blockId === "short"
+              ? "conversion"
+              : "expansion";
+        handleGenerate({
+          mode: "regenerate",
+          orchestrationModuleId: moduleId,
+        });
+        return;
+      }
+      void modularGeneration.regenerateBlock(blockId).then((nextState) => {
+        if (!nextState) return;
+        applyModularCopyToResult(modularStateToListingCopy(nextState));
+      });
+    },
+    [applyModularCopyToResult, modularGeneration, result?.orchestration],
+  );
+
+  async function runFinalizeListing() {
+    if (!workspaceId || !modularGeneration.isPipelineReady) return;
+    if (loading || modularGeneration.loading.finalize) return;
+    if (
+      typeof aiCreditsRemaining === "number" &&
+      aiCreditsRemaining < AI_CREDIT_COSTS.listing_generation
+    ) {
+      toast.message(t("form.autofill.insufficientTitle"), {
+        description: `${t("form.creditsDetail", {
+          rem: aiCreditsRemaining,
+          req: AI_CREDIT_COSTS.listing_generation,
+        })}${t("form.creditsSuffix")}`,
+      });
+      setUpgradeOpen(true);
+      return;
+    }
+    setLoading(true);
+    const toastId = toast.loading(
+      t("form.finalizeStarting", {
+        credits: AI_CREDIT_COSTS.listing_generation,
+      }),
+    );
+    try {
+      const result = await modularGeneration.finalizeListing();
+      toast.dismiss(toastId);
+      if (!result) return;
+      if (typeof result.meta?.creditsCharged === "number") {
+        setAiCreditsRemaining((prev) =>
+          typeof prev === "number"
+            ? Math.max(0, prev - result.meta!.creditsCharged!)
+            : prev,
+        );
+      }
+    } catch {
+      toast.dismiss(toastId);
+      setError(t("form.networkError"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function runListingGeneration(
     opts: {
       mode: "fresh" | "regenerate";
       userInstruction?: string;
       targetArabicOverride?: boolean;
+      orchestrationModuleId?: OrchestrationModuleId;
     },
     runOptions?: { skipGuardrail?: boolean; queueOverride?: OptimizationQueueItem[] },
   ) {
@@ -2645,6 +2896,9 @@ export function ListingOptimizer({
     if (loading) return;
     if (isProcessingCredits) return;
 
+    const useModularPipeline =
+      opts.mode === "fresh" && !opts.orchestrationModuleId && !opts.userInstruction;
+
     // Hard debounce: block re-entry even before React flushes the `loading` state update.
     setIsProcessingCredits(true);
 
@@ -2654,9 +2908,12 @@ export function ListingOptimizer({
       setMeta(undefined);
       setListingGenerationId(undefined);
       setLastGeneratedAtIso(null);
+      setModularDraftReady(false);
+      modularGeneration.resetModularState();
     }
 
     if (
+      !useModularPipeline &&
       typeof aiCreditsRemaining === "number" &&
       aiCreditsRemaining < AI_CREDIT_COSTS.listing_generation
     ) {
@@ -2671,11 +2928,16 @@ export function ListingOptimizer({
       return;
     }
     const runToastId = toast.loading(
-      t("form.generateStarting", {
-        credits: AI_CREDIT_COSTS.listing_generation,
-      }),
+      useModularPipeline
+        ? t("form.modularGenerating")
+        : t("form.generateStarting", {
+            credits: AI_CREDIT_COSTS.listing_generation,
+          }),
     );
     setLoading(true);
+    if (opts.orchestrationModuleId) {
+      setRegeneratingOrchestrationModule(opts.orchestrationModuleId);
+    }
     const queueForGeneration =
       runOptions?.queueOverride ?? optimizationQueueItems;
     const queueForHash =
@@ -2699,7 +2961,12 @@ export function ListingOptimizer({
         seedKwList,
       );
 
-      const effectiveInstruction = [opts.userInstruction]
+      const effectiveInstruction = [
+        opts.orchestrationModuleId
+          ? buildRegenerateOrchestrationModuleInstruction(opts.orchestrationModuleId)
+          : undefined,
+        opts.userInstruction,
+      ]
         .map((s) => s?.trim())
         .filter(Boolean)
         .join("\n\n");
@@ -2710,6 +2977,44 @@ export function ListingOptimizer({
         queueForHash,
         locale,
       );
+
+      modularBaseInputRef.current = {
+        workspaceId,
+        appId: selectedAppId.trim() || undefined,
+        appName: displayAppName,
+        category: category.trim(),
+        targetKeywords:
+          mergedKeywords.length > 0 ? mergedKeywords.join(", ") : keywords.trim(),
+        appFeatures: features.trim(),
+        toneStyle,
+        targetArabic: opts.targetArabicOverride ?? locale === "ar",
+        queueSynthesis,
+        queueItemCount: queueForHash.length,
+        vaultLocale: locale,
+        queueHash,
+      };
+      generationSuccessContextRef.current = { queueSynthesis };
+
+      if (useModularPipeline) {
+        const finalState = await modularGeneration.runModularPipeline();
+        toast.dismiss(runToastId);
+        if (!finalState) return;
+        const copy = modularStateToListingCopy(finalState);
+        setModularDraftReady(true);
+        setResult({
+          title: copy.title,
+          shortDescription: copy.shortDescription,
+          fullDescription: copy.fullDescription,
+          keywordSuggestions: [],
+          ctaSuggestions: [],
+        });
+        setEditedTitle(copy.title);
+        setEditedShort(copy.shortDescription);
+        setEditedLong(copy.fullDescription);
+        setWizardStep(2);
+        toast.success(t("form.modularDraftReady"));
+        return;
+      }
 
       const generationResult = await generateOptimizedListing({
         workspaceId,
@@ -2764,11 +3069,35 @@ export function ListingOptimizer({
         return;
       }
       const json = generationResult;
-      const d = json.data;
+      let d = json.data;
+      if (
+        opts.orchestrationModuleId &&
+        result?.orchestration &&
+        d.orchestration
+      ) {
+        const merged = mergeOrchestrationModule(
+          result.orchestration,
+          d.orchestration,
+          opts.orchestrationModuleId,
+        );
+        d = applyOrchestrationToListingOutput(
+          d,
+          merged,
+          queueSynthesis.strategyMode,
+        );
+      }
       setError(null);
       suppressListingHydrationRef.current = false;
       setPurgedAwaitingGenerate(false);
       setResult(d);
+      if (d.orchestration) {
+        orchestrationSyncedRef.current = JSON.stringify(d.orchestration);
+        modularGeneration.syncFromOrchestration(d.orchestration, {
+          title: d.title,
+          shortDescription: d.shortDescription,
+          longDescription: d.fullDescription,
+        });
+      }
       // Derive the fresh AI-generated keywords and features from the response
       // object — NOT from the closed-over state variables (keywords / features),
       // which still hold the pre-generation user input at this point in the
@@ -2920,6 +3249,7 @@ export function ListingOptimizer({
     } finally {
       setLoading(false);
       setIsProcessingCredits(false);
+      setRegeneratingOrchestrationModule(null);
     }
   }
 
@@ -2992,6 +3322,7 @@ export function ListingOptimizer({
       mode: "fresh" | "regenerate";
       userInstruction?: string;
       targetArabicOverride?: boolean;
+      orchestrationModuleId?: OrchestrationModuleId;
     },
     options?: { skipGuardrail?: boolean; queueOverride?: OptimizationQueueItem[] },
   ) {
@@ -4264,6 +4595,31 @@ export function ListingOptimizer({
               strategyMode={activeStrategyMode}
               metadataVariant={metadataVariant}
               onMetadataVariantChange={handleMetadataVariantChange}
+              onRegenerateOrchestrationModule={(moduleId) =>
+                handleGenerate({
+                  mode: "regenerate",
+                  orchestrationModuleId: moduleId,
+                })
+              }
+              regeneratingOrchestrationModule={regeneratingOrchestrationModule}
+              modularState={modularGeneration.state}
+              modularLoading={modularPanelLoading}
+              modularDraftReady={modularDraftReady}
+              onRegenerateModularBlock={handleModularBlockRegenerate}
+              onSelectModularShortVariation={(index, variation) => {
+                modularGeneration.selectShortVariation(index);
+                setEditedShort(variation);
+                setResult((prev) =>
+                  prev ? { ...prev, shortDescription: variation } : prev,
+                );
+              }}
+              onModularTitleChange={(value) => {
+                modularGeneration.setTitleValue(value);
+                setEditedTitle(value);
+                setResult((prev) => (prev ? { ...prev, title: value } : prev));
+              }}
+              onModularFinalize={() => void runFinalizeListing()}
+              modularFinalizeBusy={modularGeneration.loading.finalize}
             />
             ) : null}
 

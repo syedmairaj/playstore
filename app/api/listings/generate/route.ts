@@ -2,12 +2,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ZodError, z } from "zod";
 import { getClientIp } from "@/lib/client-ip";
 import {
-  insertListingGeneration,
   patchListingGenerationInputs,
 } from "@/lib/db/listing-generations";
-import { linkListingGenerationToTrackedKeywords } from "@/lib/keywords/link-listing-generation-to-keywords";
-import { generateListingWithGemini } from "@/lib/gemini/generate-listing";
-import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import { listingModularGenerateBodySchema } from "@/lib/validation/listing-modular-generate-body";
+import { isCreditBilledStep } from "@/lib/validation/listing-modular-generate-body";
+import {
+  orchestratorPromptVersion,
+  runListingGenerationOrchestrator,
+} from "@/lib/listing/listing-generation-orchestrator";
 import { resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
 import {
   logGeminiApiKeyDiagnostics,
@@ -20,7 +22,8 @@ import {
   readWorkspaceAiCreditsRemaining,
   refundWorkspaceAiCredits,
 } from "@/lib/features";
-import { getListingOptimizerPromptVersion } from "@/lib/prompts/listing-optimizer";
+import { getModularListingPromptVersion } from "@/lib/prompts/listing-modular";
+import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -93,9 +96,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let input: z.infer<typeof listingGenerateBodySchema>;
+  console.log("[listing-generate] Incoming Payload:", JSON.stringify(body, null, 2));
+
+  let input: z.infer<typeof listingModularGenerateBodySchema>;
   try {
-    input = listingGenerateBodySchema.parse(body);
+    input = listingModularGenerateBodySchema.parse(body);
+    if (shouldLogGeminiDebug() || process.env.NODE_ENV !== "production") {
+      console.log("[listing-generate] Parsed payload summary:", {
+        generationStep: input.generationStep,
+        lockedKeywords: input.lockedKeywords,
+        hasOrchestration: Boolean(input.orchestration),
+        hasModularListing: Boolean(input.modularListing),
+        contextTitle: input.contextTitle,
+      });
+    }
   } catch (e) {
     if (e instanceof ZodError) {
       if (shouldLogGeminiDebug()) {
@@ -123,8 +137,12 @@ export async function POST(request: NextRequest) {
     vaultLocale,
     queueHash,
     clientQueueItemCount,
+    generationStep,
     ...listingInput
   } = input;
+
+  const step = generationStep ?? "full";
+  const billsCredits = isCreditBilledStep(step);
 
   // ── Signal quality computation ────────────────────────────────────────────
   // Counts active signal channels (keywords, reviews, market, competitors).
@@ -235,8 +253,10 @@ export async function POST(request: NextRequest) {
   // ─────────────────────────────────────────────────────────────────────────────
 
   const model = resolveGeminiModel();
-  const promptVersion = getListingOptimizerPromptVersion();
-  const creditCost = AI_CREDIT_COSTS.listing_generation;
+  const promptVersion = billsCredits
+    ? orchestratorPromptVersion(step)
+    : getModularListingPromptVersion();
+  const creditCost = billsCredits ? AI_CREDIT_COSTS.listing_generation : 0;
 
   // All paths past the idempotency lock must release it so the user can retry
   // after any error without waiting for the full TTL to expire.
@@ -262,7 +282,7 @@ export async function POST(request: NextRequest) {
       { status: 503 },
     );
   }
-  if (balancePre.remaining < creditCost) {
+  if (billsCredits && balancePre.remaining < creditCost) {
     releaseGenerationLock(workspaceId, LOCK_ACTION);
     await logUsage(admin, {
       route: ROUTE,
@@ -296,7 +316,7 @@ export async function POST(request: NextRequest) {
 
   logActiveContextAudit(
     buildContextAuditSnapshot({
-      route: ROUTE,
+      route: `${ROUTE} [${step}]`,
       workspaceId,
       appId: bodyAppId,
       listing: listingInput,
@@ -344,83 +364,83 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const debit = await consumeWorkspaceAiCredits(supabase, {
-    workspaceId,
-    userId: user.id,
-    amount: creditCost,
-    description: "Listing AI generation (Gemini)",
-    sourceType: "generation",
-    meta: { route: ROUTE, tool: "aso_listing", model },
-  });
+  if (billsCredits) {
+    const debit = await consumeWorkspaceAiCredits(supabase, {
+      workspaceId,
+      userId: user.id,
+      amount: creditCost,
+      description:
+        step === "finalize"
+          ? "Listing AI finalize (modular pipeline)"
+          : "Listing AI generation (Gemini)",
+      sourceType: "generation",
+      meta: { route: ROUTE, tool: "aso_listing", model, generationStep: step },
+    });
 
-  if (!debit.ok) {
-    releaseGenerationLock(workspaceId, LOCK_ACTION);
-    if (debit.code === "insufficient_credits") {
+    if (!debit.ok) {
+      releaseGenerationLock(workspaceId, LOCK_ACTION);
+      if (debit.code === "insufficient_credits") {
+        await logUsage(admin, {
+          route: ROUTE,
+          clientIp,
+          success: false,
+          durationMs: Date.now() - started,
+          errorMessage: "insufficient_credits",
+          meta: {
+            user_id: user.id,
+            workspace_id: workspaceId,
+            remaining: debit.remaining,
+            required: debit.required ?? creditCost,
+          },
+        });
+        return NextResponse.json(
+          buildInsufficientAiCreditsPayload(
+            debit.required ?? creditCost,
+            debit.remaining ?? 0,
+          ),
+          { status: 402 },
+        );
+      }
+
       await logUsage(admin, {
         route: ROUTE,
         clientIp,
         success: false,
         durationMs: Date.now() - started,
-        errorMessage: "insufficient_credits",
-        meta: {
-          user_id: user.id,
-          workspace_id: workspaceId,
-          remaining: debit.remaining,
-          required: debit.required ?? creditCost,
-        },
+        errorMessage: `wallet:${debit.code}`,
+        meta: { user_id: user.id, workspace_id: workspaceId },
       });
       return NextResponse.json(
-        buildInsufficientAiCreditsPayload(
-          debit.required ?? creditCost,
-          debit.remaining ?? 0,
-        ),
-        { status: 402 },
+        {
+          ok: false,
+          error: {
+            code: "wallet_error",
+            message: "Could not reserve credits. Try again shortly.",
+          },
+        },
+        { status: 503 },
       );
     }
 
-    await logUsage(admin, {
-      route: ROUTE,
-      clientIp,
-      success: false,
-      durationMs: Date.now() - started,
-      errorMessage: `wallet:${debit.code}`,
-      meta: { user_id: user.id, workspace_id: workspaceId },
-    });
-    return NextResponse.json(
-      {
-        ok: false,
-        error: {
-          code: "wallet_error",
-          message: "Could not reserve credits. Try again shortly.",
-        },
-      },
-      { status: 503 },
-    );
+    ledgerId = debit.ledgerId;
   }
 
-  ledgerId = debit.ledgerId;
-
   try {
-    const { data, asoScorePartial, retried, shortDescriptionClamped } = await generateListingWithGemini(listingInput);
-    const persist = await insertListingGeneration(supabase, {
-      input: listingInput,
-      output: data,
-      clientIp,
-      model,
-      promptVersion,
+    const orchestratorResult = await runListingGenerationOrchestrator({
+      step,
+      body: input,
+      supabase,
       workspaceId,
       userId: user.id,
+      appId: bodyAppId,
+      clientIp,
+      model,
       creditsLedgerId: ledgerId,
-      appId: bodyAppId ?? null,
     });
-    if (persist.ok && bodyAppId) {
-      await linkListingGenerationToTrackedKeywords({
-        supabase,
-        workspaceId,
-        appId: bodyAppId,
-        listingGenerationId: persist.id,
-      });
-    }
+
+    const isFullOrFinalize =
+      orchestratorResult.step === "full" || orchestratorResult.step === "finalize";
+
     await logUsage(admin, {
       route: ROUTE,
       clientIp,
@@ -429,23 +449,43 @@ export async function POST(request: NextRequest) {
       meta: {
         user_id: user.id,
         workspace_id: workspaceId,
-        persisted: persist.ok,
-        persist_error: persist.ok ? undefined : persist.message,
+        generation_step: step,
+        credits_billed: billsCredits,
+        persisted: isFullOrFinalize ? orchestratorResult.persisted : false,
       },
     });
     releaseGenerationLock(workspaceId, LOCK_ACTION);
+
+    if (isFullOrFinalize) {
+      return NextResponse.json({
+        ok: true,
+        generationStep: orchestratorResult.step,
+        data: orchestratorResult.data,
+        meta: {
+          model,
+          promptVersion,
+          persisted: orchestratorResult.persisted,
+          generationId: orchestratorResult.generationId,
+          savedAt: orchestratorResult.savedAt,
+          asoScorePartial: orchestratorResult.asoScorePartial ? true : undefined,
+          retried: orchestratorResult.retried ? true : undefined,
+          shortDescriptionClamped: orchestratorResult.shortDescriptionClamped
+            ? true
+            : undefined,
+          creditsCharged: creditCost,
+          ...qualityMeta,
+        },
+      });
+    }
+
     return NextResponse.json({
       ok: true,
-      data,
+      generationStep: orchestratorResult.step,
+      modularData: orchestratorResult.data,
       meta: {
         model,
         promptVersion,
-        persisted: persist.ok,
-        generationId: persist.ok ? persist.id : undefined,
-        savedAt: persist.ok ? persist.createdAt : undefined,
-        asoScorePartial: asoScorePartial ? true : undefined,
-        retried: retried ? true : undefined,
-        shortDescriptionClamped: shortDescriptionClamped ? true : undefined,
+        creditsCharged: 0,
         ...qualityMeta,
       },
     });

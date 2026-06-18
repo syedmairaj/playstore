@@ -17,6 +17,10 @@ import {
   parseGeminiJsonText,
 } from "@/lib/gemini/parse-gemini-json-response";
 import {
+  applyOrchestrationToListingOutput,
+  extractOrchestrationFromParsed,
+} from "@/lib/listing/apply-orchestration-output";
+import {
   listingGenerationCoreSchema,
   listingGenerationOutputSchema,
   tryParseListingAsoBundle,
@@ -180,6 +184,7 @@ const LISTING_RESPONSE_SCHEMA = {
       },
       required: ["aggressive", "growth"],
     },
+    orchestration: { type: SchemaType.OBJECT },
   },
   required: [
     "title",
@@ -220,6 +225,7 @@ const STRICT_RETRY_ADDENDUM =
   "strategySummary (≤400 chars — one consultant-grade sentence: Fixed X + Captured Y + Converted Z + Applied tone). " +
   "strategicRationale (object: strategicIntent + exploitationResolutionSummary + roiPrediction). " +
   "listingVariants (object: aggressive + growth — each with title, shortDescription, fullDescription, whatsNew). " +
+  "orchestration (object: protocolVersion 1.0 + modules anchor/conversion/expansion — see Orchestration Protocol). " +
   "Root title/shortDescription/fullDescription/whatsNew MUST match listingVariants.growth. " +
   "Return ONLY the JSON object — no prose, no markdown.";
 
@@ -398,6 +404,16 @@ async function attemptGeneration(
       ? { listingVariants: parseListingVariants(clampedRecord.listingVariants)! }
       : {}),
   };
+
+  const orchestration = extractOrchestrationFromParsed(clampedRecord);
+  if (orchestration) {
+    data = applyOrchestrationToListingOutput(
+      data,
+      orchestration,
+      input.strategyMode ?? "defensive",
+    );
+  }
+
   let asoScorePartial = false;
 
   if (asoTry.ok) {
