@@ -36,9 +36,12 @@ import {
   StrategicRationaleCard,
 } from "@/components/listing/optimizer/strategic-rationale-card";
 import { ModularListingPanel } from "@/components/listing/optimizer/modular-listing-panel";
+import type { LongDescriptionAiTool } from "@/components/listing/optimizer/long-description-aso-editor";
 import type { ModularListingBlockId, ModularListingState, ModularLongUiMode } from "@/lib/listing/modular-listing.types";
 import { EMPTY_MODULAR_LISTING_STATE } from "@/lib/listing/modular-listing.types";
 import type { ModularLoadingState } from "@/hooks/useModularGeneration";
+import type { ListingGenerationWarningsPayload } from "@/lib/listing/listing-generation-warnings";
+import type { ListingHealthFixActionId } from "@/lib/listing/listing-health-fix-actions";
 
 type ApiMeta = {
   model?: string;
@@ -138,6 +141,8 @@ type Props = {
   onModularTitleChange?: (value: string) => void;
   onModularLongDescriptionChange?: (value: string) => void;
   onModularMagicGenerateLong?: () => void;
+  onModularLongAiTool?: (tool: LongDescriptionAiTool) => void;
+  onListingHealthFix?: (actionId: ListingHealthFixActionId) => void;
   onModularFinalize?: () => void;
   modularFinalizeBusy?: boolean;
   modularDraftReady?: boolean;
@@ -149,6 +154,8 @@ type Props = {
   previousBlocks?: Partial<Record<import("@/lib/listing/modular-listing.types").ModularBlockSnapshotKey, string>>;
   blockErrors?: Partial<Record<import("@/lib/listing/modular-listing.types").ModularBlockSnapshotKey, boolean>>;
   modularSeedKeywords?: string[];
+  listingHealth?: ListingGenerationWarningsPayload | null;
+  lockedKeywords?: string[];
 };
 
 export function OptimizerResultsPanel({
@@ -201,6 +208,8 @@ export function OptimizerResultsPanel({
   onModularTitleChange,
   onModularLongDescriptionChange,
   onModularMagicGenerateLong,
+  onModularLongAiTool,
+  onListingHealthFix,
   onModularFinalize,
   modularFinalizeBusy = false,
   modularDraftReady = false,
@@ -212,6 +221,8 @@ export function OptimizerResultsPanel({
   previousBlocks = {},
   blockErrors = {},
   modularSeedKeywords = [],
+  listingHealth = null,
+  lockedKeywords = [],
 }: Props) {
   const t = useTranslations("optimizer");
   const hasOrchestration = Boolean(result.orchestration);
@@ -324,11 +335,15 @@ export function OptimizerResultsPanel({
           previousBlocks={previousBlocks}
           blockErrors={blockErrors}
           seedKeywords={modularSeedKeywords}
+          listingHealth={listingHealth}
+          lockedKeywords={lockedKeywords}
           onRegenerateBlock={onRegenerateModularBlock}
           onSelectShortVariation={onSelectModularShortVariation ?? (() => {})}
           onTitleChange={onModularTitleChange}
           onLongDescriptionChange={onModularLongDescriptionChange}
           onMagicGenerateLong={onModularMagicGenerateLong}
+          onLongAiTool={onModularLongAiTool}
+          onListingHealthFix={onListingHealthFix}
           onFinalize={onModularFinalize}
           finalizeBusy={modularFinalizeBusy}
         />

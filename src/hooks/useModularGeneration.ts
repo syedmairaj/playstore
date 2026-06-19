@@ -21,6 +21,22 @@ import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listin
 import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import { orchestrationToModularState } from "@/lib/listing/orchestration-to-modular-state";
 import type { OrchestrationProtocol } from "@/lib/listing/orchestration-protocol.schema";
+import {
+  mergeWarningsPayload,
+  type ListingGenerationWarningsPayload,
+} from "@/lib/listing/listing-generation-warnings";
+import type { LongDescriptionAiTool } from "@/components/listing/optimizer/long-description-aso-editor";
+
+const LONG_AI_TOOL_INSTRUCTIONS: Record<LongDescriptionAiTool, string> = {
+  rewrite:
+    "Rewrite the full long description for stronger ASO clarity and install conversion. Preserve facts, app name, and all locked keywords.",
+  expand:
+    "Expand the full long description with richer feature detail and benefit-led copy. Follow Google Play ASO best practices and keep locked keywords.",
+  "tone-professional":
+    "Adjust the full long description to a polished professional tone suitable for Google Play while keeping locked keywords.",
+  "tone-casual":
+    "Adjust the full long description to a friendly casual tone while remaining credible on Google Play and keeping locked keywords.",
+};
 
 export type ModularLoadingState = Record<ModularListingBlockId | "finalize", boolean>;
 
@@ -80,6 +96,7 @@ export type UseModularGenerationOptions = {
     creditsRemaining?: number;
     creditsCharged?: number;
   }) => void;
+  onWarnings?: (warnings: ListingGenerationWarningsPayload) => void;
 };
 
 export function useModularGeneration({
@@ -88,8 +105,11 @@ export function useModularGeneration({
   onFinalizeSuccess,
   onError,
   onBillingMeta,
+  onWarnings,
 }: UseModularGenerationOptions) {
   const [state, setState] = useState<ModularListingState>(EMPTY_MODULAR_LISTING_STATE);
+  const [generationWarnings, setGenerationWarnings] =
+    useState<ListingGenerationWarningsPayload | null>(null);
   const [loading, setLoading] = useState<ModularLoadingState>(INITIAL_LOADING);
   const [previousBlocks, setPreviousBlocks] = useState<
     Partial<Record<ModularBlockSnapshotKey, string>>
@@ -137,6 +157,15 @@ export function useModularGeneration({
     [],
   );
 
+  const applyStepWarnings = useCallback(
+    (warnings?: ListingGenerationWarningsPayload) => {
+      if (!warnings?.items.length) return;
+      setGenerationWarnings((prev) => mergeWarningsPayload(prev, warnings));
+      onWarnings?.(warnings);
+    },
+    [onWarnings],
+  );
+
   const applyBillingMeta = useCallback(
     (meta?: {
       trialRegenerationsUsed?: number;
@@ -180,6 +209,7 @@ export function useModularGeneration({
         onError?.(result.error.message, result.error.code);
         return false;
       }
+      applyStepWarnings(result.warnings);
       const data = result.modularData!;
       if (!data.title.trim()) {
         markBlockError("title");
@@ -195,6 +225,7 @@ export function useModularGeneration({
       setBlockLoading("title", false);
     }
   }, [
+    applyStepWarnings,
     capturePrevious,
     clearBlockError,
     getBaseInput,
@@ -223,6 +254,7 @@ export function useModularGeneration({
         onError?.(result.error.message, result.error.code);
         return false;
       }
+      applyStepWarnings(result.warnings);
       const data = result.modularData!;
       if (!data.variations.some((v) => v.text.trim())) {
         markBlockError("short");
@@ -241,6 +273,7 @@ export function useModularGeneration({
       setBlockLoading("short", false);
     }
   }, [
+    applyStepWarnings,
     capturePrevious,
     clearBlockError,
     getBaseInput,
@@ -277,6 +310,7 @@ export function useModularGeneration({
         onError?.(result.error.message, result.error.code);
         return null;
       }
+      applyStepWarnings(result.warnings);
       const data = result.modularData!;
       if (isEmptyLongPayload(data)) {
         (["hook", "features", "closing"] as const).forEach(markBlockError);
@@ -301,6 +335,7 @@ export function useModularGeneration({
     }
   }, [
     applyBillingMeta,
+    applyStepWarnings,
     capturePrevious,
     clearBlockError,
     getBaseInput,
@@ -328,6 +363,7 @@ export function useModularGeneration({
             onError?.(titleResult.error.message, titleResult.error.code);
             return null;
           }
+          applyStepWarnings(titleResult.warnings);
           const next: ModularListingState = {
             ...state,
             title: {
@@ -366,6 +402,7 @@ export function useModularGeneration({
             onError?.(shortResult.error.message, shortResult.error.code);
             return null;
           }
+          applyStepWarnings(shortResult.warnings);
           const next: ModularListingState = {
             ...state,
             shortDescription: {
@@ -402,6 +439,7 @@ export function useModularGeneration({
           onError?.(result.error.message, result.error.code);
           return null;
         }
+        applyStepWarnings(result.warnings);
         const data = result.modularData!;
         const next: ModularListingState = {
           ...state,
@@ -425,6 +463,7 @@ export function useModularGeneration({
     },
     [
       applyBillingMeta,
+      applyStepWarnings,
       capturePrevious,
       clearBlockError,
       getBaseInput,
@@ -449,6 +488,7 @@ export function useModularGeneration({
         onError?.(titleResult.error.message, titleResult.error.code);
         return null;
       }
+      applyStepWarnings(titleResult.warnings);
       titleValue = titleResult.modularData!.title;
       if (!titleValue.trim()) {
         markBlockError("title");
@@ -468,6 +508,7 @@ export function useModularGeneration({
         onError?.(shortResult.error.message, shortResult.error.code);
         return null;
       }
+      applyStepWarnings(shortResult.warnings);
       variations = [...shortResult.modularData!.variations];
       if (!variations.some((v) => v.text.trim())) {
         markBlockError("short");
@@ -485,7 +526,7 @@ export function useModularGeneration({
     };
     setState(finalState);
     return finalState;
-  }, [getBaseInput, markBlockError, onError, resolveLockedKeywords, setBlockLoading]);
+  }, [applyStepWarnings, getBaseInput, markBlockError, onError, resolveLockedKeywords, setBlockLoading]);
 
   const finalizeListing = useCallback(async () => {
     const input = getBaseInput();
@@ -506,19 +547,94 @@ export function useModularGeneration({
         onError?.(result.error.message, result.error.code);
         return null;
       }
+      applyStepWarnings(result.warnings);
       onFinalizeSuccess?.(result);
       applyBillingMeta(result.meta);
       return result;
     } finally {
       setBlockLoading("finalize", false);
     }
-  }, [applyBillingMeta, getBaseInput, onError, onFinalizeSuccess, setBlockLoading, state]);
+  }, [applyBillingMeta, applyStepWarnings, getBaseInput, onError, onFinalizeSuccess, setBlockLoading, state]);
+
+  const applyLongAiTool = useCallback(
+    async (tool: LongDescriptionAiTool): Promise<ModularListingState | null> => {
+      const input = getBaseInput();
+      if (!input) return null;
+      const short =
+        state.shortDescription.variations[state.shortDescription.selectedIndex];
+      if (!state.title.value.trim() || !short?.text.trim()) {
+        onError?.("Generate title and short description first.");
+        return null;
+      }
+      (["hook", "features", "closing"] as const).forEach((id) => {
+        capturePrevious(id, state);
+        clearBlockError(id);
+      });
+      setBlockLoading("hook", true);
+      setBlockLoading("features", true);
+      setBlockLoading("closing", true);
+      try {
+        const currentLong = modularStateToListingCopy(state).fullDescription.trim();
+        const instruction = currentLong
+          ? `${LONG_AI_TOOL_INSTRUCTIONS[tool]}\n\nCurrent long description:\n${currentLong}`
+          : LONG_AI_TOOL_INSTRUCTIONS[tool];
+        const result = await generateModularLong(
+          input,
+          { title: state.title.value, shortDescription: shortVariationText(short) },
+          state,
+          {
+            userInstruction: instruction,
+            isRegenerate: true,
+          },
+        );
+        if (!result.ok) {
+          (["hook", "features", "closing"] as const).forEach(markBlockError);
+          onError?.(result.error.message, result.error.code);
+          return null;
+        }
+        applyStepWarnings(result.warnings);
+        const data = result.modularData!;
+        if (isEmptyLongPayload(data)) {
+          (["hook", "features", "closing"] as const).forEach(markBlockError);
+          onError?.("section_generation_failed", "section_generation_failed");
+          return null;
+        }
+        const nextState: ModularListingState = {
+          ...state,
+          longDescription: {
+            hook: data.hook,
+            features: data.features,
+            closing: data.closing,
+          },
+        };
+        setState(nextState);
+        applyBillingMeta(result.meta);
+        return nextState;
+      } finally {
+        setBlockLoading("hook", false);
+        setBlockLoading("features", false);
+        setBlockLoading("closing", false);
+      }
+    },
+    [
+      applyBillingMeta,
+      applyStepWarnings,
+      capturePrevious,
+      clearBlockError,
+      getBaseInput,
+      markBlockError,
+      onError,
+      setBlockLoading,
+      state,
+    ],
+  );
 
   const resetModularState = useCallback(() => {
     setState(EMPTY_MODULAR_LISTING_STATE);
     setLoading(INITIAL_LOADING);
     setPreviousBlocks({});
     setBlockErrors({});
+    setGenerationWarnings(null);
   }, []);
 
   const selectShortVariation = useCallback((index: number) => {
@@ -577,11 +693,14 @@ export function useModularGeneration({
     loading,
     previousBlocks,
     blockErrors,
+    generationWarnings,
+    ingestWarnings: applyStepWarnings,
     assembledCopy,
     isPipelineReady,
     generateTitle,
     generateShort,
     generateLong,
+    applyLongAiTool,
     runModularPipeline,
     regenerateBlock,
     finalizeListing,

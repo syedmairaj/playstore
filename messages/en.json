@@ -2192,7 +2192,52 @@
         "longEditorLabel": "Full description (Play Console)",
         "longGenerating": "Generating value narrative…",
         "aiBlocksLabel": "AI-generated blocks",
-        "finalizeCta": "Confirm final listing (uses {credits} credits)"
+        "finalizeCta": "Confirm final listing (uses {credits} credits)",
+        "longEditor": {
+          "emptyTitle": "Build your value narrative",
+          "emptyBody": "Generate a conversion-focused long description from your title, short hook, and locked keywords — or start writing manually.",
+          "generateCta": "Generate Long Description with AI",
+          "manualStart": "Start writing manually",
+          "aiToolsHeading": "AI Tools",
+          "rewrite": "Rewrite",
+          "expand": "Expand",
+          "toneProfessional": "Tone: Professional",
+          "toneCasual": "Tone: Casual",
+          "manuallyEdit": "Manually Edit",
+          "keywordHighlightHint": "{count} locked keywords highlighted in your copy",
+          "fieldLabel": "Full description (Play Console)",
+          "placeholder": "Write or generate your full Play Store description…",
+          "generating": "Generating value narrative…"
+        },
+        "listingHealth": {
+          "hint": "Generation completed with the data available. Stage more signals to strengthen each phase.",
+          "missingData": "{percent}% context gap",
+          "partialToast": "A section used a professional fallback — review the Listing Health panel and refine before publishing.",
+          "refineToast": "Listing generated with partial context — check Listing Health for gaps to improve.",
+          "fixHeading": "Quick fixes",
+          "label": {
+            "excellent": "Listing Health: Excellent",
+            "good": "Listing Health: Good",
+            "fair": "Listing Health: Fair — refine recommended",
+            "limited": "Listing Health: Limited — add signals"
+          },
+          "fixes": {
+            "refreshActiveContext": "Refresh Active Context from vault",
+            "reviewActiveQueue": "Review the Active Optimization Queue",
+            "stageSignalsInQueue": "Stage signals in the Optimization Queue",
+            "openCompetitorSpy": "Open Competitor Spy to queue gaps",
+            "addTargetKeywords": "Add target keywords in Step 1",
+            "openKeywordTracker": "Open Keyword Tracker for high-intent terms",
+            "queueCompetitorGaps": "Queue competitor keyword gaps",
+            "addReviewInsights": "Add review insights from Reviews",
+            "curateMoreSignals": "Curate keywords, reviews, and competitor intel",
+            "regenerateLongSection": "Regenerate the long description with AI",
+            "generateShortDescription": "Generate Phase 2 short descriptions",
+            "refineKeywordSeeds": "Refine auto-seeded keywords before publish",
+            "insertPrimaryKeywordFirstParagraph": "Add primary keyword to the first paragraph",
+            "expandDescriptionLength": "Expand description length with AI"
+          }
+        }
       },
       "exportPlayConsole": "Export for Play Console",
       "exportModal": {

@@ -2194,7 +2194,52 @@
         "longEditorLabel": "الوصف الكامل (Play Console)",
         "longGenerating": "جارٍ توليد سرد القيمة…",
         "aiBlocksLabel": "كتل مولَّدة بالذكاء الاصطناعي",
-        "finalizeCta": "تأكيد القائمة النهائية (يستخدم {credits} رصيداً)"
+        "finalizeCta": "تأكيد القائمة النهائية (يستخدم {credits} رصيداً)",
+        "longEditor": {
+          "emptyTitle": "ابنِ سرد القيمة",
+          "emptyBody": "ولّد وصفاً طويلاً يركز على التحويل من العنوان والوصف المختصر والكلمات المقفلة — أو ابدأ الكتابة يدوياً.",
+          "generateCta": "توليد الوصف الطويل بالذكاء الاصطناعي",
+          "manualStart": "البدء بالكتابة اليدوية",
+          "aiToolsHeading": "أدوات الذكاء الاصطناعي",
+          "rewrite": "إعادة صياغة",
+          "expand": "توسيع",
+          "toneProfessional": "النبرة: احترافية",
+          "toneCasual": "النبرة: ودية",
+          "manuallyEdit": "تحرير يدوي",
+          "keywordHighlightHint": "تم تمييز {count} كلمة مقفلة في النص",
+          "fieldLabel": "الوصف الكامل (Play Console)",
+          "placeholder": "اكتب أو ولّد وصف متجر Play الكامل…",
+          "generating": "جارٍ توليد سرد القيمة…"
+        },
+        "listingHealth": {
+          "hint": "اكتمل التوليد بالبيانات المتاحة. أضف المزيد من الإشارات لتقوية كل مرحلة.",
+          "missingData": "فجوة سياق {percent}%",
+          "partialToast": "استخدم قسم احتياطياً احترافياً — راجع لوحة صحة القائمة وعدّل قبل النشر.",
+          "refineToast": "تم التوليد بسياق جزئي — راجع صحة القائمة لمعرفة الفجوات.",
+          "fixHeading": "إصلاحات سريعة",
+          "label": {
+            "excellent": "صحة القائمة: ممتازة",
+            "good": "صحة القائمة: جيدة",
+            "fair": "صحة القائمة: مقبولة — يُنصح بالتحسين",
+            "limited": "صحة القائمة: محدودة — أضف إشارات"
+          },
+          "fixes": {
+            "refreshActiveContext": "تحديث السياق النشط من الخزنة",
+            "reviewActiveQueue": "مراجعة طابور التحسين النشط",
+            "stageSignalsInQueue": "إضافة إشارات إلى طابور التحسين",
+            "openCompetitorSpy": "فتح Competitor Spy لإضافة الفجوات",
+            "addTargetKeywords": "إضافة كلمات مستهدفة في الخطوة 1",
+            "openKeywordTracker": "فتح Keyword Tracker لمصطلحات عالية النية",
+            "queueCompetitorGaps": "إضافة فجوات كلمات المنافسين",
+            "addReviewInsights": "إضافة رؤى المراجعات من Reviews",
+            "curateMoreSignals": "تنسيق الكلمات والمراجعات وذكاء المنافسين",
+            "regenerateLongSection": "إعادة توليد الوصف الطويل بالذكاء الاصطناعي",
+            "generateShortDescription": "توليد أوصاف Phase 2 المختصرة",
+            "refineKeywordSeeds": "تحسين الكلمات المُولَّدة تلقائياً قبل النشر",
+            "insertPrimaryKeywordFirstParagraph": "إضافة الكلمة الأساسية إلى الفقرة الأولى",
+            "expandDescriptionLength": "توسيع طول الوصف بالذكاء الاصطناعي"
+          }
+        }
       },
       "exportPlayConsole": "تصدير لـ Play Console",
       "exportModal": {

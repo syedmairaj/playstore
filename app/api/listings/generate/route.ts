@@ -44,6 +44,7 @@ import {
   logActiveContextAudit,
 } from "@/lib/optimization-queue/context-audit-log";
 import { validateActiveContextQueueHash } from "@/lib/optimization-queue/validate-active-context-queue-hash";
+import { assessListingInputWarnings } from "@/lib/listing/listing-generation-heuristics";
 
 const ROUTE = "POST /api/listings/generate";
 const LOCK_ACTION = "listing_generate";
@@ -348,35 +349,7 @@ export async function POST(request: NextRequest) {
     }),
   );
 
-  if (!queueHashValidation.ok) {
-    releaseGenerationLock(workspaceId, LOCK_ACTION);
-    await logUsage(admin, {
-      route: ROUTE,
-      clientIp,
-      success: false,
-      durationMs: Date.now() - started,
-      errorMessage: "stale_active_context",
-      meta: {
-        user_id: user.id,
-        workspace_id: workspaceId,
-        vault_locale: vaultLocale,
-        client_queue_hash: queueHash,
-        server_queue_hash: queueHashValidation.serverQueueHash,
-        vault_item_count: queueHashValidation.itemCount,
-      },
-    });
-    return NextResponse.json(
-      {
-        ok: false,
-        error: {
-          code: "stale_active_context",
-          message:
-            "Active Context changed since this page loaded. Refresh your signals and try again.",
-        },
-      },
-      { status: 409 },
-    );
-  }
+  const preflightWarnings = assessListingInputWarnings(input, queueHashValidation);
 
   if (billsModularRegenerate) {
     const { data: wsBilling } = await supabase
@@ -501,6 +474,7 @@ export async function POST(request: NextRequest) {
       clientIp,
       model,
       creditsLedgerId: ledgerId,
+      preflightWarnings,
     });
 
     const isFullOrFinalize =
@@ -562,6 +536,7 @@ export async function POST(request: NextRequest) {
         ok: true,
         generationStep: orchestratorResult.step,
         data: orchestratorResult.data,
+        ...(orchestratorResult.warnings ? { warnings: orchestratorResult.warnings } : {}),
         meta: {
           model,
           promptVersion,
@@ -584,6 +559,7 @@ export async function POST(request: NextRequest) {
       ok: true,
       generationStep: orchestratorResult.step,
       modularData: orchestratorResult.data,
+      ...(orchestratorResult.warnings ? { warnings: orchestratorResult.warnings } : {}),
       meta: {
         model,
         promptVersion,

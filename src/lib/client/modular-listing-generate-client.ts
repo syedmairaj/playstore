@@ -14,6 +14,7 @@ import type {
 } from "@/lib/listing/modular-listing.types";
 import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
+import type { ListingGenerationWarningsPayload } from "@/lib/listing/listing-generation-warnings";
 import type { GenerateOptimizedListingSuccess } from "@/lib/listing/generate-optimized-listing";
 
 export type ModularGenerateBaseInput = {
@@ -50,6 +51,7 @@ export type ModularStepSuccess<TStep extends ModularListingGenerationStep, TData
   generationStep: TStep;
   modularData?: TData;
   data?: ListingGenerationOutput;
+  warnings?: ListingGenerationWarningsPayload;
   meta?: {
     model?: string;
     promptVersion?: string;
@@ -229,11 +231,14 @@ export async function generateModularLong(
   input: ModularGenerateBaseInput,
   context: { title: string; shortDescription: string },
   modularListing?: ModularListingState,
+  options?: { userInstruction?: string; isRegenerate?: boolean },
 ) {
   return postModularStep<"long", ModularLongStepData>(input, "long", {
     contextTitle: context.title,
     contextShortDescription: context.shortDescription,
     modularListing,
+    userInstruction: options?.userInstruction,
+    isRegenerate: options?.isRegenerate ?? false,
   });
 }
 

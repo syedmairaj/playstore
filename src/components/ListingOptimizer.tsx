@@ -144,6 +144,9 @@ import {
   type GenerateOptimizedListingSuccess,
 } from "@/lib/listing/generate-optimized-listing";
 import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
+import { normalizeHighlightKeywords } from "@/lib/listing/keyword-highlight";
+import type { ListingHealthFixActionId } from "@/lib/listing/listing-health-fix-actions";
+import type { LongDescriptionAiTool } from "@/components/listing/optimizer/long-description-aso-editor";
 import type { ModularGenerateBaseInput } from "@/lib/client/modular-listing-generate-client";
 import { useModularGeneration } from "@/hooks/useModularGeneration";
 import { shortVariationText } from "@/lib/listing/modular-short-variations";
@@ -512,7 +515,7 @@ function StagingWorkspaceSection({
     activeContextEmpty && (loading || networkReconnecting);
 
   return (
-    <div>
+    <div id="lo-active-context">
       {networkReconnecting ? (
         <ActiveContextReconnectingBanner isRtl={isRtl} />
       ) : null}
@@ -2649,21 +2652,28 @@ export function ListingOptimizer({
 
   const handleModularApiError = useCallback(
     (message: string, code?: string) => {
-      if (code === "stale_active_context") {
-        setError(t("form.staleActiveContext"));
-        void refetchOptimizationQueue();
-        void refreshOptimizerContext();
-        return;
-      }
-      if (code === "validation_error") {
-        toast.error(t("results.modular.sectionGenerationFailed"));
-        return;
-      }
-      if (code === "section_generation_failed") {
+      if (code === "validation_error" || code === "section_generation_failed") {
         toast.error(t("results.modular.sectionGenerationFailed"));
         return;
       }
       setError(message || t("form.networkError"));
+    },
+    [t],
+  );
+
+  const handleModularWarnings = useCallback(
+    (warnings: import("@/lib/listing/listing-generation-warnings").ListingGenerationWarningsPayload) => {
+      const hasPartial = warnings.items.some((item) => item.code === "partial_model_output");
+      const hasStale = warnings.items.some((item) => item.code === "stale_active_context");
+      if (hasStale) {
+        void refetchOptimizationQueue();
+        void refreshOptimizerContext();
+      }
+      if (hasPartial) {
+        toast.message(t("results.modular.listingHealth.partialToast"));
+      } else if (warnings.healthLabel === "limited" || warnings.healthLabel === "fair") {
+        toast.message(t("results.modular.listingHealth.refineToast"));
+      }
     },
     [refetchOptimizationQueue, refreshOptimizerContext, t],
   );
@@ -2769,6 +2779,7 @@ export function ListingOptimizer({
       .map((s) => s.trim())
       .filter(Boolean),
     onError: handleModularApiError,
+    onWarnings: handleModularWarnings,
     onBillingMeta: handleModularBillingMeta,
     onFinalizeSuccess: (json) => {
       const ctx = generationSuccessContextRef.current;
@@ -2904,6 +2915,104 @@ export function ListingOptimizer({
     if (!nextState) return;
     applyModularCopyToResult(modularStateToListingCopy(nextState));
   }, [applyModularCopyToResult, modularGeneration]);
+
+  const handleLongAiTool = useCallback(
+    async (tool: LongDescriptionAiTool) => {
+      setModularLongUiMode("ai");
+      const nextState = await modularGeneration.applyLongAiTool(tool);
+      if (!nextState) return;
+      applyModularCopyToResult(modularStateToListingCopy(nextState));
+    },
+    [applyModularCopyToResult, modularGeneration],
+  );
+
+  const lockedKeywordList = useMemo(() => {
+    const fromForm = keywords
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const fromAnchor = result?.orchestration?.modules.anchor.lockedKeywords ?? [];
+    return fromAnchor.length > 0 ? fromAnchor : fromForm;
+  }, [keywords, result?.orchestration]);
+
+  const handleListingHealthFix = useCallback(
+    (actionId: ListingHealthFixActionId) => {
+      switch (actionId) {
+        case "refresh_active_context":
+          void refetchOptimizationQueue();
+          void refreshOptimizerContext();
+          break;
+        case "focus_keywords": {
+          const el = document.getElementById("lo-keywords");
+          el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (el instanceof HTMLTextAreaElement) el.focus();
+          break;
+        }
+        case "open_competitor_spy":
+          if (workspaceId) router.push(`/app/${workspaceId}/competitors`);
+          break;
+        case "open_reviews":
+          if (workspaceId) router.push(`/app/${workspaceId}/reviews`);
+          break;
+        case "open_keyword_tracker":
+          if (workspaceId) router.push(`/app/${workspaceId}/keywords`);
+          break;
+        case "scroll_active_context":
+          document
+            .getElementById("lo-active-context")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+          break;
+        case "regenerate_phase2_short":
+          void modularGeneration.generateShort().then((ok) => {
+            if (!ok) return;
+            const short =
+              modularGeneration.state.shortDescription.variations[
+                modularGeneration.state.shortDescription.selectedIndex
+              ];
+            if (short) {
+              const text = shortVariationText(short);
+              setEditedShort(text);
+              setResult((prev) =>
+                prev ? { ...prev, shortDescription: text } : prev,
+              );
+            }
+          });
+          break;
+        case "regenerate_long_ai":
+          void handleMagicGenerateLong();
+          break;
+        case "expand_long_ai":
+          void handleLongAiTool("expand");
+          break;
+        case "insert_primary_keyword_hook": {
+          const primary = normalizeHighlightKeywords(lockedKeywordList)[0];
+          const current =
+            editedLong.trim() || modularGeneration.assembledCopy.fullDescription;
+          if (!primary || !current.trim()) return;
+          const paragraphs = current.split(/\n\n/);
+          paragraphs[0] = `${primary} — ${(paragraphs[0] ?? "").trim()}`.trim();
+          const next = paragraphs.join("\n\n").slice(0, 4000);
+          modularGeneration.setLongDescriptionValue(next);
+          setEditedLong(next);
+          setResult((prev) => (prev ? { ...prev, fullDescription: next } : prev));
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [
+      editedLong,
+      handleLongAiTool,
+      handleMagicGenerateLong,
+      lockedKeywordList,
+      modularGeneration,
+      refetchOptimizationQueue,
+      refreshOptimizerContext,
+      router,
+      workspaceId,
+    ],
+  );
 
   const hasUnsavedModularDraft = modularDraftReady && !listingGenerationId;
   const modularWorkInFlight = useMemo(
@@ -3163,10 +3272,6 @@ export function ListingOptimizer({
           return;
         } else if (generationResult.error.code === "truncated_model_output") {
           setError(t("form.truncatedModelOutput"));
-        } else if (generationResult.error.code === "stale_active_context") {
-          setError(t("form.staleActiveContext"));
-          void refetchOptimizationQueue();
-          void refreshOptimizerContext();
         } else if (generationResult.error.code === "validation_error") {
           setError(t("form.validationInputError"));
         } else if (
@@ -3192,6 +3297,10 @@ export function ListingOptimizer({
         return;
       }
       const json = generationResult;
+      if (json.warnings) {
+        modularGeneration.ingestWarnings(json.warnings);
+        handleModularWarnings(json.warnings);
+      }
       let d = json.data;
       if (
         opts.orchestrationModuleId &&
@@ -4759,6 +4868,8 @@ export function ListingOptimizer({
                 );
               }}
               onModularMagicGenerateLong={() => void handleMagicGenerateLong()}
+              onModularLongAiTool={(tool) => void handleLongAiTool(tool)}
+              onListingHealthFix={handleListingHealthFix}
               onModularFinalize={() => void runFinalizeListing()}
               modularFinalizeBusy={modularGeneration.loading.finalize}
               modularFinalizeCreditCost={AI_CREDIT_COSTS.listing_generation}
@@ -4772,6 +4883,8 @@ export function ListingOptimizer({
                 .split(/[,;\n]+/)
                 .map((s) => s.trim())
                 .filter(Boolean)}
+              listingHealth={modularGeneration.generationWarnings}
+              lockedKeywords={lockedKeywordList}
             />
             ) : null}
 

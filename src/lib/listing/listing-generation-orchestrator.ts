@@ -9,16 +9,34 @@ import {
   generateListingTitleWithGemini,
 } from "@/lib/gemini/generate-listing-modular";
 import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
+import {
+  buildHeuristicLongBlocks,
+  buildHeuristicShortLine,
+  buildHeuristicShortVariations,
+  buildHeuristicTitle,
+  enrichListingInputForHeuristics,
+  finalizeWarningsPayload,
+  missingContextShortWarning,
+  partialModelOutputWarning,
+} from "@/lib/listing/listing-generation-heuristics";
 import type {
   ModularListingGenerationStep,
   ModularLongStepData,
   ModularShortStepData,
   ModularTitleStepData,
 } from "@/lib/listing/modular-listing.types";
+import type {
+  ListingGenerationWarning,
+  ListingGenerationWarningsPayload,
+} from "@/lib/listing/listing-generation-warnings";
 import { getModularListingPromptVersion } from "@/lib/prompts/listing-modular";
 import { getListingOptimizerPromptVersion } from "@/lib/prompts/listing-optimizer";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
-import type { ListingModularGenerateBody } from "@/lib/validation/listing-modular-generate-body";
+import {
+  isCreditBilledStep,
+  resolveRequestLockedKeywords,
+  type ListingModularGenerateBody,
+} from "@/lib/validation/listing-modular-generate-body";
 import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import { insertListingGeneration } from "@/lib/db/listing-generations";
@@ -34,13 +52,21 @@ export type OrchestratorRunContext = {
   clientIp: string;
   model: string;
   creditsLedgerId?: string | null;
+  preflightWarnings?: ListingGenerationWarning[];
+};
+
+type OrchestratorResponseBase = {
+  warnings?: ListingGenerationWarningsPayload;
 };
 
 export type OrchestratorModularResponse =
-  | { step: "title"; data: ModularTitleStepData }
-  | { step: "short"; data: ModularShortStepData }
-  | { step: "long" | "hook" | "features" | "closing"; data: ModularLongStepData }
-  | {
+  | ({ step: "title"; data: ModularTitleStepData } & OrchestratorResponseBase)
+  | ({ step: "short"; data: ModularShortStepData } & OrchestratorResponseBase)
+  | ({
+      step: "long" | "hook" | "features" | "closing";
+      data: ModularLongStepData;
+    } & OrchestratorResponseBase)
+  | ({
       step: "finalize" | "full";
       data: ListingGenerationOutput;
       asoScorePartial?: boolean;
@@ -49,7 +75,7 @@ export type OrchestratorModularResponse =
       generationId?: string;
       savedAt?: string;
       persisted: boolean;
-    };
+    } & OrchestratorResponseBase);
 
 function listingInputFromBody(body: ListingModularGenerateBody): ListingOptimizerInput {
   const {
@@ -76,6 +102,31 @@ function resolveLockedKeywords(body: ListingModularGenerateBody): string[] {
   return resolveRequestLockedKeywords(body);
 }
 
+function hasUsableText(value: string | undefined): boolean {
+  return Boolean(value?.trim());
+}
+
+async function withHeuristicFallback<T>(
+  stepLabel: string,
+  attempt: () => Promise<T>,
+  fallback: () => T,
+  isValid: (data: T) => boolean,
+  warnings: ListingGenerationWarning[],
+): Promise<T> {
+  try {
+    const data = await attempt();
+    if (isValid(data)) return data;
+    warnings.push(partialModelOutputWarning(stepLabel));
+    return fallback();
+  } catch (error) {
+    if (error instanceof InvalidModelOutputError) {
+      warnings.push(partialModelOutputWarning(stepLabel));
+      return fallback();
+    }
+    throw error;
+  }
+}
+
 export function orchestratorPromptVersion(step: ModularListingGenerationStep): string {
   return isCreditBilledStep(step) && step === "full"
     ? getListingOptimizerPromptVersion()
@@ -85,16 +136,24 @@ export function orchestratorPromptVersion(step: ModularListingGenerationStep): s
 export async function runListingGenerationOrchestrator(
   ctx: OrchestratorRunContext,
 ): Promise<OrchestratorModularResponse> {
-  const input = listingInputFromBody(ctx.body);
   const { step, body } = ctx;
+  const { input, warnings } = enrichListingInputForHeuristics(
+    body,
+    ctx.preflightWarnings ?? [],
+  );
+  const warningsPayload = () => finalizeWarningsPayload(warnings);
 
   switch (step) {
     case "title": {
-      const data = await generateListingTitleWithGemini(
-        input,
-        resolveLockedKeywords(body),
+      const locked = resolveLockedKeywords(body);
+      const data = await withHeuristicFallback(
+        "title",
+        () => generateListingTitleWithGemini(input, locked),
+        () => buildHeuristicTitle(input, locked),
+        (value) => hasUsableText(value.title),
+        warnings,
       );
-      return { step: "title", data };
+      return { step: "title", data, warnings: warningsPayload() };
     }
 
     case "short": {
@@ -102,12 +161,15 @@ export async function runListingGenerationOrchestrator(
         body.contextTitle?.trim() ||
         body.modularListing?.title.value?.trim() ||
         input.appName.slice(0, 30);
-      const data = await generateListingShortWithGemini(
-        input,
-        contextTitle,
-        resolveLockedKeywords(body),
+      const locked = resolveLockedKeywords(body);
+      const data = await withHeuristicFallback(
+        "short description",
+        () => generateListingShortWithGemini(input, contextTitle, locked),
+        () => buildHeuristicShortVariations(input, contextTitle),
+        (value) => value.variations.some((v) => hasUsableText(v.text)),
+        warnings,
       );
-      return { step: "short", data };
+      return { step: "short", data, warnings: warningsPayload() };
     }
 
     case "long":
@@ -118,7 +180,7 @@ export async function runListingGenerationOrchestrator(
         body.contextTitle?.trim() ||
         body.modularListing?.title.value?.trim() ||
         input.appName.slice(0, 30);
-      const contextShort =
+      let contextShort =
         body.contextShortDescription?.trim() ||
         (() => {
           const row =
@@ -129,20 +191,40 @@ export async function runListingGenerationOrchestrator(
         })() ||
         "";
       if (!contextShort) {
-        throw new InvalidModelOutputError(
-          "contextShortDescription is required for long-description generation",
-        );
+        contextShort = buildHeuristicShortLine(input, contextTitle);
+        warnings.push(missingContextShortWarning());
       }
       const existing = body.modularListing?.longDescription;
       const block = step === "long" ? undefined : step;
-      const data = await generateListingLongWithGemini(
-        input,
-        { title: contextTitle, shortDescription: contextShort },
-        block,
-        existing,
-        resolveLockedKeywords(body),
+      const locked = resolveLockedKeywords(body);
+      const context = { title: contextTitle, shortDescription: contextShort };
+      const fallbackLong = () => {
+        const full = buildHeuristicLongBlocks(input, context);
+        if (block && existing) {
+          return {
+            hook: block === "hook" ? full.hook : (existing.hook ?? ""),
+            features: block === "features" ? full.features : (existing.features ?? ""),
+            closing: block === "closing" ? full.closing : (existing.closing ?? ""),
+          };
+        }
+        return full;
+      };
+      const data = await withHeuristicFallback(
+        block ? `long ${block}` : "long description",
+        () =>
+          generateListingLongWithGemini(input, context, block, existing, locked),
+        fallbackLong,
+        (value) => {
+          if (block) return hasUsableText(value[block]);
+          return (
+            hasUsableText(value.hook) ||
+            hasUsableText(value.features) ||
+            hasUsableText(value.closing)
+          );
+        },
+        warnings,
       );
-      return { step, data };
+      return { step, data, warnings: warningsPayload() };
     }
 
     case "finalize": {
@@ -195,16 +277,42 @@ export async function runListingGenerationOrchestrator(
         persisted: persist.ok,
         generationId: persist.ok ? persist.id : undefined,
         savedAt: persist.ok ? persist.createdAt : undefined,
+        warnings: warningsPayload(),
       };
     }
 
     case "full": {
-      const {
-        data,
-        asoScorePartial,
-        retried,
-        shortDescriptionClamped,
-      } = await generateListingWithGemini(input);
+      let data: ListingGenerationOutput;
+      let asoScorePartial: boolean | undefined;
+      let retried: boolean | undefined;
+      let shortDescriptionClamped: boolean | undefined;
+      try {
+        const result = await generateListingWithGemini(input);
+        data = result.data;
+        asoScorePartial = result.asoScorePartial;
+        retried = result.retried;
+        shortDescriptionClamped = result.shortDescriptionClamped;
+      } catch (error) {
+        if (error instanceof InvalidModelOutputError) {
+          warnings.push(partialModelOutputWarning("full listing"));
+          const title = buildHeuristicTitle(input, resolveLockedKeywords(body));
+          const short = buildHeuristicShortVariations(input, title.title);
+          const long = buildHeuristicLongBlocks(input, {
+            title: title.title,
+            shortDescription: short.variations[0]?.text ?? title.title,
+          });
+          data = {
+            title: title.title,
+            shortDescription: short.variations[1]?.text ?? short.variations[0]?.text ?? "",
+            fullDescription: [long.hook, long.features, long.closing].filter(Boolean).join("\n\n"),
+            keywordSuggestions: input.targetKeywords.slice(0, 20),
+            ctaSuggestions: [],
+          };
+          asoScorePartial = true;
+        } else {
+          throw error;
+        }
+      }
 
       const persist = await insertListingGeneration(ctx.supabase, {
         input,
@@ -236,6 +344,7 @@ export async function runListingGenerationOrchestrator(
         persisted: persist.ok,
         generationId: persist.ok ? persist.id : undefined,
         savedAt: persist.ok ? persist.createdAt : undefined,
+        warnings: warningsPayload(),
       };
     }
 

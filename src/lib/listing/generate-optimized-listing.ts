@@ -6,10 +6,12 @@ import {
   sanitizeActiveContextForGenerate,
   sanitizeTrackedKeywordSignalsForGenerate,
 } from "@/lib/listing/sanitize-listing-generate-payload";
+import type { ListingGenerationWarningsPayload } from "@/lib/listing/listing-generation-warnings";
 
 export type GenerateOptimizedListingSuccess = {
   ok: true;
   data: ListingGenerationOutput;
+  warnings?: ListingGenerationWarningsPayload;
   meta?: {
     model?: string;
     promptVersion?: string;
