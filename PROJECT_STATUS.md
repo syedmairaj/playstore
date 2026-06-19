@@ -1,9 +1,13 @@
 # Growth Hub - Project Status & Architecture Reference
 
-**Last Updated:** June 12, 2026  
+**Last Updated:** June 16, 2026  
 **Project Phase:** Production - Active Development  
 **Status:** 🟢 Stable with Active Enhancements  
-**Session:** Post-session 3 (Optimization Queue, VaultCore, Competitor Spy curation, schema hardening)
+**Session:** Post-session 4 (Modular Listing Pipeline, Trial-to-Paid billing, draft auto-save, typed short schema)
+
+> **Filename note:** Git tracks this file as `PROJECT_STATUS.md`. On case-insensitive filesystems (macOS default), `project_status.md` resolves to the **same file** — there is no separate copy. Use `PROJECT_STATUS.md` in links and tooling.
+
+**Related docs:** [`STAGING_VAULT_INTEGRATION_SUMMARY.md`](./STAGING_VAULT_INTEGRATION_SUMMARY.md) · [`docs/api.md`](./docs/api.md) · [`docs/database.md`](./docs/database.md)
 
 ---
 
@@ -12,6 +16,74 @@
 Growth Hub is a **pro-grade ASO (App Store Optimization) platform** built on modern cloud-native architecture. The platform leverages a **Staged-State architecture** pattern for feature isolation, workspace-scoped data management, and zero-breaking-changes deployment strategy.
 
 **Core Mission:** Enable indie app developers to optimize their Google Play Store listings through AI-powered keyword validation, experiment snapshots, and synthesis-driven improvements.
+
+---
+
+## Session 4 — Modular Listing Pipeline & Billing (June 16, 2026)
+
+Quick handoff for new chat sessions. Vault integration detail lives in `STAGING_VAULT_INTEGRATION_SUMMARY.md`.
+
+### Architectural decisions
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | **Modular pipeline** (`title → short → long → finalize`) | Phased calls, per-block UX, isolated billing |
+| 2 | **Trial-to-Paid regenerates** — workspace-scoped | `trial_regenerations_used` + RPC `consume_modular_listing_regenerate`; server authoritative |
+| 3 | **Credits debit after success** | Regenerate RPC runs after orchestrator + Zod pass; validation failure → 400, no debit |
+| 4 | **Weighted credit ledger** | `generation_type`: `text` (1–5 credits) vs `media` (Creative Bundle @ 30) |
+| 5 | **Draft auto-save** | `useDraftPersistence` → `localStorage`; restore on mount; clear on finalize |
+| 6 | **Typed short schema** | `{ variations: [{ type: growth\|conversion\|utility, text }] }` × 3 + Gemini `responseSchema` |
+| 7 | **JSON mode per step** | `responseMimeType: application/json`; short step has no auto-retry on validation failure |
+| 8 | **Streaming (roadmap)** | Progressive render for 20s+ calls — not yet wired in modular pipeline |
+
+### Phase orchestration
+
+| Phase | `generationStep` | First generate | Regenerate |
+|-------|------------------|----------------|------------|
+| 1 — Search Foundation | `title` | Free | Trial slot or 1 credit |
+| 2 — Discovery & Hook | `short` | Free | Trial slot or 1 credit |
+| 3 — Value Narrative | `long` / `hook` / `features` / `closing` | Free | Trial slot or 1 credit |
+| Confirm | `finalize` | **5 credits** | N/A |
+
+**API:** `POST /api/listings/generate` with `modularListing`, `isRegenerate`, `contextTitle`, `contextShortDescription`, `lockedKeywords`.  
+**Prompt:** `listing-modular-v1.2`. **Client:** `useModularGeneration` + `modular-listing-panel.tsx`.
+
+### Trial-to-Paid & weighted credits
+
+- **3 free** workspace regenerates (`trial_regenerations_used < 3`), then **1 credit** (`modular_listing_regenerate`, `generation_type: text`)
+- **Finalize:** 5 credits (`listing_generation`)
+- **Creative Bundle:** 30 credits (`brand_kit_batch`, `generation_type: media`)
+- Helper: `buildCreditLedgerMeta('text' | 'media')` in `src/lib/features/billing/credit-ledger-meta.ts`
+
+### Data integrity & performance
+
+- **Auto-save key:** `listing-modular-draft:{workspaceId}:modular-listing`
+- **Zod:** draft vs finalize ingress; strict short output; no generic padding fallback; 409 `stale_active_context` on queue drift
+- **Performance (implemented):** phased calls, JSON mode, single-attempt short gen, post-success billing
+- **Performance (planned):** streaming partial responses to client
+
+### Session 4 key files
+
+```
+app/api/listings/generate/route.ts
+src/lib/gemini/generate-listing-modular.ts
+src/lib/listing/listing-generation-orchestrator.ts
+src/lib/listing/modular-short-variations.ts
+src/lib/prompts/listing-modular.ts
+src/lib/features/billing/modular-regenerate-billing.ts
+src/hooks/useModularGeneration.ts
+src/hooks/useDraftPersistence.ts
+src/components/listing/optimizer/modular-listing-panel.tsx
+supabase/migrations/20260618120000_workspace_trial_regenerations.sql
+```
+
+### Session 4 verification checklist
+
+1. Apply migration `20260618120000_workspace_trial_regenerations.sql`
+2. Phase 2 short returns typed `variations[]` (Growth / Conversion / Utility)
+3. Regenerate: trial 3→0 then 1 credit; validation failure does not debit
+4. Page refresh restores modular draft from localStorage
+5. Finalize debits 5 credits and clears draft
 
 ---
 
@@ -312,6 +384,9 @@ PlayStore Menu (static — do not modify)
 | Live Rank Fetch | Server-side credit-gated API | ✅ Complete |
 | Experiment Snapshots | Tabbed panel | ✅ Complete (parity fixed) |
 | Optimization Queue | Active Context SSOT | ✅ Complete (Session 3) |
+| Modular Listing Pipeline | Phased title/short/long + finalize | ✅ Complete (Session 4) |
+| Trial-to-Paid regenerates | Workspace trial counter + post-success debit | ✅ Complete (Session 4) |
+| Draft auto-save | `useDraftPersistence` (localStorage) | ✅ Complete (Session 4) |
 | Competitor Spy curation | Add to Queue + badges | ✅ Complete (Session 3) |
 | VaultCore | Centralized vault writes | ✅ Complete (Session 3) |
 | Enhanced Synthesis | Queue-backed generation | ✅ Complete (Session 3) |
@@ -394,9 +469,11 @@ queryClient.invalidateQueries({ queryKey: ['optimization-queue', workspaceId, lo
 queryClient.invalidateQueries({ queryKey: ['optimizer-context', workspaceId, locale] });
 ```
 
-### Generate Full Listing
+### Generate Full Listing (legacy + modular)
 
-- Prompt: `listing-optimizer-v12.0` — frames input as a **curated optimization queue**
+- **Fresh generate (modular):** `title` + `short` phases; user completes Phase 3; **finalize** costs 5 credits
+- **Regenerate block:** `isRegenerate: true` → trial/credit via `consume_modular_listing_regenerate` **after** validation
+- **Monolithic path:** `generationStep: "full"` — 5 credits, `listing-optimizer-v12.0` prompt
 - Synthesis: `buildSynthesisFromOptimizationQueue()` — no grab-all from discovery APIs
 - Empty queue → standard ASO best practices (no silent injection of tracker/competitor data)
 
@@ -557,6 +634,6 @@ DROP INDEX IF EXISTS idx_vault_state_ar_features;
 
 ---
 
-**Version:** 3.0  
-**Last Updated:** June 12, 2026  
+**Version:** 4.0  
+**Last Updated:** June 16, 2026  
 **Status:** Production — Active Development

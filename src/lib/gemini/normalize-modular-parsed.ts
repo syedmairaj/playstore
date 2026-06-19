@@ -1,6 +1,14 @@
-import type { ListingOptimizerInput } from "@/lib/types/listing";
-import { activeContextHasSignals } from "@/lib/optimization-queue/build-active-context-synthesis";
-import { buildStrategyModePromptBlock } from "@/lib/prompts/aso-strategy-mode";
+import {
+  coerceShortVariationsInput,
+  defaultShortVariationType,
+  orderShortVariations,
+  shortVariationTypeFromOrchestrationId,
+} from "@/lib/listing/modular-short-variations";
+
+export {
+  buildModularAppContextBlock,
+  buildModularListingContextBlock,
+} from "@/lib/listing/modular-app-context";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
@@ -18,52 +26,6 @@ function readStringArray(v: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-/** Compact context for modular steps — avoids full-listing / orchestration JSON conflicts. */
-export function buildModularListingContextBlock(input: ListingOptimizerInput): string {
-  const targetArabic = input.targetArabic ?? false;
-  const lines = [
-    `App: ${input.appName}`,
-    `Category: ${input.category}`,
-    `Seed keywords: ${input.targetKeywords.slice(0, 25).join(", ")}`,
-    `Features: ${input.appFeatures.slice(0, 2000)}`,
-    targetArabic
-      ? "Output language: Modern Standard Arabic suitable for Google Play MENA."
-      : "Output language: English suitable for Google Play.",
-    buildStrategyModePromptBlock({
-      strategyMode: input.strategyMode ?? "defensive",
-      topStagedIssues: input.topStagedIssues ?? [],
-      trackedKeywordSignals: input.trackedKeywordSignals,
-      targetArabic,
-    }),
-  ];
-
-  if (input.topStagedIssues?.length) {
-    lines.push(
-      `Top review insights: ${input.topStagedIssues.map((i) => i.label).join("; ")}`,
-    );
-  }
-
-  if (input.activeContext && activeContextHasSignals(input.activeContext)) {
-    const defensive = input.activeContext.defensive
-      .slice(0, 5)
-      .map((s) => s.label)
-      .join("; ");
-    const offensive = input.activeContext.offensive
-      .slice(0, 5)
-      .map((s) => s.label)
-      .join("; ");
-    const market = input.activeContext.market
-      .slice(0, 5)
-      .map((s) => s.label)
-      .join("; ");
-    if (defensive) lines.push(`Defensive signals: ${defensive}`);
-    if (offensive) lines.push(`Offensive signals: ${offensive}`);
-    if (market) lines.push(`Market signals: ${market}`);
-  }
-
-  return lines.filter(Boolean).join("\n");
 }
 
 export function normalizeModularTitleParsed(
@@ -102,36 +64,61 @@ export function normalizeModularTitleParsed(
   };
 }
 
-export function normalizeModularShortParsed(parsed: unknown): { variations: string[] } {
+export function normalizeModularShortParsed(parsed: unknown): {
+  variations: ReturnType<typeof orderShortVariations>;
+} {
   if (Array.isArray(parsed)) {
-    return { variations: readStringArray(parsed) };
+    return { variations: orderShortVariations(coerceShortVariationsInput(parsed)) };
   }
 
   const root = asRecord(parsed);
   if (!root) return { variations: [] };
 
-  let variations = readStringArray(root.variations);
-  if (variations.length === 0) {
-    const modules = asRecord(root.modules);
-    const conversion = modules ? asRecord(modules.conversion) : null;
-    if (conversion) {
-      const items = conversion.shortVariations;
-      if (Array.isArray(items)) {
-        variations = items
-          .map((item) => {
-            const row = asRecord(item);
-            return row ? readString(row, "shortDescription") : "";
-          })
-          .filter(Boolean);
+  if (Array.isArray(root.variations)) {
+    const typed = root.variations.map((item, index) => {
+      if (typeof item === "string") {
+        return { type: defaultShortVariationType(index), text: item.trim().slice(0, 80) };
       }
-    }
+      const row = asRecord(item);
+      if (!row) {
+        return { type: defaultShortVariationType(index), text: "" };
+      }
+      const text = readString(row, "text") || readString(row, "shortDescription");
+      const typeRaw = readString(row, "type") || readString(row, "variationId");
+      const type = typeRaw
+        ? shortVariationTypeFromOrchestrationId(typeRaw, index)
+        : defaultShortVariationType(index);
+      return { type, text: text.slice(0, 80) };
+    });
+    return { variations: orderShortVariations(typed) };
   }
 
-  if (variations.length === 0 && typeof root.shortDescription === "string") {
-    variations = [root.shortDescription.trim()];
+  const modules = asRecord(root.modules);
+  const conversion = modules ? asRecord(modules.conversion) : null;
+  if (conversion && Array.isArray(conversion.shortVariations)) {
+    const typed = conversion.shortVariations.map((item, index) => {
+      const row = asRecord(item);
+      if (!row) {
+        return { type: defaultShortVariationType(index), text: "" };
+      }
+      const variationId = readString(row, "variationId");
+      return {
+        type: shortVariationTypeFromOrchestrationId(variationId, index),
+        text: readString(row, "shortDescription").slice(0, 80),
+      };
+    });
+    return { variations: orderShortVariations(typed) };
   }
 
-  return { variations };
+  if (typeof root.shortDescription === "string") {
+    return {
+      variations: orderShortVariations([
+        { type: "growth", text: root.shortDescription.trim().slice(0, 80) },
+      ]),
+    };
+  }
+
+  return { variations: [] };
 }
 
 export function normalizeModularLongParsed(parsed: unknown): {

@@ -27,7 +27,10 @@ These support the AI App Listing Optimizer and operational controls:
 
 - **`credits_ledger`** — Append-only movements; negative `amount` = spend, positive = refund or top-up.
 - **`consume_workspace_ai_credits(p_workspace_id, p_user_id, p_amount, p_description, p_source_type, p_meta)`** — `SECURITY DEFINER`; verifies member + caller, locks the workspace row (`FOR UPDATE`), returns `insufficient_credits` if `ai_credits_remaining < p_amount`, otherwise debits and inserts a spend row. Granted to `authenticated` and `service_role`.
+- **`consume_modular_listing_regenerate(p_workspace_id, p_user_id, p_generation_step, p_meta)`** — `SECURITY DEFINER`; locks workspace, increments `trial_regenerations_used` when `< 3` (free trial slot), otherwise debits **1** credit and inserts a **`credits_ledger`** row with `meta.generation_type = 'text'`. Client cannot set the trial counter directly.
 - **`refund_workspace_ai_credits(p_ledger_id, p_user_id, p_reason)`** — Reverses a prior spend (idempotent when already refunded). Granted to `authenticated` and `service_role`.
+
+**Ledger `meta.generation_type`:** spend rows should include `text` (listing copy, modular regenerate after trial) or `media` (Creative Bundle / banner batch, **30** credits). Set via `buildCreditLedgerMeta()` in API routes.
 
 **Admin (site operators)** — **`admin_financial_snapshot(p_series_from date, p_series_to date)`** — `SECURITY DEFINER`; callable when **`profiles.is_admin`** is true **or** **`profiles.role = 'admin'`** for **`auth.uid()`** (no matching row → not admin). Returns JSON `{ ok, code }` on failure (e.g. `forbidden`) or aggregates on success. Migrations: `supabase/migrations/20260513120000_profiles_is_admin_admin_financial_rpc.sql`, then `supabase/migrations/20260513130000_profiles_role_site_admin.sql`. Setup and troubleshooting: [`docs/admin-financial-setup.md`](./admin-financial-setup.md).
 
@@ -87,6 +90,7 @@ Full DDL + policies: `supabase/migrations/20250512000000_phase2_auth_workspaces_
 ## Core pages extensions
 
 - **`workspaces.plan`** — `starter` \| `pro` \| `agency` (text, default starter).
+- **`workspaces.trial_regenerations_used`** — integer (default 0); workspace-scoped count of modular listing **Regenerate** clicks consumed from the trial quota (first **3** free per workspace; further regenerates debit **1** text credit via RPC `consume_modular_listing_regenerate`). Migration: `supabase/migrations/20260618120000_workspace_trial_regenerations.sql`.
 - **`workspaces.onboarding_state`** — jsonb for guided onboarding progress (`completed`, `step`, etc.).
 - **`apps.play_store_url`**, **`apps.target_countries`**, **`apps.icon_url`**, **`apps.metadata`** — optional Play listing context; `metadata` holds ASO fields not modeled as top-level columns (e.g. category, short description, icon URL mirror).
 - **`workspace_invitations`** — pending invites (`email`, `role` admin|member, `invited_by`); unique per workspace + lower(email). RLS: members read; owner/admin insert/delete.

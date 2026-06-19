@@ -1,8 +1,8 @@
 # Staging Vault Integration Summary
 
-**Document Version:** 3.0  
-**Last Updated:** June 12, 2026  
-**Scope:** Growth Hub Staged-State Architecture + Optimization Queue  
+**Document Version:** 4.0  
+**Last Updated:** June 16, 2026  
+**Scope:** Growth Hub Staged-State Architecture + Optimization Queue + Modular Listing Pipeline  
 **Audience:** Senior developers, architects, future maintainers  
 
 ---
@@ -11,13 +11,17 @@
 
 The **Staging Vault** is the architectural foundation of Growth Hub. It implements a **Producer-Consumer pattern** with strict feature isolation, bilingual state separation, and zero-breaking-changes evolution semantics.
 
-As of June 12, 2026, the vault also hosts the **Optimization Queue** — the single source of truth for AI Listing Optimizer Active Context and Generate Full Listing synthesis.
+As of June 12, 2026, the vault hosts the **Optimization Queue** — the single source of truth for AI Listing Optimizer Active Context and listing synthesis.
+
+As of June 16, 2026 (Session 4), the **Listing Optimizer** also runs a **Modular Listing Pipeline** (phased title → short → long → finalize) with workspace-scoped trial regenerates, weighted credit ledger metadata, browser draft auto-save, and strict Zod validation on AI output — especially typed short-description variations.
 
 **Core Value:** Enables unlimited feature scaling without cross-feature data corruption while maintaining backwards compatibility across all client versions.
 
 **Key facts for new sessions:**
 - **Research → Curate → Synthesize** — discovery modules do not auto-feed the AI; users explicitly queue signals first
 - **Active Context reads only `features.optimization_queue`** — not raw `competitor_spy` / `keyword_tracker` namespaces
+- **Modular pipeline injects queue synthesis** via `buildModularAppContextBlock` / Orchestration Protocol — same curated signals as monolithic generate
+- **Regenerate billing is post-success** — `consume_modular_listing_regenerate` runs only after orchestrator + Zod validation succeed
 - **VaultCore** (`src/lib/staging-vault/vault-core.ts`) is the centralized write gateway with legacy + universal schema detection
 - Production DB uses **universal vault** (`state_en`, `state_ar`, `app_id`) — legacy columns (`signal_type`, `metadata`, `content`) may be absent
 - **Do not** create btree indexes on `(state_en -> 'features')` — row size limit ~2704 bytes; use GIN on full `state_en`/`state_ar` instead
@@ -454,7 +458,9 @@ const features = state.features;
 | Additive schema only | New fields must be optional with defaults |
 | Producer isolation | `ProducerRegistry.verifyIsolation()` on every write |
 | Locale isolation | `state_en` and `state_ar` never cross-written |
-| No credit logic client-side | All billing via `consume_workspace_ai_credits` RPC (server) |
+| No credit logic client-side | All billing via `consume_workspace_ai_credits` or `consume_modular_listing_regenerate` RPC (server) |
+| Regenerate debits after success | Failed Zod validation on AI output must not consume trial slots or credits |
+| Draft state is client-only | `useDraftPersistence` (localStorage) — not written to vault until finalize persists listing |
 
 ---
 
@@ -547,6 +553,89 @@ dispatchStagingVaultChanged({ workspaceId, locale, appId }); // cross-tab sync
 
 ---
 
+## Modular Listing Pipeline (Session 4 — June 16, 2026)
+
+### Relationship to vault & queue
+
+The modular pipeline **does not** write intermediate title/short/long blocks to the staging vault. Vault integration points:
+
+| Stage | Vault / queue touchpoint |
+|-------|--------------------------|
+| **Active Context** | Queue items → `buildSynthesisFromOptimizationQueue()` → injected in `buildModularAppContextBlock()` |
+| **Stale guard** | `validateActiveContextQueueHash` — 409 if queue changed since session started |
+| **Finalize** | Persists full listing via existing listing save path (not vault features namespace) |
+| **Draft recovery** | `useDraftPersistence` — browser `localStorage` only; key `listing-modular-draft:{workspaceId}:modular-listing` |
+
+### Phase orchestration
+
+```
+Phase 1 (title)     → POST generate generationStep=title      → free
+Phase 2 (short)     → POST generate generationStep=short      → free (typed variations schema)
+Phase 3 (long)      → POST generate long|hook|features|closing → free first gen; regen billed
+Confirm (finalize)  → POST generate generationStep=finalize    → 5 credits (listing_generation)
+```
+
+**Regenerate:** `isRegenerate: true` → `consume_modular_listing_regenerate` **after** successful orchestration.
+
+### Trial-to-Paid regenerate billing
+
+| `trial_regenerations_used` | Regenerate cost |
+|----------------------------|-----------------|
+| 0–2 (slots remaining) | Free — counter incremented |
+| ≥ 3 | 1 credit (`modular_listing_regenerate`, `generation_type: text`) |
+
+Column: `workspaces.trial_regenerations_used`  
+Migration: `supabase/migrations/20260618120000_workspace_trial_regenerations.sql`
+
+### Weighted credit registry
+
+| Category | Tool | Credits | `generation_type` |
+|----------|------|---------|-------------------|
+| Text — modular regen | `modular_listing_regenerate` | 1 | `text` |
+| Text — finalize | `listing_generation` | 5 | `text` |
+| Media — Creative Bundle | `brand_kit_batch` | 30 | `media` |
+
+Helper: `buildCreditLedgerMeta('text' | 'media', extra)` in `src/lib/features/billing/credit-ledger-meta.ts`
+
+### Data integrity
+
+**Short description (strict):**
+```typescript
+// src/lib/listing/modular-short-variations.ts
+{ variations: [
+  { type: 'growth' | 'conversion' | 'utility', text: string /* max 80 */ }
+] } // length exactly 3, one of each type
+```
+
+- Gemini: `responseMimeType: "application/json"` + matching `responseSchema`
+- Validation failure → API 400 `validation_error` + `fieldErrors` — **no** credit/trial debit
+- No `padShortDescriptionVariations` generic fallback
+
+**Draft vs finalize state:** `modularListingDraftStateSchema` vs `modularListingFinalizeStateSchema`
+
+### Performance strategy
+
+| Technique | Status |
+|-----------|--------|
+| Phased API calls (smaller prompts per step) | ✅ Implemented |
+| JSON mode + `responseSchema` per step | ✅ Implemented |
+| Single-attempt short generation (no retry loop) | ✅ Implemented |
+| Post-success billing only | ✅ Implemented |
+| Streaming partial responses to client | 🔜 Planned — target for 20s+ perceived latency |
+
+**Key implementation files:**
+```
+src/hooks/useModularGeneration.ts
+src/hooks/useDraftPersistence.ts
+src/lib/gemini/generate-listing-modular.ts
+src/lib/listing/listing-generation-orchestrator.ts
+src/lib/features/billing/modular-regenerate-billing.ts
+app/api/listings/generate/route.ts
+src/components/listing/optimizer/modular-listing-panel.tsx
+```
+
+---
+
 ## Vault Router
 
 `src/lib/staging/vault-router.ts` — provides `getVault(workspaceId, appId)` and `saveVault(vault)`.
@@ -564,6 +653,7 @@ dispatchStagingVaultChanged({ workspaceId, locale, appId }); // cross-tab sync
 | `20260604100100_workspace_staging_vault.sql` | Legacy signal-log schema (may exist as `workspace_signal_log` after rename) |
 | `20260610000000_universal_staged_state_architecture.sql` | Universal vault: `state_en`, `state_ar`, `app_id` |
 | `20260612100000_drop_vault_features_btree_indexes.sql` | **Required** — drops btree feature indexes that break large JSONB writes |
+| `20260618120000_workspace_trial_regenerations.sql` | `trial_regenerations_used` + `consume_modular_listing_regenerate` RPC |
 
 The universal vault migration (`20260610000000`) was applied manually in some environments before being recorded. The old signal-log table was renamed to `workspace_signal_log` where conflicts occurred.
 

@@ -1,4 +1,32 @@
 import { z } from "zod";
+import {
+  coerceShortVariationsInput,
+  shortVariationItemSchema,
+  type ShortVariationItem,
+} from "@/lib/listing/modular-short-variations";
+
+export type {
+  ModularShortStepData,
+  ShortVariationItem,
+  ShortVariationType,
+} from "@/lib/listing/modular-short-variations";
+export {
+  SHORT_VARIATION_TYPES,
+  shortDescriptionSchema,
+  shortVariationText,
+  zodErrorToFieldErrors,
+} from "@/lib/listing/modular-short-variations";
+
+export type ModularLongUiMode = "choice" | "manual" | "ai";
+
+export type ModularListingDraftSnapshot = {
+  modularState: ModularListingState;
+  editedTitle: string;
+  editedShort: string;
+  editedLong: string;
+  modularDraftReady: boolean;
+  longUiMode: ModularLongUiMode;
+};
 
 /** Independent block ids for per-block loading / regenerate. */
 export type ModularListingBlockId =
@@ -7,6 +35,9 @@ export type ModularListingBlockId =
   | "hook"
   | "features"
   | "closing";
+
+/** Keys for compare-with-previous snapshots (`short-0` … `short-2` for variations). */
+export type ModularBlockSnapshotKey = ModularListingBlockId | `short-${number}`;
 
 export type ModularListingGenerationStep =
   | "full"
@@ -20,7 +51,7 @@ export type ModularListingGenerationStep =
 
 export type ModularListingState = {
   title: { value: string; locked: boolean };
-  shortDescription: { variations: string[]; selectedIndex: number };
+  shortDescription: { variations: ShortVariationItem[]; selectedIndex: number };
   longDescription: { hook: string; features: string; closing: string };
 };
 
@@ -35,25 +66,36 @@ export type ModularTitleStepData = {
   lockedKeywords: string[];
 };
 
-export type ModularShortStepData = {
-  variations: [string, string, string];
-};
-
 export type ModularLongStepData = {
   hook: string;
   features: string;
   closing: string;
 };
 
-/** Gemini short-step JSON — always `{ variations: string[] }`, never a bare array. */
-export const shortDescriptionSchema = z.object({
+/** UI / finalize payload — short block with selected variation index. */
+export const modularListingShortStateSchema = z.object({
   variations: z
-    .array(z.string().trim().min(1).max(80))
-    .min(3)
-    .max(3),
+    .array(
+      shortVariationItemSchema.extend({
+        text: z
+          .string()
+          .trim()
+          .min(1, { message: "shortDescription: This block is required and cannot be empty" })
+          .max(80),
+      }),
+    )
+    .length(3),
+  selectedIndex: z.number().int().min(0).max(2),
 });
 
-/** Gemini long-step JSON — hook / features / closing object wrapper. */
+/** Draft short — variations may be empty before short step completes. */
+export const modularListingShortDraftStateSchema = z.object({
+  variations: z.preprocess(
+    coerceShortVariationsInput,
+    z.array(shortVariationItemSchema).max(3),
+  ),
+  selectedIndex: z.number().int().min(0).max(2),
+});
 export const longDescriptionSchema = z.object({
   hook: z
     .string()
@@ -94,27 +136,6 @@ export const modularListingLongDraftStateSchema = z.object({
 /** Finalize — all long blocks must be non-empty. */
 export const modularListingLongFinalizeStateSchema = longDescriptionSchema;
 
-/** UI / finalize payload — short block with selected variation index. */
-export const modularListingShortStateSchema = z.object({
-  variations: z
-    .array(
-      z
-        .string()
-        .trim()
-        .min(1, { message: "shortDescription: This block is required and cannot be empty" })
-        .max(80),
-    )
-    .min(1, { message: "shortDescription: At least one variation is required" })
-    .max(3),
-  selectedIndex: z.number().int().min(0).max(2),
-});
-
-/** Draft short — variations may be empty before short step completes. */
-export const modularListingShortDraftStateSchema = z.object({
-  variations: z.array(z.string().trim().max(80)).max(3),
-  selectedIndex: z.number().int().min(0).max(2),
-});
-
 export const modularListingTitleStateSchema = z.object({
   value: z
     .string()
@@ -150,42 +171,3 @@ export const modularListingLongStateSchema = modularListingLongFinalizeStateSche
 /** @deprecated Use modularListingDraftStateSchema on API ingress; finalize schema on confirm. */
 export const modularListingStateSchema = modularListingDraftStateSchema;
 
-/** Pad short variations to exactly three entries (EN/AR) before Zod parse. */
-export function padShortDescriptionVariations(
-  variations: string[],
-  fallback = "Discover more with this app.",
-): [string, string, string] {
-  const padded = [...variations];
-  while (padded.length < 3) {
-    padded.push(padded[padded.length - 1] ?? fallback);
-  }
-  return [padded[0]!, padded[1]!, padded[2]!].map((v) => v.slice(0, 80)) as [
-    string,
-    string,
-    string,
-  ];
-}
-
-/** Coerce raw Gemini JSON to `{ variations }` before schema validation. */
-export function coerceShortDescriptionShape(parsed: unknown): { variations: string[] } {
-  if (Array.isArray(parsed)) {
-    return {
-      variations: parsed
-        .filter((item): item is string => typeof item === "string")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    };
-  }
-  if (parsed !== null && typeof parsed === "object") {
-    const record = parsed as Record<string, unknown>;
-    if (Array.isArray(record.variations)) {
-      return {
-        variations: record.variations
-          .filter((item): item is string => typeof item === "string")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      };
-    }
-  }
-  return { variations: [] };
-}

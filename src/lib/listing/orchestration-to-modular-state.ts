@@ -1,7 +1,13 @@
 import type { OrchestrationProtocol } from "@/lib/listing/orchestration-protocol.schema";
 import type { ModularListingState } from "@/lib/listing/modular-listing.types";
-
-const VARIATION_ORDER = ["defensive", "offensive", "primary"] as const;
+import {
+  SHORT_VARIATION_TYPES,
+  orchestrationVariationIdForType,
+  orderShortVariations,
+  shortVariationText,
+  shortVariationTypeFromOrchestrationId,
+  type ShortVariationItem,
+} from "@/lib/listing/modular-short-variations";
 
 function formatExpansionFeatures(
   features: OrchestrationProtocol["modules"]["expansion"]["blocks"]["features"],
@@ -31,15 +37,19 @@ export function orchestrationToModularState(
 ): ModularListingState {
   const { anchor, conversion, expansion } = orchestration.modules;
 
-  const variations = VARIATION_ORDER.map((id) => {
-    const match = conversion.shortVariations.find((v) => v.variationId === id);
-    return match?.shortDescription ?? "";
-  }).filter(Boolean);
-
-  const selectedIndex = Math.max(
-    0,
-    VARIATION_ORDER.indexOf(conversion.selectedVariationId),
+  const variationsFromOrch: ShortVariationItem[] = conversion.shortVariations.map(
+    (v, index) => ({
+      type: shortVariationTypeFromOrchestrationId(v.variationId, index),
+      text: v.shortDescription.trim().slice(0, 80),
+    }),
   );
+  const variations = orderShortVariations(variationsFromOrch);
+
+  const selectedType = shortVariationTypeFromOrchestrationId(
+    conversion.selectedVariationId,
+    2,
+  );
+  const selectedIndex = Math.max(0, SHORT_VARIATION_TYPES.indexOf(selectedType));
 
   const hook = expansion.blocks.hook.content.trim();
   const features = formatExpansionFeatures(expansion.blocks.features);
@@ -62,17 +72,18 @@ export function orchestrationToModularState(
     },
     shortDescription: {
       variations:
-        variations.length >= 3
-          ? (variations as [string, string, string])
-          : (conversion.shortVariations.map((v) => v.shortDescription) as [
-              string,
-              string,
-              string,
-            ]),
+        variations.filter((v) => v.text.trim()).length >= 3
+          ? variations
+          : orderShortVariations(
+              conversion.shortVariations.map((v, index) => ({
+                type: shortVariationTypeFromOrchestrationId(v.variationId, index),
+                text: v.shortDescription.trim().slice(0, 80),
+              })),
+            ),
       selectedIndex: (() => {
         if (overrides?.shortDescription) {
           const idx = variations.findIndex(
-            (v) => v.trim() === overrides.shortDescription!.trim(),
+            (v) => shortVariationText(v) === overrides.shortDescription!.trim(),
           );
           if (idx >= 0) return idx;
         }
@@ -87,7 +98,10 @@ export function modularStateToOrchestrationPatch(
   state: ModularListingState,
   base: OrchestrationProtocol,
 ): OrchestrationProtocol {
-  const selectedId = VARIATION_ORDER[state.shortDescription.selectedIndex] ?? "primary";
+  const selectedType =
+    state.shortDescription.variations[state.shortDescription.selectedIndex]?.type ??
+    "utility";
+  const selectedId = orchestrationVariationIdForType(selectedType);
   return {
     ...base,
     modules: {
@@ -97,13 +111,17 @@ export function modularStateToOrchestrationPatch(
       },
       conversion: {
         ...base.modules.conversion,
-        selectedVariationId: selectedId,
-        shortVariations: base.modules.conversion.shortVariations.map((v, i) => ({
-          ...v,
-          shortDescription:
-            state.shortDescription.variations[i]?.trim().slice(0, 80) ??
-            v.shortDescription,
-        })) as OrchestrationProtocol["modules"]["conversion"]["shortVariations"],
+        selectedVariationId: selectedId as "defensive" | "offensive" | "primary",
+        shortVariations: base.modules.conversion.shortVariations.map((v, i) => {
+          const item =
+            state.shortDescription.variations.find(
+              (row) => orchestrationVariationIdForType(row.type) === v.variationId,
+            ) ?? state.shortDescription.variations[i];
+          return {
+            ...v,
+            shortDescription: item ? shortVariationText(item) : v.shortDescription,
+          };
+        }) as OrchestrationProtocol["modules"]["conversion"]["shortVariations"],
       },
       expansion: {
         ...base.modules.expansion,

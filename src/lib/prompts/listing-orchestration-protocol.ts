@@ -64,6 +64,9 @@ export function buildOrchestrationProtocolPromptBlock(ctx: OrchestrationPromptCo
     "",
     locale === "ar" ? "المرحلة 2 — التحويل (Conversion)" : "PHASE 2 — CONVERSION (three short descriptions)",
     locale === "ar"
+      ? '• للمسار المعياري (modular): أرجِع { "variations": [ {"type": "growth"|"conversion"|"utility", "text": "..."} × 3 ] } — نص واحد ≤80 حرف لكل نوع.'
+      : '• For the modular pipeline: return { "variations": [ {"type": "growth"|"conversion"|"utility", "text": "..."} × 3 ] } — one ≤80 char text per type.',
+    locale === "ar"
       ? `• أنشئ orchestration.modules.conversion.shortVariations — بالضبط 3 عناصر:`
       : `• Build orchestration.modules.conversion.shortVariations — EXACTLY 3 items:`,
     `  1. variationId "defensive" — profileLabel "${labels.defensive}" — ≤80 chars, addresses pain/trust.`,

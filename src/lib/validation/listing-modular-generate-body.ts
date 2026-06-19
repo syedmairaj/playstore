@@ -110,6 +110,8 @@ const listingModularGenerateBodyBase = listingGenerateBodySchema.extend({
   contextShortDescription: z.string().trim().min(1).max(80).optional(),
   /** Draft ingress — empty long blocks allowed during modular pipeline steps. */
   modularListing: modularListingDraftStateSchema.optional(),
+  /** True when user clicked Regenerate — server applies trial/credit billing (not client-trusted count). */
+  isRegenerate: z.boolean().optional().default(false),
 });
 
 export const listingModularGenerateBodySchema = z

@@ -36,7 +36,7 @@ import {
   StrategicRationaleCard,
 } from "@/components/listing/optimizer/strategic-rationale-card";
 import { ModularListingPanel } from "@/components/listing/optimizer/modular-listing-panel";
-import type { ModularListingBlockId, ModularListingState } from "@/lib/listing/modular-listing.types";
+import type { ModularListingBlockId, ModularListingState, ModularLongUiMode } from "@/lib/listing/modular-listing.types";
 import { EMPTY_MODULAR_LISTING_STATE } from "@/lib/listing/modular-listing.types";
 import type { ModularLoadingState } from "@/hooks/useModularGeneration";
 
@@ -136,9 +136,19 @@ type Props = {
   onRegenerateModularBlock?: (blockId: ModularListingBlockId) => void;
   onSelectModularShortVariation?: (index: number, variation: string) => void;
   onModularTitleChange?: (value: string) => void;
+  onModularLongDescriptionChange?: (value: string) => void;
+  onModularMagicGenerateLong?: () => void;
   onModularFinalize?: () => void;
   modularFinalizeBusy?: boolean;
   modularDraftReady?: boolean;
+  modularFinalizeCreditCost?: number;
+  trialRegenerationsUsed?: number;
+  longUiMode?: ModularLongUiMode;
+  onLongUiModeChange?: (mode: ModularLongUiMode) => void;
+  draftRestoredFromStorage?: boolean;
+  previousBlocks?: Partial<Record<import("@/lib/listing/modular-listing.types").ModularBlockSnapshotKey, string>>;
+  blockErrors?: Partial<Record<import("@/lib/listing/modular-listing.types").ModularBlockSnapshotKey, boolean>>;
+  modularSeedKeywords?: string[];
 };
 
 export function OptimizerResultsPanel({
@@ -189,9 +199,19 @@ export function OptimizerResultsPanel({
   onRegenerateModularBlock,
   onSelectModularShortVariation,
   onModularTitleChange,
+  onModularLongDescriptionChange,
+  onModularMagicGenerateLong,
   onModularFinalize,
   modularFinalizeBusy = false,
   modularDraftReady = false,
+  modularFinalizeCreditCost = 5,
+  trialRegenerationsUsed = 0,
+  longUiMode = "choice",
+  onLongUiModeChange,
+  draftRestoredFromStorage = false,
+  previousBlocks = {},
+  blockErrors = {},
+  modularSeedKeywords = [],
 }: Props) {
   const t = useTranslations("optimizer");
   const hasOrchestration = Boolean(result.orchestration);
@@ -278,7 +298,16 @@ export function OptimizerResultsPanel({
         </div>
       ) : null}
 
-      {showModularPanel && modularLoading && onRegenerateModularBlock ? (
+        {showModularPanel && modularLoading && onRegenerateModularBlock ? (
+        <>
+          {modularDraftReady && !listingGenerationId && !draftRestoredFromStorage ? (
+            <p
+              role="status"
+              className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90"
+            >
+              {t("form.modularDraftInProgress")}
+            </p>
+          ) : null}
         <ModularListingPanel
           orchestration={result.orchestration}
           state={modularState ?? EMPTY_MODULAR_LISTING_STATE}
@@ -288,12 +317,22 @@ export function OptimizerResultsPanel({
           longDescription={editedLong}
           isRtl={isRtl}
           isDraft={modularDraftReady && !listingGenerationId}
+          finalizeCreditCost={modularFinalizeCreditCost}
+          trialRegenerationsUsed={trialRegenerationsUsed}
+          longUiMode={longUiMode}
+          onLongUiModeChange={onLongUiModeChange}
+          previousBlocks={previousBlocks}
+          blockErrors={blockErrors}
+          seedKeywords={modularSeedKeywords}
           onRegenerateBlock={onRegenerateModularBlock}
           onSelectShortVariation={onSelectModularShortVariation ?? (() => {})}
           onTitleChange={onModularTitleChange}
+          onLongDescriptionChange={onModularLongDescriptionChange}
+          onMagicGenerateLong={onModularMagicGenerateLong}
           onFinalize={onModularFinalize}
           finalizeBusy={modularFinalizeBusy}
         />
+        </>
       ) : null}
 
       {result.strategicRationale ? (

@@ -27,7 +27,7 @@ export default async function ListingOptimizerPage({
     ]);
   const { data: wsRow } = await supabase
     .from("workspaces")
-    .select("ai_credits_remaining")
+    .select("ai_credits_remaining, trial_regenerations_used")
     .eq("id", workspaceId)
     .maybeSingle();
   const uiLocale = locale === "ar" ? "ar" : "en";
@@ -46,6 +46,11 @@ export default async function ListingOptimizerPage({
           initialAiCreditsRemaining={
             typeof wsRow?.ai_credits_remaining === "number"
               ? wsRow.ai_credits_remaining
+              : undefined
+          }
+          initialTrialRegenerationsUsed={
+            typeof wsRow?.trial_regenerations_used === "number"
+              ? wsRow.trial_regenerations_used
               : undefined
           }
         />

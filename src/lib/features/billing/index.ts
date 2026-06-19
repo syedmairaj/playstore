@@ -11,3 +11,10 @@ export {
   type ConsumeWalletResult,
   type RefundWalletResult,
 } from "./wallet";
+export {
+  consumeModularListingRegenerate,
+  isModularRegenerateStep,
+  MODULAR_TRIAL_REGENERATIONS_LIMIT,
+  type ConsumeModularRegenerateResult,
+} from "./modular-regenerate-billing";
+export { buildCreditLedgerMeta, type CreditGenerationType } from "./credit-ledger-meta";

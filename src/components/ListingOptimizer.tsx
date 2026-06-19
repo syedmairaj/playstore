@@ -146,7 +146,13 @@ import {
 import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
 import type { ModularGenerateBaseInput } from "@/lib/client/modular-listing-generate-client";
 import { useModularGeneration } from "@/hooks/useModularGeneration";
-import type { ModularListingBlockId } from "@/lib/listing/modular-listing.types";
+import { shortVariationText } from "@/lib/listing/modular-short-variations";
+import { useDraftPersistence } from "@/hooks/useDraftPersistence";
+import type {
+  ModularListingBlockId,
+  ModularListingDraftSnapshot,
+  ModularLongUiMode,
+} from "@/lib/listing/modular-listing.types";
 import type { OptimizationQueueSynthesisPayload } from "@/lib/optimization-queue";
 import type { ActiveContextStrategyMode } from "@/lib/optimization-queue/resolve-strategy-mode";
 import { optimizationQueueItemsToImprovements } from "@/lib/client/optimization-queue-improvements";
@@ -600,6 +606,7 @@ export function ListingOptimizer({
   initialAppLimits,
   initialApps,
   initialAiCreditsRemaining,
+  initialTrialRegenerationsUsed,
   initialHydrationByApp,
   initialHydrationNoApp,
 }: {
@@ -620,6 +627,8 @@ export function ListingOptimizer({
   }[];
   /** Workspace `ai_credits_remaining` for client-side autofill pre-check (optional). */
   initialAiCreditsRemaining?: number;
+  /** Workspace trial regenerate slots already consumed (server-authoritative). */
+  initialTrialRegenerationsUsed?: number;
   /** Latest saved listing_generations per app (server-loaded for refresh restore). */
   initialHydrationByApp?: Record<string, ListingOptimizerHydrationPayload>;
   /** Latest workspace-wide generation without `app_id` (no workspace apps). */
@@ -669,6 +678,11 @@ export function ListingOptimizer({
   const [regeneratingOrchestrationModule, setRegeneratingOrchestrationModule] =
     useState<OrchestrationModuleId | null>(null);
   const [modularDraftReady, setModularDraftReady] = useState(false);
+  const [modularLongUiMode, setModularLongUiMode] = useState<ModularLongUiMode>("choice");
+  const [trialRegenerationsUsed, setTrialRegenerationsUsed] = useState(
+    initialTrialRegenerationsUsed ?? 0,
+  );
+  const clearDraftRef = useRef<(() => void) | null>(null);
   const modularBaseInputRef = useRef<ModularGenerateBaseInput | null>(null);
   const generationSuccessContextRef = useRef<{
     queueSynthesis: OptimizationQueueSynthesisPayload;
@@ -2642,7 +2656,11 @@ export function ListingOptimizer({
         return;
       }
       if (code === "validation_error") {
-        setError(t("form.validationInputError"));
+        toast.error(t("results.modular.sectionGenerationFailed"));
+        return;
+      }
+      if (code === "section_generation_failed") {
+        toast.error(t("results.modular.sectionGenerationFailed"));
         return;
       }
       setError(message || t("form.networkError"));
@@ -2709,6 +2727,7 @@ export function ListingOptimizer({
       } else {
         toast.success(t("form.generateSuccessToastSaved"));
       }
+      clearDraftRef.current?.();
     },
     [
       features,
@@ -2720,6 +2739,29 @@ export function ListingOptimizer({
     ],
   );
 
+  const handleModularBillingMeta = useCallback(
+    (meta: {
+      trialRegenerationsUsed?: number;
+      trialRegenerationsRemaining?: number;
+      creditsRemaining?: number;
+      creditsCharged?: number;
+    }) => {
+      if (typeof meta.trialRegenerationsUsed === "number") {
+        setTrialRegenerationsUsed(meta.trialRegenerationsUsed);
+      }
+      if (typeof meta.creditsRemaining === "number") {
+        setAiCreditsRemaining(meta.creditsRemaining);
+      } else if (typeof meta.creditsCharged === "number") {
+        setAiCreditsRemaining((prev) =>
+          typeof prev === "number"
+            ? Math.max(0, prev - meta.creditsCharged!)
+            : prev,
+        );
+      }
+    },
+    [],
+  );
+
   const modularGeneration = useModularGeneration({
     getBaseInput: () => modularBaseInputRef.current,
     lockedKeywords: keywords
@@ -2727,12 +2769,68 @@ export function ListingOptimizer({
       .map((s) => s.trim())
       .filter(Boolean),
     onError: handleModularApiError,
+    onBillingMeta: handleModularBillingMeta,
     onFinalizeSuccess: (json) => {
       const ctx = generationSuccessContextRef.current;
       if (!ctx) return;
       applyFinalizeGenerationSuccess(json, ctx.queueSynthesis);
     },
   });
+
+  const modularDraftPayload = useMemo((): ModularListingDraftSnapshot | null => {
+    if (!workspaceId) return null;
+    const hasContent =
+      modularDraftReady ||
+      Boolean(modularGeneration.state.title.value.trim()) ||
+      modularGeneration.state.shortDescription.variations.length > 0 ||
+      Boolean(editedLong.trim());
+    if (!hasContent) return null;
+    return {
+      modularState: modularGeneration.state,
+      editedTitle,
+      editedShort,
+      editedLong,
+      modularDraftReady,
+      longUiMode: modularLongUiMode,
+    };
+  }, [
+    workspaceId,
+    modularDraftReady,
+    modularGeneration.state,
+    editedTitle,
+    editedShort,
+    editedLong,
+    modularLongUiMode,
+  ]);
+
+  const { restoredFromStorage: draftRestoredFromStorage, clearDraft } =
+    useDraftPersistence<ModularListingDraftSnapshot>({
+      workspaceId: workspaceId ?? "",
+      storageKey: "modular-listing",
+      payload: modularDraftPayload,
+      enabled: Boolean(workspaceId),
+      onRestore: (draft) => {
+        modularGeneration.setState(draft.modularState);
+        setEditedTitle(draft.editedTitle);
+        setEditedShort(draft.editedShort);
+        setEditedLong(draft.editedLong);
+        setModularDraftReady(draft.modularDraftReady);
+        setModularLongUiMode(draft.longUiMode);
+        setResult((prev) =>
+          prev ?? {
+            title: draft.editedTitle,
+            shortDescription: draft.editedShort,
+            fullDescription: draft.editedLong,
+            keywordSuggestions: [],
+            ctaSuggestions: [],
+          },
+        );
+      },
+    });
+
+  useEffect(() => {
+    clearDraftRef.current = clearDraft;
+  }, [clearDraft]);
 
   useEffect(() => {
     if (!result?.orchestration) {
@@ -2800,6 +2898,28 @@ export function ListingOptimizer({
     [],
   );
 
+  const handleMagicGenerateLong = useCallback(async () => {
+    setModularLongUiMode("ai");
+    const nextState = await modularGeneration.generateLong();
+    if (!nextState) return;
+    applyModularCopyToResult(modularStateToListingCopy(nextState));
+  }, [applyModularCopyToResult, modularGeneration]);
+
+  const hasUnsavedModularDraft = modularDraftReady && !listingGenerationId;
+  const modularWorkInFlight = useMemo(
+    () => Object.values(modularGeneration.loading).some(Boolean),
+    [modularGeneration.loading],
+  );
+
+  useEffect(() => {
+    if (!hasUnsavedModularDraft && !modularWorkInFlight) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasUnsavedModularDraft, modularWorkInFlight]);
+
   const handleModularBlockRegenerate = useCallback(
     (blockId: ModularListingBlockId) => {
       if (result?.orchestration) {
@@ -2849,13 +2969,16 @@ export function ListingOptimizer({
       const result = await modularGeneration.finalizeListing();
       toast.dismiss(toastId);
       if (!result) return;
-      if (typeof result.meta?.creditsCharged === "number") {
+      if (typeof result.meta?.creditsRemaining === "number") {
+        setAiCreditsRemaining(result.meta.creditsRemaining);
+      } else if (typeof result.meta?.creditsCharged === "number") {
         setAiCreditsRemaining((prev) =>
           typeof prev === "number"
             ? Math.max(0, prev - result.meta!.creditsCharged!)
             : prev,
         );
       }
+      clearDraftRef.current?.();
     } catch {
       toast.dismiss(toastId);
       setError(t("form.networkError"));
@@ -3908,6 +4031,14 @@ export function ListingOptimizer({
         >
           {t("title")}
         </h1>
+        {typeof aiCreditsRemaining === "number" ? (
+          <p
+            className="inline-flex w-fit items-center rounded-full border border-emerald-400/35 bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-100"
+            role="status"
+          >
+            {t("creditsRemainingHeader", { count: aiCreditsRemaining })}
+          </p>
+        ) : null}
         <p className="max-w-2xl text-[15px] leading-relaxed text-white/55 sm:text-base">{t("subtitle")}</p>
         <p
           className="flex max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium leading-relaxed text-[#86efac]/90 sm:text-[15px]"
@@ -4369,6 +4500,9 @@ export function ListingOptimizer({
                     {/* ─────────────────────────────────────────────────────────── */}
 
                     <p className="text-xs leading-relaxed text-white/45">
+                      {t("form.buildModularDraftHelper")}
+                    </p>
+                    <p className="text-xs leading-relaxed text-white/45">
                       {t("form.sectionVoiceHelper", {
                         credits: AI_CREDIT_COSTS.listing_generation,
                       })}
@@ -4430,9 +4564,7 @@ export function ListingOptimizer({
                               ) : (
                                 <>
                                   <Sparkles className="size-4 shrink-0" aria-hidden />
-                                  {isRtl
-                                    ? `توليد القائمة الكاملة · ${AI_CREDIT_COSTS.listing_generation} رصيد`
-                                    : `Generate Full Listing · ${AI_CREDIT_COSTS.listing_generation} credits`}
+                                  {t("form.buildModularDraft")}
                                 </>
                               )}
                             </button>
@@ -4608,9 +4740,10 @@ export function ListingOptimizer({
               onRegenerateModularBlock={handleModularBlockRegenerate}
               onSelectModularShortVariation={(index, variation) => {
                 modularGeneration.selectShortVariation(index);
-                setEditedShort(variation);
+                const shortText = shortVariationText(variation);
+                setEditedShort(shortText);
                 setResult((prev) =>
-                  prev ? { ...prev, shortDescription: variation } : prev,
+                  prev ? { ...prev, shortDescription: shortText } : prev,
                 );
               }}
               onModularTitleChange={(value) => {
@@ -4618,8 +4751,27 @@ export function ListingOptimizer({
                 setEditedTitle(value);
                 setResult((prev) => (prev ? { ...prev, title: value } : prev));
               }}
+              onModularLongDescriptionChange={(value) => {
+                modularGeneration.setLongDescriptionValue(value);
+                setEditedLong(value);
+                setResult((prev) =>
+                  prev ? { ...prev, fullDescription: value } : prev,
+                );
+              }}
+              onModularMagicGenerateLong={() => void handleMagicGenerateLong()}
               onModularFinalize={() => void runFinalizeListing()}
               modularFinalizeBusy={modularGeneration.loading.finalize}
+              modularFinalizeCreditCost={AI_CREDIT_COSTS.listing_generation}
+              trialRegenerationsUsed={trialRegenerationsUsed}
+              longUiMode={modularLongUiMode}
+              onLongUiModeChange={setModularLongUiMode}
+              draftRestoredFromStorage={draftRestoredFromStorage}
+              previousBlocks={modularGeneration.previousBlocks}
+              blockErrors={modularGeneration.blockErrors}
+              modularSeedKeywords={keywords
+                .split(/[,;\n]+/)
+                .map((s) => s.trim())
+                .filter(Boolean)}
             />
             ) : null}
 

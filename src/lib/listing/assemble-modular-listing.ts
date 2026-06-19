@@ -1,4 +1,5 @@
 import type { ModularListingState } from "@/lib/listing/modular-listing.types";
+import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 
 /** Join long-description blocks into Play-ready full description (≤4000 chars). */
@@ -18,7 +19,7 @@ export function resolveModularShortDescription(
     Math.max(0, short.selectedIndex),
     Math.max(0, short.variations.length - 1),
   );
-  return (short.variations[idx] ?? "").trim().slice(0, 80);
+  return shortVariationText(short.variations[idx] ?? { type: "utility", text: "" });
 }
 
 /** Map modular UI state → legacy listing copy fields. */

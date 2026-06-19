@@ -18,12 +18,17 @@ import {
 import {
   AI_CREDIT_COSTS,
   buildInsufficientAiCreditsPayload,
+  buildCreditLedgerMeta,
+  consumeModularListingRegenerate,
   consumeWorkspaceAiCredits,
+  isModularRegenerateStep,
   readWorkspaceAiCreditsRemaining,
   refundWorkspaceAiCredits,
 } from "@/lib/features";
 import { getModularListingPromptVersion } from "@/lib/prompts/listing-modular";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import { zodErrorToFieldErrors } from "@/lib/listing/modular-listing.types";
+import { MODULAR_TRIAL_REGENERATIONS_LIMIT } from "@/lib/features/billing/modular-regenerate-billing";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -138,11 +143,13 @@ export async function POST(request: NextRequest) {
     queueHash,
     clientQueueItemCount,
     generationStep,
+    isRegenerate,
     ...listingInput
   } = input;
 
   const step = generationStep ?? "full";
   const billsCredits = isCreditBilledStep(step);
+  const billsModularRegenerate = isModularRegenerateStep(step, isRegenerate ?? false);
 
   // ── Signal quality computation ────────────────────────────────────────────
   // Counts active signal channels (keywords, reviews, market, competitors).
@@ -305,6 +312,13 @@ export async function POST(request: NextRequest) {
   }
 
   let ledgerId: string | null = null;
+  let walletBalanceAfterDebit: number | undefined;
+  let modularBillingMeta: {
+    creditsCharged: number;
+    trialRegenerationsUsed: number;
+    trialRegenerationsRemaining: number;
+    creditsRemaining: number;
+  } | null = null;
 
   const queueHashValidation = await validateActiveContextQueueHash(supabase, {
     workspaceId,
@@ -364,6 +378,50 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (billsModularRegenerate) {
+    const { data: wsBilling } = await supabase
+      .from("workspaces")
+      .select("trial_regenerations_used, ai_credits_remaining")
+      .eq("id", workspaceId)
+      .maybeSingle();
+    const trialUsed =
+      typeof wsBilling?.trial_regenerations_used === "number"
+        ? wsBilling.trial_regenerations_used
+        : 0;
+    const creditsRemainingPrecheck =
+      typeof wsBilling?.ai_credits_remaining === "number"
+        ? wsBilling.ai_credits_remaining
+        : balancePre.remaining;
+    if (
+      trialUsed >= MODULAR_TRIAL_REGENERATIONS_LIMIT &&
+      creditsRemainingPrecheck < AI_CREDIT_COSTS.modular_listing_regenerate
+    ) {
+      releaseGenerationLock(workspaceId, LOCK_ACTION);
+      await logUsage(admin, {
+        route: ROUTE,
+        clientIp,
+        success: false,
+        durationMs: Date.now() - started,
+        errorMessage: "insufficient_credits",
+        meta: {
+          user_id: user.id,
+          workspace_id: workspaceId,
+          remaining: creditsRemainingPrecheck,
+          required: AI_CREDIT_COSTS.modular_listing_regenerate,
+          precheck: true,
+          trial_regenerations_used: trialUsed,
+        },
+      });
+      return NextResponse.json(
+        buildInsufficientAiCreditsPayload(
+          AI_CREDIT_COSTS.modular_listing_regenerate,
+          creditsRemainingPrecheck,
+        ),
+        { status: 402 },
+      );
+    }
+  }
+
   if (billsCredits) {
     const debit = await consumeWorkspaceAiCredits(supabase, {
       workspaceId,
@@ -374,7 +432,13 @@ export async function POST(request: NextRequest) {
           ? "Listing AI finalize (modular pipeline)"
           : "Listing AI generation (Gemini)",
       sourceType: "generation",
-      meta: { route: ROUTE, tool: "aso_listing", model, generationStep: step },
+      meta: buildCreditLedgerMeta("text", {
+        route: ROUTE,
+        tool: "aso_listing",
+        model,
+        generationStep: step,
+        billing_kind: step === "finalize" ? "modular_finalize" : "full_listing",
+      }),
     });
 
     if (!debit.ok) {
@@ -423,6 +487,7 @@ export async function POST(request: NextRequest) {
     }
 
     ledgerId = debit.ledgerId;
+    walletBalanceAfterDebit = debit.balanceAfter;
   }
 
   try {
@@ -440,6 +505,42 @@ export async function POST(request: NextRequest) {
 
     const isFullOrFinalize =
       orchestratorResult.step === "full" || orchestratorResult.step === "finalize";
+
+    if (billsModularRegenerate) {
+      const regenDebit = await consumeModularListingRegenerate(supabase, {
+        workspaceId,
+        userId: user.id,
+        generationStep: step,
+        meta: buildCreditLedgerMeta("text", {
+          route: ROUTE,
+          model,
+          tool: "modular_listing_regenerate",
+        }),
+      });
+
+      if (!regenDebit.ok) {
+        await logUsage(admin, {
+          route: ROUTE,
+          clientIp,
+          success: false,
+          durationMs: Date.now() - started,
+          errorMessage: `modular_regenerate_post_success:${regenDebit.code}`,
+          meta: {
+            user_id: user.id,
+            workspace_id: workspaceId,
+            generation_step: step,
+          },
+        });
+      } else {
+        ledgerId = regenDebit.ledgerId;
+        modularBillingMeta = {
+          creditsCharged: regenDebit.creditsCharged,
+          trialRegenerationsUsed: regenDebit.trialRegenerationsUsed,
+          trialRegenerationsRemaining: regenDebit.trialRegenerationsRemaining,
+          creditsRemaining: regenDebit.balanceAfter,
+        };
+      }
+    }
 
     await logUsage(admin, {
       route: ROUTE,
@@ -473,6 +574,7 @@ export async function POST(request: NextRequest) {
             ? true
             : undefined,
           creditsCharged: creditCost,
+          creditsRemaining: walletBalanceAfterDebit,
           ...qualityMeta,
         },
       });
@@ -485,18 +587,16 @@ export async function POST(request: NextRequest) {
       meta: {
         model,
         promptVersion,
-        creditsCharged: 0,
+        creditsCharged: modularBillingMeta?.creditsCharged ?? 0,
+        creditsRemaining: modularBillingMeta?.creditsRemaining,
+        trialRegenerationsUsed: modularBillingMeta?.trialRegenerationsUsed,
+        trialRegenerationsRemaining: modularBillingMeta?.trialRegenerationsRemaining,
         ...qualityMeta,
       },
     });
   } catch (e) {
     if (e instanceof InvalidModelOutputError) {
-      if (shouldLogGeminiDebug() && e.zodError) {
-        console.error(
-          "[listing-generate] Zod error after clamp:",
-          e.zodError.flatten(),
-        );
-      }
+      const fieldErrors = e.zodError ? zodErrorToFieldErrors(e.zodError) : undefined;
       if (ledgerId) {
         await refundWorkspaceAiCredits(supabase, {
           ledgerId,
@@ -514,9 +614,24 @@ export async function POST(request: NextRequest) {
         meta: {
           user_id: user.id,
           workspace_id: workspaceId,
+          generation_step: step,
           finish_reason: e.finishReason,
+          ...(fieldErrors ? { field_errors: fieldErrors } : {}),
         },
       });
+      if (step === "short" && fieldErrors) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: {
+              code: "validation_error",
+              message: "Short description output failed validation",
+              fieldErrors,
+            },
+          },
+          { status: 400 },
+        );
+      }
       return NextResponse.json(
         {
           ok: false,
@@ -524,6 +639,7 @@ export async function POST(request: NextRequest) {
             code: e.apiErrorCode,
             message: e.message,
             truncated: e.truncated ? true : undefined,
+            ...(fieldErrors ? { fieldErrors } : {}),
           },
         },
         { status: 422 },

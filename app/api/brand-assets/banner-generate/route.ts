@@ -8,6 +8,7 @@ import {
 } from "@/lib/features/ai/runware";
 import {
   AI_CREDIT_COSTS,
+  buildCreditLedgerMeta,
   buildInsufficientAiCreditsPayload,
   consumeWorkspaceAiCredits,
   readWorkspaceAiCreditsRemaining,
@@ -160,7 +161,11 @@ export async function POST(request: NextRequest) {
     amount: creditCost,
     description: "AI banner batch (Runware)",
     sourceType: "generation",
-    meta: { route: ROUTE, tool: "banner_generation", app_id: appId },
+    meta: buildCreditLedgerMeta("media", {
+      route: ROUTE,
+      tool: "banner_generation",
+      app_id: appId,
+    }),
   });
 
   if (!debit.ok) {

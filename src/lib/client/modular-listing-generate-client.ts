@@ -12,6 +12,7 @@ import type {
   ModularShortStepData,
   ModularTitleStepData,
 } from "@/lib/listing/modular-listing.types";
+import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { GenerateOptimizedListingSuccess } from "@/lib/listing/generate-optimized-listing";
 
@@ -38,6 +39,7 @@ type ModularApiError = {
     code?: string;
     message: string;
     details?: unknown;
+    fieldErrors?: Record<string, string[]>;
     remaining?: number;
     required?: number;
   };
@@ -58,6 +60,9 @@ export type ModularStepSuccess<TStep extends ModularListingGenerationStep, TData
     asoScorePartial?: boolean;
     quality_status?: string;
     quality_warning?: string;
+    trialRegenerationsUsed?: number;
+    trialRegenerationsRemaining?: number;
+    creditsRemaining?: number;
   };
 };
 
@@ -112,6 +117,7 @@ function buildModularRequestBody(
     contextShortDescription?: string;
     modularListing?: ModularListingState;
     userInstruction?: string;
+    isRegenerate?: boolean;
   },
 ) {
   const { queueSynthesis } = input;
@@ -148,6 +154,7 @@ function buildModularRequestBody(
     queueHash: input.queueHash,
     clientQueueItemCount: input.queueItemCount ?? 0,
     generationStep: step,
+    isRegenerate: extras?.isRegenerate ?? false,
     ...(instruction ? { userInstruction: instruction } : {}),
     activeContext,
     ...(trackedKeywordSignals.length > 0 ? { trackedKeywordSignals } : {}),
@@ -199,18 +206,22 @@ async function postModularStep<TStep extends ModularListingGenerationStep, TData
 export async function generateModularTitle(
   input: ModularGenerateBaseInput,
   lockedKeywords: string[],
+  options?: { isRegenerate?: boolean },
 ) {
   return postModularStep<"title", ModularTitleStepData>(input, "title", {
     lockedKeywords: lockedKeywords.length > 0 ? lockedKeywords : [],
+    isRegenerate: options?.isRegenerate ?? false,
   });
 }
 
 export async function generateModularShort(
   input: ModularGenerateBaseInput,
   contextTitle: string,
+  options?: { isRegenerate?: boolean },
 ) {
   return postModularStep<"short", ModularShortStepData>(input, "short", {
     contextTitle,
+    isRegenerate: options?.isRegenerate ?? false,
   });
 }
 
@@ -231,14 +242,16 @@ export async function regenerateModularLongBlock(
   block: "hook" | "features" | "closing",
   modularListing: ModularListingState,
 ) {
-  const short =
+  const shortRow =
     modularListing.shortDescription.variations[
       modularListing.shortDescription.selectedIndex
-    ] ?? "";
+    ];
+  const short = shortRow ? shortVariationText(shortRow) : "";
   return postModularStep<typeof block, ModularLongStepData>(input, block, {
     contextTitle: modularListing.title.value,
     contextShortDescription: short,
     modularListing,
+    isRegenerate: true,
   });
 }
 

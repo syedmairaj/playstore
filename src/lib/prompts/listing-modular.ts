@@ -1,9 +1,10 @@
 import type { ListingOptimizerInput } from "@/lib/types/listing";
-import { activeContextHasSignals } from "@/lib/optimization-queue/build-active-context-synthesis";
-import { buildStrategyModePromptBlock } from "@/lib/prompts/aso-strategy-mode";
-import { buildModularListingContextBlock } from "@/lib/gemini/normalize-modular-parsed";
+import {
+  buildModularAppContextBlock,
+  buildModularOrchestrationContextBlock,
+} from "@/lib/listing/modular-app-context";
 
-const MODULAR_PROMPT_VERSION = "listing-modular-v1.0";
+const MODULAR_PROMPT_VERSION = "listing-modular-v1.2";
 
 export function getModularListingPromptVersion(): string {
   return MODULAR_PROMPT_VERSION;
@@ -15,7 +16,7 @@ function languageLine(targetArabic: boolean): string {
     : "Output language: English suitable for Google Play.";
 }
 
-export { buildModularListingContextBlock };
+export { buildModularAppContextBlock as buildModularListingContextBlock } from "@/lib/listing/modular-app-context";
 
 export function buildModularTitleMessages(
   input: ListingOptimizerInput,
@@ -30,19 +31,15 @@ export function buildModularTitleMessages(
     '{ "title": string, "lockedKeywords": string[] }',
     "title MUST be ≤30 characters, word-boundary safe, and MUST visibly include every locked keyword (woven naturally, not stuffed).",
     "lockedKeywords MUST echo the user-locked terms you honored.",
+    "Ground the title in the APP CONTEXT — never generic placeholder copy.",
   ].join("\n");
 
   const user = [
-    buildModularListingContextBlock(input),
+    buildModularAppContextBlock(input),
     "",
     "PHASE 1 — TITLE (Hybrid Anchor)",
     `LOCKED KEYWORDS (mandatory in title): ${locked.join(", ")}`,
-    buildStrategyModePromptBlock({
-      strategyMode: input.strategyMode ?? "defensive",
-      topStagedIssues: input.topStagedIssues ?? [],
-      trackedKeywordSignals: input.trackedKeywordSignals,
-      targetArabic,
-    }),
+    buildModularOrchestrationContextBlock(input, locked),
     input.userInstruction?.trim()
       ? `Refinement: ${input.userInstruction.trim()}`
       : "",
@@ -56,29 +53,34 @@ export function buildModularTitleMessages(
 export function buildModularShortMessages(
   input: ListingOptimizerInput,
   contextTitle: string,
+  lockedKeywords?: string[],
 ): { system: string; user: string } {
   const targetArabic = input.targetArabic ?? false;
+  const locked =
+    lockedKeywords && lockedKeywords.length > 0
+      ? lockedKeywords
+      : input.targetKeywords.slice(0, 20);
   const system = [
     "You are a Google Play conversion copywriter.",
     languageLine(targetArabic),
-    "Return JSON only: { \"variations\": [string, string, string] }.",
-    "Each variation MUST be ≤80 chars, complete sentences only, distinct strategy angle.",
-    "Variation 1: defensive — trust / pain resolution.",
-    "Variation 2: offensive — market capture vs rivals.",
-    "Variation 3: primary — matches active Strategy Profile.",
+    'Return ONLY a JSON object. Do not wrap in markdown blocks.',
+    'Structure: { "variations": [ {"type": "growth", "text": "..."}, {"type": "conversion", "text": "..."}, {"type": "utility", "text": "..."} ] }.',
+    "Ensure exactly 3 items — one per type: growth, conversion, utility.",
+    "Each text MUST be ≤80 chars, complete sentences only, distinct strategy angle.",
+    "growth: acquisition keywords and category expansion tied to APP CONTEXT.",
+    "conversion: trust, social proof, and install intent tied to APP CONTEXT.",
+    "utility: core features and day-one value tied to APP CONTEXT.",
+    "Every text MUST mention a concrete benefit from the app features — never generic filler.",
+    'FORBIDDEN: "Discover more", "Learn more", or any placeholder not grounded in the app.',
   ].join("\n");
 
   const user = [
-    buildModularListingContextBlock(input),
+    buildModularAppContextBlock(input),
+    "",
+    buildModularOrchestrationContextBlock(input, locked),
     "",
     "PHASE 2 — SHORT DESCRIPTION",
     `ANCHOR TITLE (do not contradict): ${contextTitle}`,
-    buildStrategyModePromptBlock({
-      strategyMode: input.strategyMode ?? "defensive",
-      topStagedIssues: input.topStagedIssues ?? [],
-      trackedKeywordSignals: input.trackedKeywordSignals,
-      targetArabic,
-    }),
     input.topStagedIssues?.length
       ? `Top review insights: ${input.topStagedIssues.map((i) => i.label).join("; ")}`
       : "",
@@ -98,43 +100,44 @@ export function buildModularLongMessages(
   input: ListingOptimizerInput,
   context: { title: string; shortDescription: string },
   block?: LongBlockId,
+  lockedKeywords?: string[],
 ): { system: string; user: string } {
   const targetArabic = input.targetArabic ?? false;
+  const locked =
+    lockedKeywords && lockedKeywords.length > 0
+      ? lockedKeywords
+      : input.targetKeywords.slice(0, 20);
   const primaryPain =
     input.topStagedIssues?.[0]?.label ??
-    (input.activeContext && activeContextHasSignals(input.activeContext)
-      ? input.activeContext.defensive[0]?.label
-      : undefined) ??
-    "top user pain point";
+    input.activeContext?.defensive?.[0]?.label ??
+    "top user pain point from APP CONTEXT";
 
   const blockInstruction = block
     ? `Regenerate ONLY the "${block}" block. Other blocks may be empty strings in JSON.`
-    : "Return all three blocks.";
+    : "Return all three blocks — hook, features, and closing MUST each be non-empty.";
 
   const system = [
     "You are a Google Play long-description architect.",
     languageLine(targetArabic),
     "Return JSON only: { \"hook\": string, \"features\": string, \"closing\": string }.",
     blockInstruction,
-    "hook (Block A): address the #1 pain point; ≤1200 chars.",
-    "features (Block B): emoji-rich categorized bullets synthesized from staged signals; ≤2400 chars.",
-    "closing (Block C): professional authoritative CTA; ≤800 chars.",
+    "hook (Block A): opening promise addressing the #1 pain point using app name + category + features.",
+    "features (Block B): emoji-rich categorized bullets synthesized from APP CONTEXT features and staged signals.",
+    "closing (Block C): professional authoritative CTA referencing a concrete app benefit.",
     "Stay semantically consistent with the anchor title and short description.",
+    'FORBIDDEN: generic placeholders ("Discover more", "Download now") without app-specific proof.',
+    "When generating all blocks, each of hook/features/closing MUST contain substantive copy.",
   ].join("\n");
 
   const user = [
-    buildModularListingContextBlock(input),
+    buildModularAppContextBlock(input),
+    "",
+    buildModularOrchestrationContextBlock(input, locked),
     "",
     "PHASE 3 — LONG DESCRIPTION",
     `ANCHOR TITLE: ${context.title}`,
     `ANCHOR SHORT: ${context.shortDescription}`,
     `#1 PAIN POINT: ${primaryPain}`,
-    buildStrategyModePromptBlock({
-      strategyMode: input.strategyMode ?? "defensive",
-      topStagedIssues: input.topStagedIssues ?? [],
-      trackedKeywordSignals: input.trackedKeywordSignals,
-      targetArabic,
-    }),
     input.userInstruction?.trim()
       ? `Refinement: ${input.userInstruction.trim()}`
       : "",
@@ -162,7 +165,7 @@ export function buildModularFinalizeExtrasMessages(
     `Title: ${copy.title}`,
     `Short: ${copy.shortDescription}`,
     `Long:\n${copy.fullDescription.slice(0, 3500)}`,
-    buildModularListingContextBlock(input),
+    buildModularAppContextBlock(input),
   ].join("\n\n");
 
   return { system, user };

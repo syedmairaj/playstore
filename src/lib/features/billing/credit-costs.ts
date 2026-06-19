@@ -15,6 +15,8 @@ export const AI_CREDIT_COSTS = {
   listing_optimizer_autofill: 3,
   /** Full listing draft + certified ASO score (title / short / long / CTAs + rubric) via Gemini */
   listing_generation: 5,
+  /** Modular listing per-block regenerate after trial quota (3 free per workspace). */
+  modular_listing_regenerate: 1,
   /**
    * Add AI listing keyword suggestions to Keyword Tracker: each keyword beyond the free
    * per-generation allowance costs this many credits (see `keyword_track_ai_free_per_generation`).

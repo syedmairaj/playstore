@@ -20,7 +20,6 @@ import type {
 import {
   modularLongStepOutputSchema,
   modularTitleStepSchema as modularTitleStepZodSchema,
-  padShortDescriptionVariations as padShortVariations,
   shortDescriptionSchema as shortDescriptionZodSchema,
 } from "@/lib/listing/modular-listing.types";
 import {
@@ -110,10 +109,69 @@ const TITLE_RESPONSE_SCHEMA = {
 const SHORT_RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
-    variations: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+    variations: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          type: {
+            type: SchemaType.STRING,
+            format: "enum",
+            enum: ["growth", "conversion", "utility"],
+          },
+          text: { type: SchemaType.STRING },
+        },
+        required: ["type", "text"],
+      },
+    },
   },
   required: ["variations"],
 };
+
+async function callModularShortJson(
+  messages: { system: string; user: string },
+): Promise<z.infer<typeof shortDescriptionZodSchema>> {
+  const model = getGenerativeModel();
+  model.systemInstruction = messages.system;
+
+  try {
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: messages.user }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: SHORT_RESPONSE_SCHEMA,
+        maxOutputTokens: MODULAR_MAX_OUTPUT_TOKENS,
+        temperature: 0.35,
+        topP: 0.95,
+      },
+    });
+
+    const finishReason = checkFinishReason(result);
+    const text = extractText(result);
+    if (!text?.trim()) {
+      throw new InvalidModelOutputError("Model returned empty modular short JSON", {
+        finishReason,
+      });
+    }
+
+    const parsed = parseGeminiJsonText(text);
+    const normalized = normalizeModularShortParsed(parsed);
+    const validated = shortDescriptionZodSchema.safeParse(normalized);
+    if (!validated.success) {
+      throw new InvalidModelOutputError("Modular short description failed validation", {
+        zodError: validated.error,
+      });
+    }
+    return validated.data;
+  } catch (error) {
+    if (error instanceof InvalidModelOutputError) {
+      throw error;
+    }
+    throw new InvalidModelOutputError(
+      error instanceof Error ? error.message : "Modular short generation failed",
+    );
+  }
+}
 
 const LONG_RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
@@ -148,18 +206,14 @@ export async function generateListingTitleWithGemini(
 export async function generateListingShortWithGemini(
   input: ListingOptimizerInput,
   contextTitle: string,
+  lockedKeywords?: string[],
 ): Promise<ModularShortStepData> {
-  const messages = buildModularShortMessages(input, contextTitle);
-  const data = await callModularJson(
-    messages,
-    SHORT_RESPONSE_SCHEMA,
-    (parsed) => normalizeModularShortParsed(parsed),
-    (value) =>
-      shortDescriptionZodSchema.safeParse({
-        variations: padShortVariations(value.variations),
-      }),
-    "short",
-  );
+  const locked =
+    lockedKeywords && lockedKeywords.length > 0
+      ? lockedKeywords
+      : input.targetKeywords.slice(0, 20);
+  const messages = buildModularShortMessages(input, contextTitle, locked);
+  const data = await callModularShortJson(messages);
   return { variations: data.variations };
 }
 
@@ -168,8 +222,13 @@ export async function generateListingLongWithGemini(
   context: { title: string; shortDescription: string },
   block?: LongBlockId,
   existing?: Partial<ModularLongStepData>,
+  lockedKeywords?: string[],
 ): Promise<ModularLongStepData> {
-  const messages = buildModularLongMessages(input, context, block);
+  const locked =
+    lockedKeywords && lockedKeywords.length > 0
+      ? lockedKeywords
+      : input.targetKeywords.slice(0, 20);
+  const messages = buildModularLongMessages(input, context, block, locked);
   const data = await callModularJson(
     messages,
     LONG_RESPONSE_SCHEMA,
@@ -179,11 +238,24 @@ export async function generateListingLongWithGemini(
   );
 
   if (block && existing) {
-    return {
+    const merged = {
       hook: block === "hook" ? data.hook : (existing.hook ?? ""),
       features: block === "features" ? data.features : (existing.features ?? ""),
       closing: block === "closing" ? data.closing : (existing.closing ?? ""),
     };
+    if (!merged[block]?.trim()) {
+      throw new InvalidModelOutputError(`Modular long block "${block}" was empty`, {});
+    }
+    return merged;
+  }
+
+  if (!block) {
+    if (!data.hook.trim() || !data.features.trim() || !data.closing.trim()) {
+      throw new InvalidModelOutputError(
+        "Modular long description returned empty hook, features, or closing block",
+        {},
+      );
+    }
   }
 
   return {

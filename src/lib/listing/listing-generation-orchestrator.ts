@@ -19,10 +19,7 @@ import { getModularListingPromptVersion } from "@/lib/prompts/listing-modular";
 import { getListingOptimizerPromptVersion } from "@/lib/prompts/listing-optimizer";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 import type { ListingModularGenerateBody } from "@/lib/validation/listing-modular-generate-body";
-import {
-  isCreditBilledStep,
-  resolveRequestLockedKeywords,
-} from "@/lib/validation/listing-modular-generate-body";
+import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import { insertListingGeneration } from "@/lib/db/listing-generations";
 import { linkListingGenerationToTrackedKeywords } from "@/lib/keywords/link-listing-generation-to-keywords";
@@ -69,6 +66,7 @@ function listingInputFromBody(body: ListingModularGenerateBody): ListingOptimize
     modularListing: _m,
     orchestration: _orch,
     modularTitle: _mt,
+    isRegenerate: _ir,
     ...listingInput
   } = body;
   return listingInput;
@@ -104,7 +102,11 @@ export async function runListingGenerationOrchestrator(
         body.contextTitle?.trim() ||
         body.modularListing?.title.value?.trim() ||
         input.appName.slice(0, 30);
-      const data = await generateListingShortWithGemini(input, contextTitle);
+      const data = await generateListingShortWithGemini(
+        input,
+        contextTitle,
+        resolveLockedKeywords(body),
+      );
       return { step: "short", data };
     }
 
@@ -118,9 +120,13 @@ export async function runListingGenerationOrchestrator(
         input.appName.slice(0, 30);
       const contextShort =
         body.contextShortDescription?.trim() ||
-        body.modularListing?.shortDescription.variations[
-          body.modularListing?.shortDescription.selectedIndex ?? 0
-        ]?.trim() ||
+        (() => {
+          const row =
+            body.modularListing?.shortDescription.variations[
+              body.modularListing?.shortDescription.selectedIndex ?? 0
+            ];
+          return row ? shortVariationText(row) : "";
+        })() ||
         "";
       if (!contextShort) {
         throw new InvalidModelOutputError(
@@ -134,6 +140,7 @@ export async function runListingGenerationOrchestrator(
         { title: contextTitle, shortDescription: contextShort },
         block,
         existing,
+        resolveLockedKeywords(body),
       );
       return { step, data };
     }
