@@ -157,6 +157,7 @@ function buildModularRequestBody(
     clientQueueItemCount: input.queueItemCount ?? 0,
     generationStep: step,
     isRegenerate: extras?.isRegenerate ?? false,
+    includeOptimizerContext: true,
     ...(instruction ? { userInstruction: instruction } : {}),
     activeContext,
     ...(trackedKeywordSignals.length > 0 ? { trackedKeywordSignals } : {}),

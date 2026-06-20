@@ -14,6 +14,8 @@ export {
 export {
   consumeModularListingRegenerate,
   isModularRegenerateStep,
+  billsModularListingPhase,
+  isModularPhaseBilledStep,
   MODULAR_TRIAL_REGENERATIONS_LIMIT,
   type ConsumeModularRegenerateResult,
 } from "./modular-regenerate-billing";

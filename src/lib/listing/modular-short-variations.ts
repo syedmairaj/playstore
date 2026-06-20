@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isGrammaticallyCompleteShortText } from "@/lib/listing/modular-output-validation";
 
 /** Canonical order for Phase 2 short-description variants. */
 export const SHORT_VARIATION_TYPES = ["growth", "conversion", "utility"] as const;
@@ -41,6 +42,16 @@ export const shortDescriptionSchema = z
         path: ["variations"],
       });
     }
+    data.variations.forEach((variation, index) => {
+      if (!isGrammaticallyCompleteShortText(variation.text)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            `${variation.type}: text must be a grammatically complete sentence (≤80 chars, no truncated words or dangling fragments)`,
+          path: ["variations", index, "text"],
+        });
+      }
+    });
   });
 
 export type ModularShortStepData = z.infer<typeof shortDescriptionSchema>;

@@ -146,6 +146,8 @@ type Props = {
   onModularFinalize?: () => void;
   modularFinalizeBusy?: boolean;
   modularDraftReady?: boolean;
+  isPublicationReady?: boolean;
+  copyListingBlocked?: boolean;
   modularFinalizeCreditCost?: number;
   trialRegenerationsUsed?: number;
   longUiMode?: ModularLongUiMode;
@@ -213,6 +215,8 @@ export function OptimizerResultsPanel({
   onModularFinalize,
   modularFinalizeBusy = false,
   modularDraftReady = false,
+  isPublicationReady = false,
+  copyListingBlocked = false,
   modularFinalizeCreditCost = 5,
   trialRegenerationsUsed = 0,
   longUiMode = "choice",
@@ -328,6 +332,7 @@ export function OptimizerResultsPanel({
           longDescription={editedLong}
           isRtl={isRtl}
           isDraft={modularDraftReady && !listingGenerationId}
+          isPublicationReady={isPublicationReady}
           finalizeCreditCost={modularFinalizeCreditCost}
           trialRegenerationsUsed={trialRegenerationsUsed}
           longUiMode={longUiMode}

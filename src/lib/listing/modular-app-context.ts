@@ -28,9 +28,16 @@ function audienceLine(input: ListingOptimizerInput): string {
 }
 
 /** Full app context injected into modular Phase 2 & Phase 3 prompts. */
-export function buildModularAppContextBlock(input: ListingOptimizerInput): string {
+export function buildModularAppContextBlock(
+  input: ListingOptimizerInput,
+  options?: { compact?: boolean },
+): string {
   const targetArabic = input.targetArabic ?? false;
-  const keywords = input.targetKeywords.slice(0, 25);
+  const compact = options?.compact === true;
+  const keywordCap = compact ? 12 : 25;
+  const featureCap = compact ? 1200 : 4000;
+  const signalCap = compact ? 2 : 3;
+  const keywords = input.targetKeywords.slice(0, keywordCap);
 
   const lines = [
     "══════════════ APP CONTEXT (MANDATORY — ground every sentence in these facts) ══════════════",
@@ -41,7 +48,7 @@ export function buildModularAppContextBlock(input: ListingOptimizerInput): strin
     `Seed keywords: ${keywords.join(", ") || "(none — infer from category and features)"}`,
     "",
     "Core features & value proposition:",
-    input.appFeatures.trim().slice(0, 4000) || "(no features provided — infer carefully from category only)",
+    input.appFeatures.trim().slice(0, featureCap) || "(no features provided — infer carefully from category only)",
     "",
     targetArabic
       ? "Output language: Modern Standard Arabic suitable for Google Play MENA."
@@ -60,22 +67,23 @@ export function buildModularAppContextBlock(input: ListingOptimizerInput): strin
   ];
 
   if (input.topStagedIssues?.length) {
-    lines.push(
-      `Top review insights: ${input.topStagedIssues.map((i) => i.label).join("; ")}`,
-    );
+    const issues = compact
+      ? input.topStagedIssues.slice(0, 1)
+      : input.topStagedIssues;
+    lines.push(`Top review insights: ${issues.map((i) => i.label).join("; ")}`);
   }
 
   if (input.activeContext && activeContextHasSignals(input.activeContext)) {
     const defensive = input.activeContext.defensive
-      .slice(0, 5)
+      .slice(0, signalCap)
       .map((s) => s.label)
       .join("; ");
     const offensive = input.activeContext.offensive
-      .slice(0, 5)
+      .slice(0, signalCap)
       .map((s) => s.label)
       .join("; ");
     const market = input.activeContext.market
-      .slice(0, 5)
+      .slice(0, signalCap)
       .map((s) => s.label)
       .join("; ");
     if (defensive) lines.push(`Defensive signals: ${defensive}`);
@@ -89,11 +97,12 @@ export function buildModularAppContextBlock(input: ListingOptimizerInput): strin
 export function buildModularOrchestrationContextBlock(
   input: ListingOptimizerInput,
   lockedKeywords?: string[],
+  options?: { compact?: boolean },
 ): string {
   const locked =
     lockedKeywords && lockedKeywords.length > 0
-      ? lockedKeywords
-      : input.targetKeywords.slice(0, 20);
+      ? lockedKeywords.slice(0, options?.compact ? 10 : 20)
+      : input.targetKeywords.slice(0, options?.compact ? 10 : 20);
   const primaryPain =
     input.topStagedIssues?.[0]?.label ??
     (input.activeContext && activeContextHasSignals(input.activeContext)
@@ -104,9 +113,36 @@ export function buildModularOrchestrationContextBlock(
     targetArabic: input.targetArabic ?? false,
     lockedKeywords: locked,
     strategyMode: input.strategyMode ?? "defensive",
-    topReviewInsights: input.topStagedIssues?.map((i) => i.label) ?? [],
+    topReviewInsights: (input.topStagedIssues ?? [])
+      .slice(0, options?.compact ? 1 : undefined)
+      .map((i) => i.label),
     primaryPainPoint: primaryPain,
   });
+}
+
+/** Reduce prompt context ~50% for long-description retry after truncation failure. */
+export function summarizeListingInputForLongRetry(
+  input: ListingOptimizerInput,
+): ListingOptimizerInput {
+  return {
+    ...input,
+    appFeatures: input.appFeatures.trim().slice(0, Math.max(400, Math.floor(input.appFeatures.length * 0.5))),
+    targetKeywords: input.targetKeywords.slice(
+      0,
+      Math.max(3, Math.ceil(input.targetKeywords.length * 0.5)),
+    ),
+    topStagedIssues: input.topStagedIssues?.slice(
+      0,
+      Math.max(1, Math.ceil((input.topStagedIssues?.length ?? 0) * 0.5)),
+    ),
+    trackedKeywordSignals: input.trackedKeywordSignals?.slice(
+      0,
+      Math.max(2, Math.ceil((input.trackedKeywordSignals?.length ?? 0) * 0.5)),
+    ),
+    userInstruction: input.userInstruction
+      ? input.userInstruction.trim().slice(0, Math.max(120, Math.floor(input.userInstruction.length * 0.5)))
+      : undefined,
+  };
 }
 
 /** @deprecated Use buildModularAppContextBlock — kept for title step compatibility. */

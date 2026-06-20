@@ -1,9 +1,14 @@
+import { normalizeShortVariationText } from "@/lib/listing/modular-output-validation";
 import {
   coerceShortVariationsInput,
   defaultShortVariationType,
   orderShortVariations,
   shortVariationTypeFromOrchestrationId,
 } from "@/lib/listing/modular-short-variations";
+
+function normalizeShortLine(text: string): string {
+  return normalizeShortVariationText(text);
+}
 
 export {
   buildModularAppContextBlock,
@@ -77,7 +82,10 @@ export function normalizeModularShortParsed(parsed: unknown): {
   if (Array.isArray(root.variations)) {
     const typed = root.variations.map((item, index) => {
       if (typeof item === "string") {
-        return { type: defaultShortVariationType(index), text: item.trim().slice(0, 80) };
+        return {
+          type: defaultShortVariationType(index),
+          text: normalizeShortLine(item.trim()),
+        };
       }
       const row = asRecord(item);
       if (!row) {
@@ -88,7 +96,7 @@ export function normalizeModularShortParsed(parsed: unknown): {
       const type = typeRaw
         ? shortVariationTypeFromOrchestrationId(typeRaw, index)
         : defaultShortVariationType(index);
-      return { type, text: text.slice(0, 80) };
+      return { type, text: normalizeShortLine(text) };
     });
     return { variations: orderShortVariations(typed) };
   }
@@ -104,7 +112,7 @@ export function normalizeModularShortParsed(parsed: unknown): {
       const variationId = readString(row, "variationId");
       return {
         type: shortVariationTypeFromOrchestrationId(variationId, index),
-        text: readString(row, "shortDescription").slice(0, 80),
+        text: normalizeShortLine(readString(row, "shortDescription")),
       };
     });
     return { variations: orderShortVariations(typed) };
@@ -113,7 +121,7 @@ export function normalizeModularShortParsed(parsed: unknown): {
   if (typeof root.shortDescription === "string") {
     return {
       variations: orderShortVariations([
-        { type: "growth", text: root.shortDescription.trim().slice(0, 80) },
+        { type: "growth", text: normalizeShortLine(root.shortDescription.trim()) },
       ]),
     };
   }
@@ -138,6 +146,19 @@ export function normalizeModularLongParsed(parsed: unknown): {
   let hook = readString(root, "hook") || (hookBlock ? readString(hookBlock, "content") : "");
   let features = readString(root, "features");
   let closing = readString(root, "closing");
+
+  if (!features && Array.isArray(root.features)) {
+    features = root.features
+      .map((cat) => {
+        const row = asRecord(cat);
+        if (!row) return "";
+        const label = readString(row, "label");
+        const bullets = readStringArray(row.bullets).join("\n");
+        return label ? `${label}\n${bullets}` : bullets;
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
 
   if (!features && featuresBlock) {
     const categories = featuresBlock.categories;
@@ -166,8 +187,8 @@ export function normalizeModularLongParsed(parsed: unknown): {
   }
 
   return {
-    hook: hook.slice(0, 1200),
-    features: features.slice(0, 2400),
-    closing: closing.slice(0, 800),
+    hook: hook.slice(0, 200),
+    features: features.slice(0, 3200),
+    closing: closing.slice(0, 1000),
   };
 }

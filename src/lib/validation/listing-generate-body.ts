@@ -20,4 +20,9 @@ export const listingGenerateBodySchema = listingOptimizerRequestSchema.extend({
   queueHash: z.string().regex(/^[a-f0-9]{64}$/),
   /** Client vault row count at hash time — diagnostics for hash mismatch audits. */
   clientQueueItemCount: z.number().int().min(0).max(100).optional(),
+  /**
+   * Explicit opt-in: inject staged optimizer signals into generation prompts.
+   * When false, server strips activeContext / tracker signals regardless of payload.
+   */
+  includeOptimizerContext: z.boolean().optional().default(false),
 });

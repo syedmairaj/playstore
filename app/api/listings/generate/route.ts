@@ -20,14 +20,17 @@ import {
   buildInsufficientAiCreditsPayload,
   buildCreditLedgerMeta,
   consumeModularListingRegenerate,
+  billsModularListingPhase,
+  isModularPhaseBilledStep,
   consumeWorkspaceAiCredits,
-  isModularRegenerateStep,
   readWorkspaceAiCreditsRemaining,
   refundWorkspaceAiCredits,
 } from "@/lib/features";
 import { getModularListingPromptVersion } from "@/lib/prompts/listing-modular";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
-import { zodErrorToFieldErrors } from "@/lib/listing/modular-listing.types";
+import { zodErrorToFieldErrors, shortDescriptionSchema } from "@/lib/listing/modular-listing.types";
+import { isModularLongBillingReady } from "@/lib/listing/modular-long-assembler";
+import { ListingGenerationUnavailableError } from "@/lib/listing/listing-generation-unavailable-error";
 import { MODULAR_TRIAL_REGENERATIONS_LIMIT } from "@/lib/features/billing/modular-regenerate-billing";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -45,6 +48,8 @@ import {
 } from "@/lib/optimization-queue/context-audit-log";
 import { validateActiveContextQueueHash } from "@/lib/optimization-queue/validate-active-context-queue-hash";
 import { assessListingInputWarnings } from "@/lib/listing/listing-generation-heuristics";
+import { applyOptimizerContextGate } from "@/lib/optimizer/apply-optimizer-context-gate";
+import { fetchOptimizedContext } from "@/lib/optimizer/fetch-optimized-context";
 
 const ROUTE = "POST /api/listings/generate";
 const LOCK_ACTION = "listing_generate";
@@ -145,28 +150,13 @@ export async function POST(request: NextRequest) {
     clientQueueItemCount,
     generationStep,
     isRegenerate,
+    includeOptimizerContext,
     ...listingInput
   } = input;
 
   const step = generationStep ?? "full";
   const billsCredits = isCreditBilledStep(step);
-  const billsModularRegenerate = isModularRegenerateStep(step, isRegenerate ?? false);
-
-  // ── Signal quality computation ────────────────────────────────────────────
-  // Counts active signal channels (keywords, reviews, market, competitors).
-  const signalCount = (activeSignalTypes ?? []).length;
-  const qualityMeta =
-    signalCount >= 4
-      ? { quality_status: "All signals active. Synthesis mode: Maximum." as const }
-      : signalCount >= 2
-        ? {
-            quality_status:
-              "Multi-signal synthesis active. Keyword Tracker terms prioritized in copy." as const,
-          }
-        : {
-            quality_warning:
-              "Listing generated using partial data. Stage Keyword Tracker terms plus Review, Market, or Competitor signals for a stronger strategy." as const,
-          };
+  const billsModularPhase = billsModularListingPhase(step, isRegenerate ?? false);
 
   if (bodyAppId) {
     const { data: appOk, error: appLookupErr } = await supabase
@@ -329,13 +319,42 @@ export async function POST(request: NextRequest) {
     clientQueueItemCount,
   });
 
+  const fetchedOptimizerContext =
+    includeOptimizerContext === true
+      ? await fetchOptimizedContext(supabase, {
+          workspaceId,
+          locale: vaultLocale,
+          appId: bodyAppId,
+        })
+      : null;
+
+  const gatedListingInput = applyOptimizerContextGate(
+    listingInput,
+    includeOptimizerContext === true,
+    fetchedOptimizerContext,
+  );
+
+  const signalCount = (gatedListingInput.activeSignalTypes ?? activeSignalTypes ?? []).length;
+  const qualityMeta =
+    signalCount >= 4
+      ? { quality_status: "All signals active. Synthesis mode: Maximum." as const }
+      : signalCount >= 2
+        ? {
+            quality_status:
+              "Multi-signal synthesis active. Keyword Tracker terms prioritized in copy." as const,
+          }
+        : {
+            quality_warning:
+              "Listing generated using partial data. Stage Keyword Tracker terms plus Review, Market, or Competitor signals for a stronger strategy." as const,
+          };
+
   logActiveContextAudit(
     buildContextAuditSnapshot({
       route: `${ROUTE} [${step}]`,
       workspaceId,
       appId: bodyAppId,
-      listing: listingInput,
-      activeSignalTypes,
+      listing: gatedListingInput,
+      activeSignalTypes: gatedListingInput.activeSignalTypes ?? activeSignalTypes,
       queueHash: {
         client: queueHash,
         server: queueHashValidation.serverQueueHash,
@@ -351,7 +370,7 @@ export async function POST(request: NextRequest) {
 
   const preflightWarnings = assessListingInputWarnings(input, queueHashValidation);
 
-  if (billsModularRegenerate) {
+  if (billsModularPhase) {
     const { data: wsBilling } = await supabase
       .from("workspaces")
       .select("trial_regenerations_used, ai_credits_remaining")
@@ -463,10 +482,11 @@ export async function POST(request: NextRequest) {
     walletBalanceAfterDebit = debit.balanceAfter;
   }
 
+  // Billing order: (1) generate + parse/repair/self-correct, (2) debit only after Zod success, (3) 500 with no debit on failure.
   try {
     const orchestratorResult = await runListingGenerationOrchestrator({
       step,
-      body: input,
+      body: { ...input, ...gatedListingInput },
       supabase,
       workspaceId,
       userId: user.id,
@@ -480,39 +500,54 @@ export async function POST(request: NextRequest) {
     const isFullOrFinalize =
       orchestratorResult.step === "full" || orchestratorResult.step === "finalize";
 
-    if (billsModularRegenerate) {
-      const regenDebit = await consumeModularListingRegenerate(supabase, {
-        workspaceId,
-        userId: user.id,
-        generationStep: step,
-        meta: buildCreditLedgerMeta("text", {
-          route: ROUTE,
-          model,
-          tool: "modular_listing_regenerate",
-        }),
-      });
+    if (billsModularPhase) {
+      const shortBillingReady =
+        step !== "short" ||
+        (orchestratorResult.step === "short" &&
+          shortDescriptionSchema.safeParse(orchestratorResult.data).success);
 
-      if (!regenDebit.ok) {
-        await logUsage(admin, {
-          route: ROUTE,
-          clientIp,
-          success: false,
-          durationMs: Date.now() - started,
-          errorMessage: `modular_regenerate_post_success:${regenDebit.code}`,
-          meta: {
-            user_id: user.id,
-            workspace_id: workspaceId,
-            generation_step: step,
-          },
+      const longBillingReady =
+        step !== "long" ||
+        (orchestratorResult.step === "long" &&
+          isModularLongBillingReady(orchestratorResult.data));
+
+      if (shortBillingReady && longBillingReady) {
+        const regenDebit = await consumeModularListingRegenerate(supabase, {
+          workspaceId,
+          userId: user.id,
+          generationStep: step,
+          meta: buildCreditLedgerMeta("text", {
+            route: ROUTE,
+            model,
+            tool: "modular_listing_regenerate",
+            billing_kind: isModularPhaseBilledStep(step)
+              ? "modular_phase"
+              : "modular_regenerate",
+          }),
         });
-      } else {
-        ledgerId = regenDebit.ledgerId;
-        modularBillingMeta = {
-          creditsCharged: regenDebit.creditsCharged,
-          trialRegenerationsUsed: regenDebit.trialRegenerationsUsed,
-          trialRegenerationsRemaining: regenDebit.trialRegenerationsRemaining,
-          creditsRemaining: regenDebit.balanceAfter,
-        };
+
+        if (!regenDebit.ok) {
+          await logUsage(admin, {
+            route: ROUTE,
+            clientIp,
+            success: false,
+            durationMs: Date.now() - started,
+            errorMessage: `modular_regenerate_post_success:${regenDebit.code}`,
+            meta: {
+              user_id: user.id,
+              workspace_id: workspaceId,
+              generation_step: step,
+            },
+          });
+        } else {
+          ledgerId = regenDebit.ledgerId;
+          modularBillingMeta = {
+            creditsCharged: regenDebit.creditsCharged,
+            trialRegenerationsUsed: regenDebit.trialRegenerationsUsed,
+            trialRegenerationsRemaining: regenDebit.trialRegenerationsRemaining,
+            creditsRemaining: regenDebit.balanceAfter,
+          };
+        }
       }
     }
 
@@ -571,6 +606,38 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (e) {
+    if (e instanceof ListingGenerationUnavailableError) {
+      if (ledgerId) {
+        await refundWorkspaceAiCredits(supabase, {
+          ledgerId,
+          userId: user.id,
+          reason: "Listing AI generation failed before a saved result",
+        });
+      }
+      releaseGenerationLock(workspaceId, LOCK_ACTION);
+      await logUsage(admin, {
+        route: ROUTE,
+        clientIp,
+        success: false,
+        durationMs: Date.now() - started,
+        errorMessage: "generation_unavailable",
+        meta: {
+          user_id: user.id,
+          workspace_id: workspaceId,
+          generation_step: step,
+        },
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: "generation_unavailable",
+            message: e.message,
+          },
+        },
+        { status: 500 },
+      );
+    }
     if (e instanceof InvalidModelOutputError) {
       const fieldErrors = e.zodError ? zodErrorToFieldErrors(e.zodError) : undefined;
       if (ledgerId) {
@@ -595,17 +662,31 @@ export async function POST(request: NextRequest) {
           ...(fieldErrors ? { field_errors: fieldErrors } : {}),
         },
       });
-      if (step === "short" && fieldErrors) {
+      const modularValidationSteps = new Set([
+        "title",
+        "short",
+        "long",
+        "hook",
+        "features",
+        "closing",
+      ]);
+      if (modularValidationSteps.has(step)) {
+        console.error("[listing-generate] modular_output_validation_failed", {
+          step,
+          fieldErrors,
+          finishReason: e.finishReason,
+        });
         return NextResponse.json(
           {
             ok: false,
             error: {
-              code: "validation_error",
-              message: "Short description output failed validation",
-              fieldErrors,
+              code: "generation_unavailable",
+              message:
+                "The listing could not be generated at this time. Please try again.",
+              truncated: e.truncated ? true : undefined,
             },
           },
-          { status: 400 },
+          { status: 500 },
         );
       }
       return NextResponse.json(

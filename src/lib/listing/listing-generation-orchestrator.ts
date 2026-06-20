@@ -5,19 +5,21 @@ import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error
 import {
   generateListingFinalizeExtrasWithGemini,
   generateListingLongWithGemini,
-  generateListingShortWithGemini,
   generateListingTitleWithGemini,
 } from "@/lib/gemini/generate-listing-modular";
+import { runDefensiveModularShortGeneration } from "@/lib/listing/modular-defensive-generation";
+import {
+  longLengthWarningMessage,
+  runModularLongAssembler,
+} from "@/lib/listing/modular-long-assembler";
+import { safeAssemble } from "@/lib/listing/listing-assembler";
+import { MODULAR_LONG_ACCEPT_MIN_CHARS } from "@/lib/listing/modular-output-validation";
+import { pruneContext } from "@/lib/optimizer/prune-context";
 import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
 import {
-  buildHeuristicLongBlocks,
-  buildHeuristicShortLine,
-  buildHeuristicShortVariations,
-  buildHeuristicTitle,
   enrichListingInputForHeuristics,
   finalizeWarningsPayload,
   missingContextShortWarning,
-  partialModelOutputWarning,
 } from "@/lib/listing/listing-generation-heuristics";
 import type {
   ModularListingGenerationStep,
@@ -93,6 +95,7 @@ function listingInputFromBody(body: ListingModularGenerateBody): ListingOptimize
     orchestration: _orch,
     modularTitle: _mt,
     isRegenerate: _ir,
+    includeOptimizerContext: _ioc,
     ...listingInput
   } = body;
   return listingInput;
@@ -100,31 +103,6 @@ function listingInputFromBody(body: ListingModularGenerateBody): ListingOptimize
 
 function resolveLockedKeywords(body: ListingModularGenerateBody): string[] {
   return resolveRequestLockedKeywords(body);
-}
-
-function hasUsableText(value: string | undefined): boolean {
-  return Boolean(value?.trim());
-}
-
-async function withHeuristicFallback<T>(
-  stepLabel: string,
-  attempt: () => Promise<T>,
-  fallback: () => T,
-  isValid: (data: T) => boolean,
-  warnings: ListingGenerationWarning[],
-): Promise<T> {
-  try {
-    const data = await attempt();
-    if (isValid(data)) return data;
-    warnings.push(partialModelOutputWarning(stepLabel));
-    return fallback();
-  } catch (error) {
-    if (error instanceof InvalidModelOutputError) {
-      warnings.push(partialModelOutputWarning(stepLabel));
-      return fallback();
-    }
-    throw error;
-  }
 }
 
 export function orchestratorPromptVersion(step: ModularListingGenerationStep): string {
@@ -146,13 +124,7 @@ export async function runListingGenerationOrchestrator(
   switch (step) {
     case "title": {
       const locked = resolveLockedKeywords(body);
-      const data = await withHeuristicFallback(
-        "title",
-        () => generateListingTitleWithGemini(input, locked),
-        () => buildHeuristicTitle(input, locked),
-        (value) => hasUsableText(value.title),
-        warnings,
-      );
+      const data = await generateListingTitleWithGemini(input, locked);
       return { step: "title", data, warnings: warningsPayload() };
     }
 
@@ -162,13 +134,12 @@ export async function runListingGenerationOrchestrator(
         body.modularListing?.title.value?.trim() ||
         input.appName.slice(0, 30);
       const locked = resolveLockedKeywords(body);
-      const data = await withHeuristicFallback(
-        "short description",
-        () => generateListingShortWithGemini(input, contextTitle, locked),
-        () => buildHeuristicShortVariations(input, contextTitle),
-        (value) => value.variations.some((v) => hasUsableText(v.text)),
-        warnings,
+      const { data, warnings: shortWarnings } = await runDefensiveModularShortGeneration(
+        input,
+        contextTitle,
+        locked,
       );
+      warnings.push(...shortWarnings);
       return { step: "short", data, warnings: warningsPayload() };
     }
 
@@ -191,38 +162,97 @@ export async function runListingGenerationOrchestrator(
         })() ||
         "";
       if (!contextShort) {
-        contextShort = buildHeuristicShortLine(input, contextTitle);
         warnings.push(missingContextShortWarning());
+        throw new InvalidModelOutputError(
+          "contextShortDescription is required for long-description generation",
+        );
       }
-      const existing = body.modularListing?.longDescription;
-      const block = step === "long" ? undefined : step;
+      const prunedInput = pruneContext(input);
       const locked = resolveLockedKeywords(body);
-      const context = { title: contextTitle, shortDescription: contextShort };
-      const fallbackLong = () => {
-        const full = buildHeuristicLongBlocks(input, context);
-        if (block && existing) {
-          return {
-            hook: block === "hook" ? full.hook : (existing.hook ?? ""),
-            features: block === "features" ? full.features : (existing.features ?? ""),
-            closing: block === "closing" ? full.closing : (existing.closing ?? ""),
+      const longContext = { title: contextTitle, shortDescription: contextShort };
+
+      if (step === "long") {
+        let assemblerResult;
+        try {
+          assemblerResult = await runModularLongAssembler({
+            supabase: ctx.supabase,
+            workspaceId: ctx.workspaceId,
+            appId: ctx.appId,
+            input: prunedInput,
+            context: longContext,
+            lockedKeywords: locked,
+            inlineFallback: body.modularListing?.longDescription,
+          });
+        } catch (error) {
+          console.warn("[listing-orchestrator/long] assembler error — safeAssemble fallback", error);
+          const safe = safeAssemble(body.modularListing?.longDescription ?? {}, {
+            targetArabic: prunedInput.targetArabic ?? false,
+          });
+          assemblerResult = {
+            data: safe.data,
+            source: "fallback" as const,
+            lengthAssessment: safe.lengthAssessment,
+            assembleWarnings: safe.warnings,
           };
         }
-        return full;
-      };
-      const data = await withHeuristicFallback(
-        block ? `long ${block}` : "long description",
-        () =>
-          generateListingLongWithGemini(input, context, block, existing, locked),
-        fallbackLong,
-        (value) => {
-          if (block) return hasUsableText(value[block]);
-          return (
-            hasUsableText(value.hook) ||
-            hasUsableText(value.features) ||
-            hasUsableText(value.closing)
-          );
-        },
-        warnings,
+
+        const { data, source, timedOut, expansionSkipped, lengthAssessment, assembleWarnings } =
+          assemblerResult;
+
+        if (source === "vault_cache") {
+          warnings.push({
+            code: "long_vault_cache_fallback",
+            message: timedOut
+              ? "Long description generation timed out; restored best-available cached copy from vault."
+              : "Long description generation used best-available cached copy from vault.",
+            severity: "warning",
+          });
+        }
+        if (source === "fallback") {
+          warnings.push({
+            code: "long_assembly_adjusted",
+            message: "Generation used safe fallback assembly to deliver a usable listing.",
+            severity: "warning",
+          });
+        }
+        if (expansionSkipped) {
+          warnings.push({
+            code: "long_expansion_skipped",
+            message:
+              "Assembler skipped post-processing to stay within the 8-second budget; returning best-effort copy.",
+            severity: "warning",
+          });
+        }
+        for (const msg of assembleWarnings) {
+          warnings.push({
+            code: "long_assembly_adjusted",
+            message: msg,
+            severity: "warning",
+          });
+        }
+        if (lengthAssessment.belowTarget) {
+          const lengthMsg = longLengthWarningMessage(lengthAssessment);
+          if (lengthMsg) {
+            warnings.push({
+              code:
+                lengthAssessment.charCount > MODULAR_LONG_ACCEPT_MIN_CHARS
+                  ? "long_description_below_target"
+                  : "long_description_short",
+              message: lengthMsg,
+              severity: "warning",
+            });
+          }
+        }
+        return { step: "long", data, warnings: warningsPayload() };
+      }
+
+      const existing = body.modularListing?.longDescription;
+      const data = await generateListingLongWithGemini(
+        prunedInput,
+        longContext,
+        step,
+        existing,
+        locked,
       );
       return { step, data, warnings: warningsPayload() };
     }
@@ -282,37 +312,12 @@ export async function runListingGenerationOrchestrator(
     }
 
     case "full": {
-      let data: ListingGenerationOutput;
-      let asoScorePartial: boolean | undefined;
-      let retried: boolean | undefined;
-      let shortDescriptionClamped: boolean | undefined;
-      try {
-        const result = await generateListingWithGemini(input);
-        data = result.data;
-        asoScorePartial = result.asoScorePartial;
-        retried = result.retried;
-        shortDescriptionClamped = result.shortDescriptionClamped;
-      } catch (error) {
-        if (error instanceof InvalidModelOutputError) {
-          warnings.push(partialModelOutputWarning("full listing"));
-          const title = buildHeuristicTitle(input, resolveLockedKeywords(body));
-          const short = buildHeuristicShortVariations(input, title.title);
-          const long = buildHeuristicLongBlocks(input, {
-            title: title.title,
-            shortDescription: short.variations[0]?.text ?? title.title,
-          });
-          data = {
-            title: title.title,
-            shortDescription: short.variations[1]?.text ?? short.variations[0]?.text ?? "",
-            fullDescription: [long.hook, long.features, long.closing].filter(Boolean).join("\n\n"),
-            keywordSuggestions: input.targetKeywords.slice(0, 20),
-            ctaSuggestions: [],
-          };
-          asoScorePartial = true;
-        } else {
-          throw error;
-        }
-      }
+      const {
+        data,
+        asoScorePartial,
+        retried,
+        shortDescriptionClamped,
+      } = await generateListingWithGemini(input);
 
       const persist = await insertListingGeneration(ctx.supabase, {
         input,

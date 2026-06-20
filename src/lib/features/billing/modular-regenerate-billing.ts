@@ -35,6 +35,17 @@ export function isModularRegenerateStep(
   );
 }
 
+/** Usage-gated billing for modular pipeline phases (every call, not only isRegenerate). */
+export function isModularPhaseBilledStep(step: string): boolean {
+  return step === "title" || step === "short" || step === "long";
+}
+
+/** True when post-success `consume_modular_listing_regenerate` should run. */
+export function billsModularListingPhase(step: string, isRegenerate: boolean): boolean {
+  if (isModularPhaseBilledStep(step)) return true;
+  return isModularRegenerateStep(step, isRegenerate);
+}
+
 export async function consumeModularListingRegenerate(
   supabase: SupabaseClient,
   params: {

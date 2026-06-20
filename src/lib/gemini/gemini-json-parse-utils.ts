@@ -1,4 +1,4 @@
-import { parseJsonWithRecovery, recoverPartialJson } from "./json-recovery";
+import { robustParseJson } from "@/lib/utils/json-repair";
 
 export type GeminiJsonParseFailureReason = "empty" | "parse_failed" | "truncated";
 
@@ -29,29 +29,19 @@ function stripCodeFences(text: string): string {
  * Preserves UTF-8 (EN/AR) — structural edits only.
  */
 export function prepareGeminiJsonText(raw: string): { text: string; recovered: boolean } {
-  let text = stripCodeFences(raw.trim());
+  const text = stripCodeFences(raw.trim());
   if (!text) return { text: "", recovered: false };
 
   try {
     JSON.parse(text);
     return { text, recovered: false };
   } catch {
-    // fall through to structural recovery
+    // fall through to robust repair
   }
 
-  const recoveredText = recoverPartialJson(text);
-  if (recoveredText) {
-    return { text: recoveredText, recovered: true };
-  }
-
-  if (text.startsWith("{")) {
-    text = text.replace(/,\s*$/, "");
-    const opens = (text.match(/\{/g) ?? []).length;
-    const closes = (text.match(/\}/g) ?? []).length;
-    if (opens > closes) {
-      text += "}".repeat(opens - closes);
-      return { text, recovered: true };
-    }
+  const repaired = robustParseJson(text);
+  if (repaired != null) {
+    return { text: JSON.stringify(repaired), recovered: true };
   }
 
   return { text, recovered: false };
@@ -71,7 +61,7 @@ export function parseGeminiJsonText<T = unknown>(
   }
 
   const { text, recovered } = prepareGeminiJsonText(trimmed);
-  const parsed = parseJsonWithRecovery<T>(text);
+  const parsed = robustParseJson(text) as T | null;
 
   if (parsed !== null) {
     return {

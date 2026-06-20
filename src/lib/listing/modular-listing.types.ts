@@ -101,24 +101,24 @@ export const longDescriptionSchema = z.object({
     .string()
     .trim()
     .min(1, { message: "hook: This block is required and cannot be empty" })
-    .max(1200),
+    .max(200),
   features: z
     .string()
     .trim()
     .min(1, { message: "features: This block is required and cannot be empty" })
-    .max(2400),
+    .max(3200),
   closing: z
     .string()
     .trim()
     .min(1, { message: "closing: This block is required and cannot be empty" })
-    .max(800),
+    .max(2400),
 });
 
 /** Lenient Gemini output — allows empty blocks during per-block regeneration. */
 export const modularLongStepOutputSchema = z.object({
-  hook: z.string().trim().max(1200),
-  features: z.string().trim().max(2400),
-  closing: z.string().trim().max(800),
+  hook: z.string().trim().max(200),
+  features: z.string().trim().max(3200),
+  closing: z.string().trim().max(2400),
 });
 
 export const modularTitleStepSchema = z.object({
@@ -128,9 +128,9 @@ export const modularTitleStepSchema = z.object({
 
 /** Draft-phase long blocks — empty strings allowed while pipeline is in progress. */
 export const modularListingLongDraftStateSchema = z.object({
-  hook: z.string().trim().max(1200),
-  features: z.string().trim().max(2400),
-  closing: z.string().trim().max(800),
+  hook: z.string().trim().max(200),
+  features: z.string().trim().max(3200),
+  closing: z.string().trim().max(2400),
 });
 
 /** Finalize — all long blocks must be non-empty. */

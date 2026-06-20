@@ -7,6 +7,8 @@
  * Maintains RTL/LTR parity — no text transformation, only structural recovery.
  */
 
+import { robustParseJson } from "@/lib/utils/json-repair";
+
 /**
  * Recover partial/truncated JSON by finding the last valid closing brace/bracket
  *
@@ -124,29 +126,7 @@ export function recoverPartialJson(truncatedJson: string): string | null {
  * @returns Parsed object, or null if both parse and recovery fail
  */
 export function parseJsonWithRecovery<T = unknown>(jsonText: string): T | null {
-  if (!jsonText || typeof jsonText !== "string") {
-    return null;
-  }
-
-  // Try standard parse first
-  try {
-    return JSON.parse(jsonText) as T;
-  } catch (e) {
-    // Fall through to recovery
-  }
-
-  // Try recovery
-  const recovered = recoverPartialJson(jsonText);
-  if (!recovered) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(recovered) as T;
-  } catch (e) {
-    // Recovery failed
-    return null;
-  }
+  return robustParseJson(jsonText) as T | null;
 }
 
 /**

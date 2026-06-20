@@ -6,8 +6,14 @@ export type ListingGenerationWarningCode =
   | "missing_review_signals"
   | "sparse_active_context"
   | "partial_model_output"
+  | "short_variations_repaired"
   | "missing_context_short"
-  | "category_best_practices";
+  | "category_best_practices"
+  | "long_vault_cache_fallback"
+  | "long_description_below_target"
+  | "long_description_short"
+  | "long_expansion_skipped"
+  | "long_assembly_adjusted";
 
 export type ListingGenerationWarning = {
   code: ListingGenerationWarningCode;
@@ -32,8 +38,14 @@ const WARNING_SCORE_PENALTY: Record<ListingGenerationWarningCode, number> = {
   missing_review_signals: 10,
   sparse_active_context: 12,
   partial_model_output: 8,
+  short_variations_repaired: 10,
   missing_context_short: 6,
   category_best_practices: 16,
+  long_vault_cache_fallback: 10,
+  long_description_below_target: 8,
+  long_description_short: 12,
+  long_expansion_skipped: 6,
+  long_assembly_adjusted: 4,
 };
 
 export function healthLabelFromScore(score: number): ListingGenerationHealthLabel {

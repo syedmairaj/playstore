@@ -12,6 +12,8 @@ export {
   consumeWorkspaceAiCredits,
   INSUFFICIENT_AI_CREDITS_MESSAGE,
   isModularRegenerateStep,
+  billsModularListingPhase,
+  isModularPhaseBilledStep,
   MODULAR_TRIAL_REGENERATIONS_LIMIT,
   readWorkspaceAiCreditsRemaining,
   refundWorkspaceAiCredits,

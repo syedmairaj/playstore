@@ -1,5 +1,16 @@
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 import {
+  MODULAR_JSON_API_CRITICAL_RULES,
+  MODULAR_LONG_FEATURES_ONLY_INTERFACE,
+  MODULAR_LONG_HOOK_CLOSING_INTERFACE,
+  MODULAR_LONG_JSON_INTERFACE,
+  MODULAR_LONG_REDUCED_COMPLEXITY_RULES,
+  MODULAR_LONG_STYLISTIC_RULES,
+  MODULAR_SHORT_JSON_CRITICAL,
+  MODULAR_SHORT_JSON_INTERFACE,
+  MODULAR_TITLE_JSON_INTERFACE,
+} from "@/lib/prompts/listing-modular-json";
+import {
   buildModularAppContextBlock,
   buildModularOrchestrationContextBlock,
 } from "@/lib/listing/modular-app-context";
@@ -27,8 +38,10 @@ export function buildModularTitleMessages(
   const system = [
     "You are a Google Play ASO title specialist.",
     languageLine(targetArabic),
-    "CRITICAL: Return ONLY this exact JSON shape — no orchestration wrapper, no modules key:",
-    '{ "title": string, "lockedKeywords": string[] }',
+    MODULAR_JSON_API_CRITICAL_RULES,
+    "JSON schema (TypeScript interface):",
+    MODULAR_TITLE_JSON_INTERFACE,
+    "CRITICAL: Return ONLY this exact JSON shape — no orchestration wrapper, no modules key.",
     "title MUST be ≤30 characters, word-boundary safe, and MUST visibly include every locked keyword (woven naturally, not stuffed).",
     "lockedKeywords MUST echo the user-locked terms you honored.",
     "Ground the title in the APP CONTEXT — never generic placeholder copy.",
@@ -63,10 +76,12 @@ export function buildModularShortMessages(
   const system = [
     "You are a Google Play conversion copywriter.",
     languageLine(targetArabic),
-    'Return ONLY a JSON object. Do not wrap in markdown blocks.',
-    'Structure: { "variations": [ {"type": "growth", "text": "..."}, {"type": "conversion", "text": "..."}, {"type": "utility", "text": "..."} ] }.',
-    "Ensure exactly 3 items — one per type: growth, conversion, utility.",
-    "Each text MUST be ≤80 chars, complete sentences only, distinct strategy angle.",
+    MODULAR_SHORT_JSON_CRITICAL,
+    "JSON schema (TypeScript interface):",
+    MODULAR_SHORT_JSON_INTERFACE,
+    "GRAMMATICAL COMPLETION (mandatory): each text MUST be a complete sentence ending with . ! or ? (or ؟ for Arabic).",
+    "Each text MUST be ≤80 characters. If a strategy angle would exceed 80 chars, REWRITE for brevity — never truncate mid-word or mid-sentence.",
+    "REJECT patterns: trailing hyphens, comma/colon endings, ellipsis cuts, or partial final words.",
     "growth: acquisition keywords and category expansion tied to APP CONTEXT.",
     "conversion: trust, social proof, and install intent tied to APP CONTEXT.",
     "utility: core features and day-one value tied to APP CONTEXT.",
@@ -101,6 +116,7 @@ export function buildModularLongMessages(
   context: { title: string; shortDescription: string },
   block?: LongBlockId,
   lockedKeywords?: string[],
+  options?: { compactContext?: boolean },
 ): { system: string; user: string } {
   const targetArabic = input.targetArabic ?? false;
   const locked =
@@ -113,26 +129,39 @@ export function buildModularLongMessages(
     "top user pain point from APP CONTEXT";
 
   const blockInstruction = block
-    ? `Regenerate ONLY the "${block}" block. Other blocks may be empty strings in JSON.`
-    : "Return all three blocks — hook, features, and closing MUST each be non-empty.";
+    ? `Regenerate ONLY the "${block}" block. Other blocks may be empty (features: [], hook: "", closing: "").`
+    : [
+        "Return all three blocks — features array, hook, and closing MUST each be non-empty.",
+        "SCHEMA-FIRST ORDER (mandatory): emit `features` array completely, then `hook`, then `closing`.",
+      ].join(" ");
+  const lengthRule = block
+    ? ""
+    : "STYLE: Write a punchy, 2-sentence hook. Provide a detailed features list. End with a high-conversion closing — the system assembles the final Play listing.";
 
   const system = [
     "You are a Google Play long-description architect.",
     languageLine(targetArabic),
-    "Return JSON only: { \"hook\": string, \"features\": string, \"closing\": string }.",
+    MODULAR_JSON_API_CRITICAL_RULES,
+    MODULAR_LONG_STYLISTIC_RULES,
+    "JSON schema (TypeScript interface) — property order is mandatory:",
+    MODULAR_LONG_JSON_INTERFACE,
+    "Return JSON only. Property order: features (array) → hook (string) → closing (string).",
     blockInstruction,
-    "hook (Block A): opening promise addressing the #1 pain point using app name + category + features.",
-    "features (Block B): emoji-rich categorized bullets synthesized from APP CONTEXT features and staged signals.",
-    "closing (Block C): professional authoritative CTA referencing a concrete app benefit.",
+    lengthRule,
+    "features (WRITE FIRST): detailed emoji-labelled sections with bullet arrays from APP CONTEXT.",
+    "hook (WRITE SECOND): punchy 2-sentence opening addressing #1 pain point.",
+    "closing (WRITE LAST): high-conversion CTA with a concrete app benefit.",
     "Stay semantically consistent with the anchor title and short description.",
     'FORBIDDEN: generic placeholders ("Discover more", "Download now") without app-specific proof.',
     "When generating all blocks, each of hook/features/closing MUST contain substantive copy.",
   ].join("\n");
 
   const user = [
-    buildModularAppContextBlock(input),
+    buildModularAppContextBlock(input, { compact: options?.compactContext }),
     "",
-    buildModularOrchestrationContextBlock(input, locked),
+    buildModularOrchestrationContextBlock(input, locked, {
+      compact: options?.compactContext,
+    }),
     "",
     "PHASE 3 — LONG DESCRIPTION",
     `ANCHOR TITLE: ${context.title}`,
@@ -144,6 +173,117 @@ export function buildModularLongMessages(
   ]
     .filter(Boolean)
     .join("\n");
+
+  return { system, user };
+}
+
+export type ModularLongPromptOptions = {
+  compactContext?: boolean;
+  reducedComplexity?: boolean;
+};
+
+function longSharedUserBlock(
+  input: ListingOptimizerInput,
+  context: { title: string; shortDescription: string },
+  locked: string[],
+  options?: ModularLongPromptOptions,
+): string {
+  const primaryPain =
+    input.topStagedIssues?.[0]?.label ??
+    input.activeContext?.defensive?.[0]?.label ??
+    "top user pain point from APP CONTEXT";
+
+  return [
+    buildModularAppContextBlock(input, { compact: options?.compactContext }),
+    "",
+    buildModularOrchestrationContextBlock(input, locked, {
+      compact: options?.compactContext,
+    }),
+    "",
+    "PHASE 3 — LONG DESCRIPTION",
+    `ANCHOR TITLE: ${context.title}`,
+    `ANCHOR SHORT: ${context.shortDescription}`,
+    `#1 PAIN POINT: ${primaryPain}`,
+    input.userInstruction?.trim()
+      ? `Refinement: ${input.userInstruction.trim()}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Call 1 — features array only (granular long generation). */
+export function buildModularLongFeaturesOnlyMessages(
+  input: ListingOptimizerInput,
+  context: { title: string; shortDescription: string },
+  lockedKeywords?: string[],
+  options?: ModularLongPromptOptions,
+): { system: string; user: string } {
+  const targetArabic = input.targetArabic ?? false;
+  const locked =
+    lockedKeywords && lockedKeywords.length > 0
+      ? lockedKeywords
+      : input.targetKeywords.slice(0, 20);
+  const reduced = options?.reducedComplexity === true;
+  const sectionRule = reduced
+    ? "Provide a shorter detailed features list — fewer sections, crisp bullets."
+    : "Provide a detailed features list with emoji section labels and substantive bullets.";
+
+  const system = [
+    "You are a Google Play long-description features architect.",
+    languageLine(targetArabic),
+    MODULAR_JSON_API_CRITICAL_RULES,
+    MODULAR_LONG_STYLISTIC_RULES,
+    ...(reduced ? [MODULAR_LONG_REDUCED_COMPLEXITY_RULES] : []),
+    "JSON schema (TypeScript interface):",
+    MODULAR_LONG_FEATURES_ONLY_INTERFACE,
+    "Return JSON only with a single `features` array key.",
+    sectionRule,
+    "Prioritize complete JSON structure over verbose prose — never truncate mid-array.",
+    "Synthesize every section from APP CONTEXT — no generic filler.",
+    "Stay semantically consistent with the anchor title and short description.",
+  ].join("\n");
+
+  const user = longSharedUserBlock(input, context, locked, options);
+  return { system, user };
+}
+
+/** Call 2 — hook + closing only, with cached features body as anchor. */
+export function buildModularLongHookClosingMessages(
+  input: ListingOptimizerInput,
+  context: { title: string; shortDescription: string },
+  featuresBody: string,
+  lockedKeywords?: string[],
+  options?: ModularLongPromptOptions,
+): { system: string; user: string } {
+  const targetArabic = input.targetArabic ?? false;
+  const locked =
+    lockedKeywords && lockedKeywords.length > 0
+      ? lockedKeywords
+      : input.targetKeywords.slice(0, 20);
+  const reduced = options?.reducedComplexity === true;
+
+  const system = [
+    "You are a Google Play long-description opener/closer architect.",
+    languageLine(targetArabic),
+    MODULAR_JSON_API_CRITICAL_RULES,
+    MODULAR_LONG_STYLISTIC_RULES,
+    "JSON schema (TypeScript interface):",
+    MODULAR_LONG_HOOK_CLOSING_INTERFACE,
+    "Return JSON only with `hook` and `closing` string keys.",
+    reduced
+      ? "Write a punchy, 2-sentence hook and a single-sentence closing CTA."
+      : "hook: punchy 2-sentence opening addressing #1 pain point. closing: high-conversion CTA with a concrete benefit.",
+    "Do NOT rewrite the features body — only write hook and closing that frame it.",
+    'FORBIDDEN: generic placeholders ("Discover more", "Download now") without app-specific proof.',
+  ].join("\n");
+
+  const user = [
+    longSharedUserBlock(input, context, locked, options),
+    "",
+    "CACHED FEATURES BODY (do not repeat — write hook/closing that complement this):",
+    featuresBody.slice(0, 2800),
+  ].join("\n");
 
   return { system, user };
 }

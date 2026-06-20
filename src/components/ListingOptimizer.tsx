@@ -3014,6 +3014,18 @@ export function ListingOptimizer({
     ],
   );
 
+  const modularCopyBlocked = modularDraftReady && !listingGenerationId;
+  const guardModularCopy = useCallback(
+    (action: () => void) => {
+      if (!modularCopyBlocked) {
+        action();
+        return;
+      }
+      toast.message(t("results.modular.draftMask.copyBlocked"));
+    },
+    [modularCopyBlocked, t],
+  );
+
   const hasUnsavedModularDraft = modularDraftReady && !listingGenerationId;
   const modularWorkInFlight = useMemo(
     () => Object.values(modularGeneration.loading).some(Boolean),
@@ -4773,9 +4785,11 @@ export function ListingOptimizer({
               setEditedLong={setEditedLong}
               clampedListing={clampedListing}
               onCopyAllBlocks={() =>
-                void copyText(
-                  "all",
-                  copyListingAllBlocks(clampedListing),
+                guardModularCopy(() =>
+                  void copyText(
+                    "all",
+                    copyListingAllBlocks(clampedListing),
+                  ),
                 )
               }
               onCopyKeywordsList={() =>
@@ -4787,12 +4801,14 @@ export function ListingOptimizer({
               onCopyCtasList={() =>
                 void copyText("CTAs", result.ctaSuggestions.join("\n"))
               }
-              onCopyTitle={() => void copyText("title", clampedListing.title)}
+              onCopyTitle={() =>
+                guardModularCopy(() => void copyText("title", clampedListing.title))
+              }
               onCopyShort={() =>
-                void copyText("short", clampedListing.shortDescription)
+                guardModularCopy(() => void copyText("short", clampedListing.shortDescription))
               }
               onCopyLong={() =>
-                void copyText("long", clampedListing.fullDescription)
+                guardModularCopy(() => void copyText("long", clampedListing.fullDescription))
               }
               onExportOpen={() => setExportPlayOpen(true)}
               canRegenerate={canRegenerate}
@@ -4846,6 +4862,7 @@ export function ListingOptimizer({
               modularState={modularGeneration.state}
               modularLoading={modularPanelLoading}
               modularDraftReady={modularDraftReady}
+              isPublicationReady={Boolean(listingGenerationId)}
               onRegenerateModularBlock={handleModularBlockRegenerate}
               onSelectModularShortVariation={(index, variation) => {
                 modularGeneration.selectShortVariation(index);
@@ -4883,6 +4900,8 @@ export function ListingOptimizer({
                 .split(/[,;\n]+/)
                 .map((s) => s.trim())
                 .filter(Boolean)}
+              isPublicationReady={Boolean(listingGenerationId)}
+              copyListingBlocked={modularCopyBlocked}
               listingHealth={modularGeneration.generationWarnings}
               lockedKeywords={lockedKeywordList}
             />

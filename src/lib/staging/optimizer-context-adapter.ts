@@ -21,6 +21,11 @@ import {
 } from "@/lib/optimization-queue/queue-routing";
 import { parseStagingVaultContent } from "@/lib/staging-vault/staging-vault-content";
 import { isListingAssetTarget } from "@/lib/keywords/discovery-listing-asset";
+import {
+  deduplicateSignalsByContent,
+  prioritizeAndLimitSignals,
+  OPTIMIZER_CONTEXT_MAX_SIGNALS,
+} from "@/lib/optimizer/context-adapter";
 
 export type { OptimizationQueueCategory };
 export { ACTIVE_CONTEXT_SECTION_LABELS, CATEGORY_TO_WIDGET };
@@ -106,10 +111,6 @@ function normalizeKeywords(
     }
   }
   return out;
-}
-
-function keywordNorm(term: string): string {
-  return term.trim().toLowerCase();
 }
 
 function isTruthyFlag(value: unknown): boolean {
@@ -263,8 +264,7 @@ export function isExplicitlyStagedContextItem(item: OptimizerContextItem): boole
 }
 
 /**
- * De-duplicate: tracker keywords must not appear in market opportunities.
- * Within each widget, de-dupe by normalized content/keyword term.
+ * De-duplicate across widgets and sources — highest-impact signal wins per term.
  */
 export function deduplicateActiveContextItems(
   items: OptimizerContextItem[],
@@ -272,14 +272,21 @@ export function deduplicateActiveContextItems(
   const trackerTerms = new Set<string>();
   for (const item of items) {
     if (item.targetWidget === "keyword_tracker" && item.signalType === "keyword") {
-      trackerTerms.add(keywordNorm(item.content));
+      trackerTerms.add(item.content.trim().toLowerCase());
     }
   }
 
+  const crossSourceDeduped = deduplicateSignalsByContent(
+    items.map((item) => ({
+      ...item,
+      content: item.content,
+      type: item.signalType,
+    })),
+  ) as OptimizerContextItem[];
+
   const seenByWidget = new Map<ActiveContextWidget, Set<string>>();
 
-  return items.filter((item) => {
-    // Strict isolation: review insights never merge into market opportunities.
+  return crossSourceDeduped.filter((item) => {
     if (
       item.targetWidget === "market_opportunities" &&
       (item.signalType === "review_issue" ||
@@ -302,15 +309,15 @@ export function deduplicateActiveContextItems(
     if (
       item.targetWidget === "market_opportunities" &&
       item.signalType === "keyword" &&
-      trackerTerms.has(keywordNorm(item.content))
+      trackerTerms.has(item.content.trim().toLowerCase())
     ) {
       return false;
     }
 
     const key =
       item.signalType === "keyword"
-        ? keywordNorm(item.content)
-        : `${item.signalType}:${keywordNorm(item.content)}`;
+        ? item.content.trim().toLowerCase()
+        : `${item.signalType}:${item.content.trim().toLowerCase()}`;
 
     const widgetSeen = seenByWidget.get(item.targetWidget) ?? new Set<string>();
     if (widgetSeen.has(key)) return false;
@@ -558,7 +565,7 @@ export function flattenQueueToActiveItems(
     }
   }
 
-  return deduplicateActiveContextItems(items);
+  return prioritizeAndLimitSignals(deduplicateActiveContextItems(items), OPTIMIZER_CONTEXT_MAX_SIGNALS);
 }
 
 /**

@@ -2149,8 +2149,13 @@
       },
       "modular": {
         "heading": "Modular Listing Pipeline",
-        "subheading": "Each phase generates independently — regenerate any block for free before you confirm.",
+        "subheading": "Each phase (title, short, long) uses a free trial slot or 1 credit. Finalize debits 5 credits to save.",
         "draftSubheading": "Draft ready — review each phase, then confirm final listing to save.",
+        "draftMask": {
+          "status": "Status: AI Draft. Review and click Finalize to unlock publication-ready copy.",
+          "copyBlocked": "Copy is disabled for AI draft text until you finalize.",
+          "publicationReady": "Publication-ready copy unlocked. You can copy and export for Play Console."
+        },
         "orchestrationSubheading": "Orchestration Protocol — three strategic phases with independent regenerate.",
         "phaseTitle": "Phase 1",
         "phaseShort": "Phase 2",

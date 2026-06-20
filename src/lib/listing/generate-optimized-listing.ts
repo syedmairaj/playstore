@@ -99,6 +99,7 @@ export async function generateOptimizedListing(
       queueHash: input.queueHash,
       clientQueueItemCount: input.queueItemCount ?? 0,
       generationStep: "full" as const,
+      includeOptimizerContext: true,
       lockedKeywords: input.targetKeywords
         .split(/[,;\n]+/)
         .map((s) => s.trim())

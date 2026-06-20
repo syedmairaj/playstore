@@ -85,27 +85,6 @@ describe("optimizer context category routing", () => {
     expect(partitioned.tracker.some((i) => i.content === "diet tracker")).toBe(false);
   });
 
-  it("logs source_origin, category, and destination_section when routing", () => {
-    const item = makeQueueItem({
-      category: "review",
-      content: "crashes on login",
-      source: "competitor_spy",
-      type: "review_pain_point",
-      metadata: { source_origin: "competitor_spy" },
-    });
-
-    routeQueueItemToSection(item);
-
-    expect(console.info).toHaveBeenCalledWith(
-      "[optimizer-context-adapter] signal routed",
-      expect.objectContaining({
-        source_origin: "competitor_spy",
-        category: "review",
-        destination_section: "REVIEW INSIGHTS",
-      }),
-    );
-  });
-
   it("flattenQueueToActiveItems assigns targetWidget from category routing table", () => {
     const rows = [
       {

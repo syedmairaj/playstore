@@ -15,6 +15,7 @@ import {
   readGrowthStrategyTag,
   readImpactPercent,
 } from "@/lib/review-insights/growth-strategy-tags";
+import { prioritizeAndLimitSignals } from "@/lib/optimizer/context-adapter";
 
 export type { ClusterSynthesisPayload, ActiveContextSynthesisPayload, ActiveContextSynthesisSignal } from "@/lib/optimization-queue/build-active-context-synthesis";
 export { buildActiveContextSynthesis, activeContextHasSignals } from "@/lib/optimization-queue/build-active-context-synthesis";
@@ -31,8 +32,13 @@ function metaString(meta: Record<string, unknown>, key: string): string | undefi
 export function buildSynthesisFromOptimizationQueue(
   items: OptimizationQueueItem[],
   seedKeywords: string[] = [],
+  options?: { includeOptimizerContext?: boolean },
 ): OptimizationQueueSynthesisPayload {
-  const activeContext = buildActiveContextSynthesis(items);
+  const includeOptimizerContext = options?.includeOptimizerContext !== false;
+  const curatedItems = includeOptimizerContext
+    ? prioritizeAndLimitSignals(items)
+    : [];
+  const activeContext = buildActiveContextSynthesis(curatedItems);
   const trackedKeywordSignals: OptimizationQueueSynthesisPayload["trackedKeywordSignals"] = [];
   const exploitTargets: string[] = [];
   const reviewIssueLabels: string[] = [];
@@ -40,7 +46,7 @@ export function buildSynthesisFromOptimizationQueue(
   const reviewStagedSignals: OptimizationQueueSynthesisPayload["reviewStagedSignals"] = [];
   const mergedKeywordSet = new Set<string>();
 
-  for (const item of items) {
+  for (const item of curatedItems) {
     const term = item.content.trim();
     if (!term) continue;
 

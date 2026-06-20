@@ -208,17 +208,6 @@ export function routeQueueItemToSection(
   const destination_widget = CATEGORY_TO_WIDGET[category];
   const destination_section = ACTIVE_CONTEXT_SECTION_LABELS[category];
 
-  if (typeof console !== "undefined" && console.info) {
-    console.info("[optimizer-context-adapter] signal routed", {
-      source_origin,
-      category,
-      destination_section,
-      destination_widget,
-      blocked_competitor_tracker,
-      content_preview: item.content.trim().slice(0, 80),
-    });
-  }
-
   return {
     source_origin,
     category,

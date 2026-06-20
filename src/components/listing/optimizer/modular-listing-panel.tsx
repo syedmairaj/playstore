@@ -51,6 +51,8 @@ type Props = {
   longDescription?: string;
   isRtl?: boolean;
   isDraft?: boolean;
+  /** True after successful finalize — unlocks publication-ready copy. */
+  isPublicationReady?: boolean;
   finalizeCreditCost?: number;
   trialRegenerationsUsed?: number;
   longUiMode?: ModularLongUiMode;
@@ -98,6 +100,7 @@ export function ModularListingPanel({
   longDescription,
   isRtl = false,
   isDraft = false,
+  isPublicationReady = false,
   finalizeCreditCost = 5,
   trialRegenerationsUsed = 0,
   longUiMode = "choice",
@@ -168,6 +171,13 @@ export function ModularListingPanel({
     setCompareOpen((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const showDraftMask = !isPublicationReady && (isDraft || Boolean(displayState.title.value.trim()));
+
+  const blockCopy = (event: React.ClipboardEvent) => {
+    if (!showDraftMask) return;
+    event.preventDefault();
+  };
+
   return (
     <div
       className={cn(
@@ -211,6 +221,57 @@ export function ModularListingPanel({
         />
       </div>
 
+      {showDraftMask ? (
+        <div
+          role="note"
+          style={{
+            borderRadius: "12px",
+            border: "1px dashed rgba(245, 158, 11, 0.45)",
+            backgroundColor: "rgba(245, 158, 11, 0.08)",
+            padding: "12px 14px",
+          }}
+        >
+          <p
+            style={{
+              margin: 0,
+              fontSize: "12px",
+              lineHeight: 1.55,
+              fontWeight: 600,
+              color: "rgba(253, 230, 138, 0.95)",
+              textAlign: isRtl ? "right" : "left",
+            }}
+          >
+            {t("draftMask.status")}
+          </p>
+          <p
+            style={{
+              margin: "6px 0 0",
+              fontSize: "11px",
+              lineHeight: 1.5,
+              color: "rgba(255, 255, 255, 0.55)",
+              textAlign: isRtl ? "right" : "left",
+            }}
+          >
+            {t("draftMask.copyBlocked")}
+          </p>
+        </div>
+      ) : null}
+
+      <div
+        onCopy={blockCopy}
+        onCut={blockCopy}
+        style={
+          showDraftMask
+            ? {
+                borderRadius: "14px",
+                border: "1px solid rgba(245, 158, 11, 0.22)",
+                backgroundColor: "rgba(0, 0, 0, 0.18)",
+                padding: "12px",
+                userSelect: "text",
+              }
+            : undefined
+        }
+      >
       <BlockCard
         phase={t("phaseTitle")}
         phaseLabel={t("phase1Label")}
@@ -379,6 +440,26 @@ export function ModularListingPanel({
           {t("finalizeCta", { credits: finalizeCreditCost })}
         </button>
       ) : null}
+
+      {isPublicationReady ? (
+        <p
+          role="status"
+          style={{
+            margin: 0,
+            borderRadius: "10px",
+            border: "1px solid rgba(52, 211, 153, 0.35)",
+            backgroundColor: "rgba(16, 185, 129, 0.1)",
+            padding: "10px 12px",
+            fontSize: "12px",
+            lineHeight: 1.5,
+            color: "rgba(167, 243, 208, 0.95)",
+            textAlign: isRtl ? "right" : "left",
+          }}
+        >
+          {t("draftMask.publicationReady")}
+        </p>
+      ) : null}
+      </div>
     </div>
   );
 }
