@@ -31,6 +31,12 @@ type Props = {
   longUiMode?: ModularLongUiMode;
   hasError?: boolean;
   errorMessage?: string;
+  /** Draft state — blur overlay, block selection/copy until finalize. */
+  draftMasked?: boolean;
+  finalizeCreditCost?: number;
+  finalizeBusy?: boolean;
+  onCopyBlocked?: () => void;
+  onFinalize?: () => void;
   onChange?: (value: string) => void;
   onGenerate?: () => void;
   onAiTool?: (tool: LongDescriptionAiTool) => void;
@@ -45,12 +51,18 @@ export function LongDescriptionAsoEditor({
   longUiMode = "choice",
   hasError = false,
   errorMessage,
+  draftMasked = false,
+  finalizeCreditCost = 5,
+  finalizeBusy = false,
+  onCopyBlocked,
+  onFinalize,
   onChange,
   onGenerate,
   onAiTool,
   onManualEdit,
 }: Props) {
   const t = useTranslations("optimizer.results.modular.longEditor");
+  const tModular = useTranslations("optimizer.results.modular");
   const hasContent = value.trim().length > 0;
   const showEditor = hasContent || longUiMode === "manual";
 
@@ -93,11 +105,18 @@ export function LongDescriptionAsoEditor({
     );
   }
 
+  const blockClipboard = (event: React.ClipboardEvent) => {
+    if (!draftMasked) return;
+    event.preventDefault();
+    onCopyBlocked?.();
+  };
+
   return (
     <div className="space-y-3">
       <div
         className={cn(
           "rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3",
+          draftMasked && "pointer-events-none opacity-60",
           isRtl && "text-end",
         )}
       >
@@ -148,27 +167,67 @@ export function LongDescriptionAsoEditor({
         ) : null}
       </div>
 
-      <KeywordHighlightTextarea
-        id="modular-long-description"
-        value={value}
-        onChange={(next) => onChange?.(next)}
-        lockedKeywords={lockedKeywords}
-        disabled={busy}
-        isRtl={isRtl}
-        rows={12}
-        maxLength={LISTING_LONG_MAX}
-        label={t("fieldLabel")}
-        counterId="modular-long-count"
-        placeholder={t("placeholder")}
-        counter={
-          <ListingCharCounter
-            id="modular-long-count"
-            current={value.length}
-            max={LISTING_LONG_MAX}
-            warnFrom={LISTING_LONG_WARN_FROM}
+      <div
+        className="relative"
+        onCopy={blockClipboard}
+        onCut={blockClipboard}
+        style={draftMasked ? { userSelect: "none", WebkitUserSelect: "none" } : undefined}
+      >
+        <div
+          className={cn(
+            draftMasked && "pointer-events-none select-none blur-[4px] saturate-50",
+          )}
+          aria-hidden={draftMasked ? true : undefined}
+        >
+          <KeywordHighlightTextarea
+            id="modular-long-description"
+            value={value}
+            onChange={(next) => onChange?.(next)}
+            lockedKeywords={lockedKeywords}
+            disabled={busy || draftMasked}
+            isRtl={isRtl}
+            rows={12}
+            maxLength={LISTING_LONG_MAX}
+            label={t("fieldLabel")}
+            counterId="modular-long-count"
+            placeholder={t("placeholder")}
+            counter={
+              <ListingCharCounter
+                id="modular-long-count"
+                current={value.length}
+                max={LISTING_LONG_MAX}
+                warnFrom={LISTING_LONG_WARN_FROM}
+              />
+            }
           />
-        }
-      />
+        </div>
+
+        {draftMasked ? (
+          <div
+            className={cn(
+              "absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-xl border border-amber-500/30 bg-gradient-to-b from-black/55 via-black/70 to-black/80 px-4 py-6 text-center backdrop-blur-[2px]",
+              isRtl && "font-arabic",
+            )}
+          >
+            <p className="max-w-md text-sm font-semibold leading-snug text-amber-100/95">
+              {tModular("draftMask.finalizeUnlockCta", { credits: finalizeCreditCost })}
+            </p>
+            {onFinalize ? (
+              <button
+                type="button"
+                disabled={finalizeBusy || !hasContent}
+                onClick={onFinalize}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-[0_8px_28px_-8px_rgba(16,185,129,0.55)] ring-2 ring-emerald-500/35 hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {finalizeBusy ? (
+                  <RefreshCw className="size-4 animate-spin" aria-hidden />
+                ) : null}
+                {tModular("finalizeCta", { credits: finalizeCreditCost })}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       {busy ? (
         <p className="flex items-center gap-2 text-xs text-sky-200/80" role="status">

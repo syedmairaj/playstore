@@ -59,10 +59,10 @@ export function assessListingInputWarnings(
 
   if (queueItems === 0 && !hasActiveContext) {
     warnings.push({
-      code: "empty_optimization_queue",
+      code: "empty_synthesis_vault",
       severity: "warning",
       message:
-        "No curated Optimization Queue signals. Copy uses category best practices — stage keywords and review insights for stronger ASO.",
+        "No signals are currently available for synthesis. Stage keywords in Keyword Tracker and competitor or review insights in Active Context, then try again.",
     });
   }
 

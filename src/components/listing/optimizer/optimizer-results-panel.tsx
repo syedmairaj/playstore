@@ -148,6 +148,7 @@ type Props = {
   modularDraftReady?: boolean;
   isPublicationReady?: boolean;
   copyListingBlocked?: boolean;
+  onModularDraftCopyBlocked?: () => void;
   modularFinalizeCreditCost?: number;
   trialRegenerationsUsed?: number;
   longUiMode?: ModularLongUiMode;
@@ -217,6 +218,7 @@ export function OptimizerResultsPanel({
   modularDraftReady = false,
   isPublicationReady = false,
   copyListingBlocked = false,
+  onModularDraftCopyBlocked,
   modularFinalizeCreditCost = 5,
   trialRegenerationsUsed = 0,
   longUiMode = "choice",
@@ -351,6 +353,7 @@ export function OptimizerResultsPanel({
           onListingHealthFix={onListingHealthFix}
           onFinalize={onModularFinalize}
           finalizeBusy={modularFinalizeBusy}
+          onDraftCopyBlocked={onModularDraftCopyBlocked}
         />
         </>
       ) : null}
@@ -491,7 +494,7 @@ export function OptimizerResultsPanel({
         </div>
       ) : null}
 
-      {!hasOrchestration ? (
+      {!showModularPanel ? (
       <Tabs defaultValue="title" className="w-full">
         <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
           <TabsTrigger value="title">{t("results.fieldsTabTitle")}</TabsTrigger>
@@ -508,6 +511,7 @@ export function OptimizerResultsPanel({
               >
                 {t("results.titleBlock")}
               </label>
+              {!copyListingBlocked ? (
               <button
                 type="button"
                 disabled={resultsBusy}
@@ -516,6 +520,7 @@ export function OptimizerResultsPanel({
               >
                 {t("results.copy")}
               </button>
+              ) : null}
             </div>
             <input
               id="lo-res-title"
@@ -575,6 +580,7 @@ export function OptimizerResultsPanel({
               >
                 {t("results.shortBlock")}
               </label>
+              {!copyListingBlocked ? (
               <button
                 type="button"
                 disabled={resultsBusy}
@@ -583,6 +589,7 @@ export function OptimizerResultsPanel({
               >
                 {t("results.copy")}
               </button>
+              ) : null}
             </div>
             <textarea
               id="lo-res-short"
@@ -647,6 +654,7 @@ export function OptimizerResultsPanel({
               >
                 {t("results.fullBlock")}
               </label>
+              {!copyListingBlocked ? (
               <button
                 type="button"
                 disabled={resultsBusy}
@@ -655,6 +663,7 @@ export function OptimizerResultsPanel({
               >
                 {t("results.copy")}
               </button>
+              ) : null}
             </div>
             <textarea
               id="lo-res-long"
@@ -996,6 +1005,7 @@ export function OptimizerResultsPanel({
             isRtl && "flex-row-reverse",
           )}
         >
+          {!copyListingBlocked ? (
           <button
             type="button"
             disabled={resultsBusy}
@@ -1004,6 +1014,7 @@ export function OptimizerResultsPanel({
           >
             {t("results.copyAllPrimary")}
           </button>
+          ) : null}
           {canSaveToTracker ? (
             <button
               type="button"

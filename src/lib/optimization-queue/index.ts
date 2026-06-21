@@ -64,3 +64,15 @@ export type {
   ActiveContextStrategyMode,
   PrioritizedStagedIssue,
 } from "@/lib/optimization-queue/resolve-strategy-mode";
+export {
+  assessVaultSynthesisReadiness,
+  buildVaultSynthesisWarnings,
+  EMPTY_SYNTHESIS_VAULT_MESSAGE,
+  logStagingVaultPreSynthesis,
+  validateSynthesisPayloadAfterVault,
+  verifyQueueHashSignalPopulation,
+} from "@/lib/optimization-queue/vault-synthesis-preflight";
+export type {
+  QueueHashSignalPopulation,
+  VaultSynthesisReadiness,
+} from "@/lib/optimization-queue/vault-synthesis-preflight";

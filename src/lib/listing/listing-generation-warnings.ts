@@ -1,6 +1,11 @@
 export type ListingGenerationWarningCode =
   | "stale_active_context"
   | "empty_optimization_queue"
+  | "empty_synthesis_vault"
+  | "empty_synthesis_clusters"
+  | "missing_competitor_signals"
+  | "queue_hash_underpopulated"
+  | "missing_tracker_signals"
   | "low_keyword_coverage"
   | "missing_exploit_targets"
   | "missing_review_signals"
@@ -33,6 +38,11 @@ export type ListingGenerationWarningsPayload = {
 const WARNING_SCORE_PENALTY: Record<ListingGenerationWarningCode, number> = {
   stale_active_context: 12,
   empty_optimization_queue: 22,
+  empty_synthesis_vault: 30,
+  empty_synthesis_clusters: 24,
+  missing_competitor_signals: 10,
+  queue_hash_underpopulated: 18,
+  missing_tracker_signals: 20,
   low_keyword_coverage: 18,
   missing_exploit_targets: 14,
   missing_review_signals: 10,

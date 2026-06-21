@@ -6,10 +6,39 @@ import {
   type ModularLongLengthAssessment,
 } from "@/lib/listing/modular-output-validation";
 
+export const LISTING_TITLE_MAX = 30;
+
+/** High-intent ASO suffix when Play title budget allows (health / glucose apps). */
+export const HIGH_INTENT_TITLE_SUFFIX = "Nutrition & Glucose Tracker";
+
+/**
+ * Appends a high-intent category suffix when the combined title fits Play's 30-char limit.
+ */
+export function suggestHighIntentTitle(title: string, maxLen = LISTING_TITLE_MAX): string {
+  const base = title.trim();
+  if (!base) return base;
+
+  if (base.toLowerCase().includes("nutrition") || base.toLowerCase().includes("glucose")) {
+    return base.slice(0, maxLen);
+  }
+
+  const separators = [" — ", " | ", ": "];
+  for (const sep of separators) {
+    const candidate = `${base}${sep}${HIGH_INTENT_TITLE_SUFFIX}`;
+    if (candidate.length <= maxLen) return candidate;
+  }
+
+  const shortSuffix = " Tracker";
+  const shortCandidate = `${base}${shortSuffix}`;
+  if (shortCandidate.length <= maxLen) return shortCandidate;
+
+  return base.slice(0, maxLen);
+}
+
 export const HOOK_CLOSING_DISPLAY_MAX = 200;
 const TRUNCATE_AT = 197;
 
-/** Pre-defined footer — privacy, security, hardware compatibility (EN). */
+/** Section headers — appended exactly once at end of long description (EN). */
 export const ASO_BOILERPLATE_FOOTER_EN = [
   "Privacy & data",
   "We process only the data required to deliver app features. See the in-app privacy policy for collection, retention, and your rights.",
@@ -24,7 +53,6 @@ export const ASO_BOILERPLATE_FOOTER_EN = [
   "Questions? Contact us via the store listing or in-app Help. Enable automatic updates for the latest fixes and improvements.",
 ].join("\n");
 
-/** Pre-defined footer — privacy, security, hardware compatibility (AR). */
 export const ASO_BOILERPLATE_FOOTER_AR = [
   "الخصوصية والبيانات",
   "نعالج فقط البيانات اللازمة لتقديم ميزات التطبيق. راجع سياسة الخصوصية داخل التطبيق للتفاصيل.",
@@ -39,8 +67,19 @@ export const ASO_BOILERPLATE_FOOTER_AR = [
   "لديك سؤال؟ تواصل معنا عبر صفحة المتجر أو المساعدة داخل التطبيق. فعّل التحديثات التلقائية لأحدث الإصلاحات.",
 ].join("\n");
 
-const FOOTER_SECTIONS_EN = ASO_BOILERPLATE_FOOTER_EN.split("\n\n");
-const FOOTER_SECTIONS_AR = ASO_BOILERPLATE_FOOTER_AR.split("\n\n");
+const FOOTER_SECTION_HEADERS_EN = [
+  "Privacy & data",
+  "Security",
+  "Hardware & compatibility",
+  "Support",
+] as const;
+
+const FOOTER_SECTION_HEADERS_AR = [
+  "الخصوصية والبيانات",
+  "الأمان",
+  "الأجهزة والتوافق",
+  "الدعم",
+] as const;
 
 const FEATURES_MAX = 3200;
 const CLOSING_MAX = 2400;
@@ -57,37 +96,54 @@ function truncateWithEllipsis(text: string, max: number): string {
   return `${trimmed.slice(0, TRUNCATE_AT)}...`;
 }
 
-function footerSections(targetArabic: boolean): string[] {
-  return targetArabic ? FOOTER_SECTIONS_AR : FOOTER_SECTIONS_EN;
+function footerHeaders(targetArabic: boolean): readonly string[] {
+  return targetArabic ? FOOTER_SECTION_HEADERS_AR : FOOTER_SECTION_HEADERS_EN;
 }
 
+function fullFooter(targetArabic: boolean): string {
+  return targetArabic ? ASO_BOILERPLATE_FOOTER_AR : ASO_BOILERPLATE_FOOTER_EN;
+}
+
+/**
+ * Remove duplicate Privacy / Security / Hardware / Support blocks — keep user copy before first footer header.
+ */
+export function stripDuplicateFooterSections(closing: string, targetArabic: boolean): string {
+  const headers = footerHeaders(targetArabic);
+  let cutIndex = -1;
+
+  for (const header of headers) {
+    const idx = closing.indexOf(header);
+    if (idx >= 0 && (cutIndex < 0 || idx < cutIndex)) {
+      cutIndex = idx;
+    }
+  }
+
+  if (cutIndex > 0) {
+    return closing.slice(0, cutIndex).trimEnd();
+  }
+  return closing.trim();
+}
+
+/** Append standard footer exactly once when assembled length is below Play floor. */
 function padClosingToMinLength(
   hook: string,
   features: string,
   closing: string,
   targetArabic: boolean,
 ): string {
-  let nextClosing = closing;
-  const sections = footerSections(targetArabic);
+  const cleaned = stripDuplicateFooterSections(closing, targetArabic);
+  const footer = fullFooter(targetArabic);
 
-  for (const section of sections) {
-    if (assembledLongCharCount({ hook, features, closing: nextClosing }) >= MODULAR_LONG_MIN_CHARS) {
-      break;
-    }
-    nextClosing = nextClosing ? `${nextClosing}\n\n${section}` : section;
+  if (assembledLongCharCount({ hook, features, closing: cleaned }) >= MODULAR_LONG_MIN_CHARS) {
+    return cleaned.slice(0, CLOSING_MAX);
   }
 
-  if (assembledLongCharCount({ hook, features, closing: nextClosing }) < MODULAR_LONG_MIN_CHARS) {
-    const fullFooter = targetArabic ? ASO_BOILERPLATE_FOOTER_AR : ASO_BOILERPLATE_FOOTER_EN;
-    nextClosing = nextClosing ? `${nextClosing}\n\n${fullFooter}` : fullFooter;
-  }
-
-  return nextClosing.slice(0, CLOSING_MAX);
+  const withFooter = cleaned ? `${cleaned}\n\n${footer}` : footer;
+  return withFooter.slice(0, CLOSING_MAX);
 }
 
 /**
- * Safe Assembler — normalizes hook/closing, pads footer to Play floor.
- * Never throws on length; returns best-effort copy + warnings.
+ * Safe Assembler — normalizes hook/closing, pads footer once, never throws on length.
  */
 export function safeAssemble(
   input: Partial<ModularLongStepData>,
@@ -128,6 +184,8 @@ export function safeAssemble(
     warnings.push(
       `Full description padded with ASO boilerplate footer (${beforePad} → ${assembledLongCharCount({ hook, features, closing })} chars).`,
     );
+  } else {
+    closing = stripDuplicateFooterSections(closing, targetArabic).slice(0, CLOSING_MAX);
   }
 
   const data: ModularLongStepData = { hook, features, closing };

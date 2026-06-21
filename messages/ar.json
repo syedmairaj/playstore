@@ -1469,7 +1469,21 @@
     "ctaPro": "الترقية إلى Pro",
     "ctaGrowth": "الترقية إلى Growth",
     "ctaViewPlans": "عرض الخطط",
-    "maybeLater": "ليس الآن"
+    "maybeLater": "ليس الآن",
+    "proratedUpgradeCta": "ترقية تناسبية إلى Growth — ادفع ‏{amount}‏ اليوم",
+    "proratedUpgradeCtaFallback": "ترقية تناسبية إلى Growth — ادفع الفرق اليوم",
+    "proratedUpgradeLoading": "جارٍ حساب المبلغ التناسبي…"
+  },
+  "creditTopUpModal": {
+    "close": "إغلاق",
+    "title": "تعزيز الأداء",
+    "subtitle": "حزمة Pro-Power لمرة واحدة — لا تغيّر اشتراكك الشهري.",
+    "packName": "حزمة Pro-Power",
+    "creditsWord": "رصيد ذكاء اصطناعي",
+    "oneTimeNote": "إضافة فورية. فوترة اشتراك Pro أو Growth تبقى كما هي.",
+    "checkoutCta": "اشترِ الآن — ‏{price}",
+    "checkoutBusy": "جارٍ بدء الدفع…",
+    "checkoutError": "تعذّر بدء الدفع. حاول مرة أخرى أو تواصل مع الدعم."
   },
   "credits": {
     "label": "رصيد الذكاء الاصطناعي",
@@ -1670,6 +1684,7 @@
     "eyebrow": "PlayStore",
     "title": "محسّن قائمة التطبيق بالذكاء الاصطناعي",
     "creditsRemainingHeader": "الرصيد المتبقي: {count}",
+    "performanceBoostCta": "تعزيز الأداء — 50 رصيداً",
     "subtitle": "ولّد قوائم جاهزة لـ Google Play من تفاصيل تطبيقك. عناوين وأوصاف واضحة، بشرية، وتركز على التحويل، بالإضافة إلى شعارات احترافية تجعل تطبيقك مميزًا.",
     "asoSandbox": {
       "title": "بيئة ASO التجريبية",
@@ -1824,6 +1839,14 @@
       "generateValueMicrocopy": "نص عالي التحويل + محسّن لـ ASO",
       "generateButtonHelper": "ولّد عنوانًا جاهزًا لـ Google Play، ووصفًا قصيرًا وطويلًا، وكلمات مفتاحية، ونداءات إلى إجراء، ودرجة ASO معتمدة — {credits, plural, one {رصيد ذكاء اصطناعي واحد لكل تشغيل كامل} other {# أرصدة ذكاء اصطناعي لكل تشغيل كامل}}.",
       "generateTooltip": "يستخدم هوية تطبيقك ورؤى اكتشاف السوق لإنشاء قائمة Play Store كاملة محسّنة للتحويل.",
+      "generateBlockedNoTrackedKeywords": "اختر الكلمات المفتاحية المستهدفة في متتبع الكلمات لتفعيل التحسين بالذكاء الاصطناعي.",
+      "optimizationOpportunity": {
+        "trackedKeywordsTitle": "فرصة تحسين",
+        "trackedKeywordsBody": "أضف الكلمات المفتاحية المستهدفة في متتبع الكلمات حتى يستند الذكاء الاصطناعي في العنوان والأوصاف إلى طلب بحث حقيقي.",
+        "openKeywordTracker": "فتح متتبع الكلمات ←",
+        "emptySynthesisTitle": "لا توجد إشارات للتوليف",
+        "emptySynthesisBody": "أضف كلمات مفتاحية في متتبع الكلمات ورؤى المنافسين أو المراجعات في السياق النشط قبل إنشاء مسودة القائمة."
+      },
       "generateStepGateHint": "أكمل هوية تطبيقك (الاسم + الفئة) أولًا لفتح التوليد بالذكاء الاصطناعي.",
       "generateStarting": "جاري توليد القائمة الكاملة ({credits, plural, one {رصيد واحد} other {{credits} أرصدة}})…",
       "buildModularDraft": "إنشاء مسودة القائمة",
@@ -1835,6 +1858,10 @@
       "creditsDetail": "لديك {rem} رصيدًا؛ هذه العملية تحتاج {req}.",
       "creditsSuffix": " زر الأسعار لإضافة رصيد.",
       "networkError": "خطأ في الشبكة. تحقق من الاتصال وحاول مرة أخرى.",
+      "workspaceHandshakeToast": "انقطع ربط مساحة العمل. جارٍ التحديث من متتبع الكلمات…",
+      "workspaceHandshakeRecovered": "تم استعادة سياق مساحة العمل. يمكنك التوليد مجدداً.",
+      "workspaceHandshakeRecoverFailed": "تعذّر تحديث مساحة العمل. أعد فتح الصفحة من لوحة مساحة العمل.",
+      "topUpSuccess": "تمت إضافة الرصيد بنجاح. يمكنك التوليد مجدداً.",
       "refiningTitle": "جارٍ إعادة المحاولة تلقائياً…",
       "refiningHint": "واجه الذكاء الاصطناعي خللاً في هذه المحاولة. يُعيد المحاولة تلقائياً بقواعد إخراج أشد — لا حاجة لأي إجراء من جهتك.",
       "sectionStore": "بيانات المتجر",
@@ -2156,6 +2183,8 @@
         "draftMask": {
           "status": "الحالة: مسودة ذكاء اصطناعي. راجعها وانقر تأكيد القائمة النهائية لفتح نسخة جاهزة للنشر.",
           "copyBlocked": "النسخ معطّل لنص المسودة حتى تؤكد القائمة النهائية.",
+          "copyFinalizeToast": "أكمل القائمة النهائية لفتح النص الجاهز للنشر.",
+          "finalizeUnlockCta": "أكمل القائمة النهائية ({credits} رصيداً) لفتح خاصية النسخ الكامل.",
           "publicationReady": "تم فتح النسخة الجاهزة للنشر. يمكنك النسخ والتصدير إلى Play Console."
         },
         "orchestrationSubheading": "بروتوكول التنسيق — ثلاث مراحل استراتيجية مع إعادة توليد مستقلة.",
@@ -2199,7 +2228,7 @@
         "longEditorLabel": "الوصف الكامل (Play Console)",
         "longGenerating": "جارٍ توليد سرد القيمة…",
         "aiBlocksLabel": "كتل مولَّدة بالذكاء الاصطناعي",
-        "finalizeCta": "تأكيد القائمة النهائية (يستخدم {credits} رصيداً)",
+        "finalizeCta": "أكمل القائمة النهائية ({credits} رصيداً)",
         "longEditor": {
           "emptyTitle": "ابنِ سرد القيمة",
           "emptyBody": "ولّد وصفاً طويلاً يركز على التحويل من العنوان والوصف المختصر والكلمات المقفلة — أو ابدأ الكتابة يدوياً.",

@@ -14,6 +14,10 @@ import {
   buildModularAppContextBlock,
   buildModularOrchestrationContextBlock,
 } from "@/lib/listing/modular-app-context";
+import {
+  buildPainPointSolutionUserBlock,
+  MODULAR_PAIN_POINT_SOLUTION_TEMPLATE,
+} from "@/lib/prompts/listing-pain-point-template";
 
 const MODULAR_PROMPT_VERSION = "listing-modular-v1.2";
 
@@ -77,8 +81,10 @@ export function buildModularShortMessages(
     "You are a Google Play conversion copywriter.",
     languageLine(targetArabic),
     MODULAR_SHORT_JSON_CRITICAL,
+    MODULAR_PAIN_POINT_SOLUTION_TEMPLATE,
     "JSON schema (TypeScript interface):",
     MODULAR_SHORT_JSON_INTERFACE,
+    "STRATEGY PRIORITY: utility variation is the primary install hook — lead with Pain-Point → Solution framing.",
     "GRAMMATICAL COMPLETION (mandatory): each text MUST be a complete sentence ending with . ! or ? (or ؟ for Arabic).",
     "Each text MUST be ≤80 characters. If a strategy angle would exceed 80 chars, REWRITE for brevity — never truncate mid-word or mid-sentence.",
     "REJECT patterns: trailing hyphens, comma/colon endings, ellipsis cuts, or partial final words.",
@@ -93,6 +99,14 @@ export function buildModularShortMessages(
     buildModularAppContextBlock(input),
     "",
     buildModularOrchestrationContextBlock(input, locked),
+    "",
+    buildPainPointSolutionUserBlock({
+      primaryPain:
+        input.topStagedIssues?.[0]?.label ??
+        input.activeContext?.defensive?.[0]?.label ??
+        "top user pain from APP CONTEXT",
+      appName: input.appName,
+    }),
     "",
     "PHASE 2 — SHORT DESCRIPTION",
     `ANCHOR TITLE (do not contradict): ${contextTitle}`,
@@ -143,6 +157,7 @@ export function buildModularLongMessages(
     languageLine(targetArabic),
     MODULAR_JSON_API_CRITICAL_RULES,
     MODULAR_LONG_STYLISTIC_RULES,
+    MODULAR_PAIN_POINT_SOLUTION_TEMPLATE,
     "JSON schema (TypeScript interface) — property order is mandatory:",
     MODULAR_LONG_JSON_INTERFACE,
     "Return JSON only. Property order: features (array) → hook (string) → closing (string).",
@@ -198,6 +213,12 @@ function longSharedUserBlock(
     "",
     buildModularOrchestrationContextBlock(input, locked, {
       compact: options?.compactContext,
+    }),
+    "",
+    buildPainPointSolutionUserBlock({
+      primaryPain,
+      appName: input.appName,
+      anchorShort: context.shortDescription,
     }),
     "",
     "PHASE 3 — LONG DESCRIPTION",

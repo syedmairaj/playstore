@@ -1467,7 +1467,21 @@
     "ctaPro": "Upgrade to Pro",
     "ctaGrowth": "Upgrade to Growth",
     "ctaViewPlans": "View plans",
-    "maybeLater": "Maybe later"
+    "maybeLater": "Maybe later",
+    "proratedUpgradeCta": "Prorated upgrade to Growth — pay {amount} today",
+    "proratedUpgradeCtaFallback": "Prorated upgrade to Growth — pay the difference today",
+    "proratedUpgradeLoading": "Calculating prorated amount…"
+  },
+  "creditTopUpModal": {
+    "close": "Close",
+    "title": "Performance Boost",
+    "subtitle": "One-time Pro-Power Pack — does not change your monthly subscription.",
+    "packName": "Pro-Power Pack",
+    "creditsWord": "AI credits",
+    "oneTimeNote": "Instant top-up. Your Pro or Growth subscription billing stays unchanged.",
+    "checkoutCta": "Buy now — {price}",
+    "checkoutBusy": "Starting checkout…",
+    "checkoutError": "Could not start checkout. Try again or contact support."
   },
   "credits": {
     "label": "AI credits",
@@ -1668,6 +1682,7 @@
     "eyebrow": "PlayStore",
     "title": "AI Listing Optimizer",
     "creditsRemainingHeader": "Credits Remaining: {count}",
+    "performanceBoostCta": "Performance Boost — 50 credits",
     "subtitle": "Generate Google Play-ready copy from your app details. Clear, human, conversion-focused titles, descriptions, and professional logos that make your app stand out.",
     "asoSandbox": {
       "title": "ASO Sandbox",
@@ -1822,6 +1837,14 @@
       "generateValueMicrocopy": "High-converting + ASO optimized",
       "generateButtonHelper": "Generate Play-ready title, short & long description, keywords, CTAs, and Certified ASO Score — {credits, plural, one {# AI credit} other {# AI credits}} per full run.",
       "generateTooltip": "Uses your App Identity + Market Discovery insights to generate a complete, conversion-optimised Play Store listing.",
+      "generateBlockedNoTrackedKeywords": "Select target keywords in the Keyword Tracker to enable AI optimization.",
+      "optimizationOpportunity": {
+        "trackedKeywordsTitle": "Optimization opportunity",
+        "trackedKeywordsBody": "Stage target keywords in Keyword Tracker so AI can anchor your title and descriptions on real search demand.",
+        "openKeywordTracker": "Open Keyword Tracker →",
+        "emptySynthesisTitle": "No synthesis signals available",
+        "emptySynthesisBody": "Stage keywords in Keyword Tracker and competitor or review insights in Active Context before building a listing draft."
+      },
       "generateStepGateHint": "Complete your App Identity (name + category) first to unlock AI-powered generation.",
       "generateStarting": "Generating full listing ({credits, plural, one {# credit} other {# credits}})…",
       "buildModularDraft": "Build listing draft",
@@ -1833,6 +1856,10 @@
       "creditsDetail": "You have {rem} credits; this run needs {req}.",
       "creditsSuffix": " Visit Pricing to add more.",
       "networkError": "Network error. Check your connection and try again.",
+      "workspaceHandshakeToast": "Workspace link lost. Refreshing from Keyword Tracker…",
+      "workspaceHandshakeRecovered": "Workspace context restored. You can generate again.",
+      "workspaceHandshakeRecoverFailed": "Could not refresh workspace. Re-open this page from your workspace dashboard.",
+      "topUpSuccess": "Credits added successfully. You're ready to generate again.",
       "refiningTitle": "Auto-retrying…",
       "refiningHint": "The AI had a hiccup on this attempt. Automatically retrying with stricter output rules — no action needed.",
       "sectionStore": "Store Metadata",
@@ -2154,6 +2181,8 @@
         "draftMask": {
           "status": "Status: AI Draft. Review and click Finalize to unlock publication-ready copy.",
           "copyBlocked": "Copy is disabled for AI draft text until you finalize.",
+          "copyFinalizeToast": "Finalize this listing to unlock publication-ready text.",
+          "finalizeUnlockCta": "Finalize Listing ({credits} Credits) to unlock full copy functionality.",
           "publicationReady": "Publication-ready copy unlocked. You can copy and export for Play Console."
         },
         "orchestrationSubheading": "Orchestration Protocol — three strategic phases with independent regenerate.",
@@ -2197,7 +2226,7 @@
         "longEditorLabel": "Full description (Play Console)",
         "longGenerating": "Generating value narrative…",
         "aiBlocksLabel": "AI-generated blocks",
-        "finalizeCta": "Confirm final listing (uses {credits} credits)",
+        "finalizeCta": "Finalize Listing ({credits} Credits)",
         "longEditor": {
           "emptyTitle": "Build your value narrative",
           "emptyBody": "Generate a conversion-focused long description from your title, short hook, and locked keywords — or start writing manually.",

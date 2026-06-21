@@ -28,8 +28,8 @@ import type { ModularLoadingState } from "@/hooks/useModularGeneration";
 import { orchestrationToModularState } from "@/lib/listing/orchestration-to-modular-state";
 import { ListingCharCounter } from "@/components/listing/optimizer/listing-char-counter";
 import { ListingHealthIndicator } from "@/components/listing/optimizer/listing-health-indicator";
-import { LongDescriptionAsoEditor } from "@/components/listing/optimizer/long-description-aso-editor";
-import type { LongDescriptionAiTool } from "@/components/listing/optimizer/long-description-aso-editor";
+import { LongDescriptionPanel } from "@/components/listing/optimizer/long-description-panel";
+import type { LongDescriptionAiTool } from "@/components/listing/optimizer/long-description-panel";
 import { TextBlockDiff } from "@/components/listing/optimizer/text-block-diff";
 import {
   LISTING_LONG_MAX,
@@ -71,6 +71,7 @@ type Props = {
   onMagicGenerateLong?: () => void;
   onFinalize?: () => void;
   finalizeBusy?: boolean;
+  onDraftCopyBlocked?: () => void;
 };
 
 const SHORT_TYPE_LABEL_KEY: Record<
@@ -119,6 +120,7 @@ export function ModularListingPanel({
   onMagicGenerateLong,
   onFinalize,
   finalizeBusy = false,
+  onDraftCopyBlocked,
 }: Props) {
   const t = useTranslations("optimizer.results.modular");
   const [compareOpen, setCompareOpen] = useState<Partial<Record<string, boolean>>>({});
@@ -172,11 +174,6 @@ export function ModularListingPanel({
   };
 
   const showDraftMask = !isPublicationReady && (isDraft || Boolean(displayState.title.value.trim()));
-
-  const blockCopy = (event: React.ClipboardEvent) => {
-    if (!showDraftMask) return;
-    event.preventDefault();
-  };
 
   return (
     <div
@@ -257,21 +254,6 @@ export function ModularListingPanel({
         </div>
       ) : null}
 
-      <div
-        onCopy={blockCopy}
-        onCut={blockCopy}
-        style={
-          showDraftMask
-            ? {
-                borderRadius: "14px",
-                border: "1px solid rgba(245, 158, 11, 0.22)",
-                backgroundColor: "rgba(0, 0, 0, 0.18)",
-                padding: "12px",
-                userSelect: "text",
-              }
-            : undefined
-        }
-      >
       <BlockCard
         phase={t("phaseTitle")}
         phaseLabel={t("phase1Label")}
@@ -404,7 +386,7 @@ export function ModularListingPanel({
             : undefined
         }
       >
-        <LongDescriptionAsoEditor
+        <LongDescriptionPanel
           value={assembledLong}
           lockedKeywords={highlightKeywords}
           isRtl={isRtl}
@@ -412,6 +394,11 @@ export function ModularListingPanel({
           longUiMode={longUiMode}
           hasError={longHasBlockError}
           errorMessage={t("sectionGenerationFailed")}
+          draftMasked={showDraftMask && hasLongContent}
+          finalizeCreditCost={finalizeCreditCost}
+          finalizeBusy={finalizeBusy}
+          onCopyBlocked={onDraftCopyBlocked}
+          onFinalize={isDraft ? onFinalize : undefined}
           onChange={(next) => onLongDescriptionChange?.(next)}
           onGenerate={() => {
             onLongUiModeChange?.("ai");
@@ -427,10 +414,10 @@ export function ModularListingPanel({
         />
       </BlockCard>
 
-      {isDraft && onFinalize ? (
+      {isDraft && onFinalize && !hasLongContent ? (
         <button
           type="button"
-          disabled={finalizeBusy || !hasLongContent}
+          disabled={finalizeBusy}
           onClick={onFinalize}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
@@ -459,7 +446,6 @@ export function ModularListingPanel({
           {t("draftMask.publicationReady")}
         </p>
       ) : null}
-      </div>
     </div>
   );
 }

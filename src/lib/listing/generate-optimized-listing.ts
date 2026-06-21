@@ -2,6 +2,7 @@ import type { OptimizationQueueSynthesisPayload } from "@/lib/optimization-queue
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { OptimizationQueueLocale } from "@/lib/optimization-queue/optimization-queue.types";
 import { logClientContextAudit } from "@/lib/client/context-audit-log-client";
+import { fetchWithRetry } from "@/lib/client/fetch-with-retry";
 import {
   sanitizeActiveContextForGenerate,
   sanitizeTrackedKeywordSignalsForGenerate,
@@ -82,9 +83,12 @@ export async function generateOptimizedListing(
     synthesis: { ...queueSynthesis, activeContext, trackedKeywordSignals },
   });
 
-  const res = await fetch("/api/listings/generate", {
+  const res = await fetchWithRetry("/api/listings/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Workspace-Id": input.workspaceId,
+    },
     credentials: "same-origin",
     body: JSON.stringify({
       workspaceId: input.workspaceId,

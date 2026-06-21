@@ -1,8 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
 import { PricingModal } from "@/components/ui/pricing-modal";
 import { appLimitsQueryKey } from "@/hooks/use-app-limits";
 import { normalizePlan, type PlanId, UNLIMITED_APP_SLOTS } from "@/lib/plan-limits";
@@ -53,9 +53,64 @@ export function UpgradeModal({
   const isRtl = locale === "ar";
   const queryClient = useQueryClient();
   const [pricingOpen, setPricingOpen] = useState(false);
+  const [proratedBusy, setProratedBusy] = useState(false);
+  const [proratedUsd, setProratedUsd] = useState<number | null>(null);
+  const [proratedLoading, setProratedLoading] = useState(false);
 
   const pid = normalizePlan(plan) as PlanId;
   const target = nextTier(pid);
+
+  useEffect(() => {
+    if (!open || pid !== "pro" || !workspaceId) {
+      setProratedUsd(null);
+      return;
+    }
+    let cancelled = false;
+    setProratedLoading(true);
+    void fetch(`/api/workspaces/${workspaceId}/billing/prorated-upgrade`, {
+      credentials: "same-origin",
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { ok?: boolean; eligible?: boolean; proratedUsd?: number } | null) => {
+        if (cancelled || !json?.ok || !json.eligible) return;
+        if (typeof json.proratedUsd === "number") setProratedUsd(json.proratedUsd);
+      })
+      .finally(() => {
+        if (!cancelled) setProratedLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, pid, workspaceId]);
+
+  async function startProratedUpgrade() {
+    if (!workspaceId) {
+      openPricingOverlay();
+      return;
+    }
+    setProratedBusy(true);
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/billing/prorated-upgrade`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ locale }),
+        },
+      );
+      const json = (await res.json()) as
+        | { ok: true; checkoutUrl?: string }
+        | { ok: false; error?: { message?: string } };
+      if (json.ok && json.checkoutUrl) {
+        window.location.assign(json.checkoutUrl);
+        return;
+      }
+      openPricingOverlay();
+    } finally {
+      setProratedBusy(false);
+    }
+  }
 
   function openPricingOverlay() {
     onOpenChange(false);
@@ -116,6 +171,25 @@ export function UpgradeModal({
           </div>
 
           <DialogFooter className="flex flex-col gap-2 border-t border-white/[0.06] bg-[#0b0e14] px-6 py-5 sm:flex-col sm:space-x-0">
+            {pid === "pro" && workspaceId ? (
+              <button
+                type="button"
+                disabled={proratedBusy || proratedLoading}
+                onClick={() => void startProratedUpgrade()}
+                className="text-sm font-semibold text-emerald-300 underline decoration-emerald-500/40 underline-offset-4 hover:text-emerald-200 disabled:opacity-50"
+              >
+                {proratedLoading
+                  ? t("proratedUpgradeLoading")
+                  : proratedUsd != null
+                    ? t("proratedUpgradeCta", {
+                        amount: new Intl.NumberFormat("en-US", {
+                          style: "currency",
+                          currency: "USD",
+                        }).format(proratedUsd),
+                      })
+                    : t("proratedUpgradeCtaFallback")}
+              </button>
+            ) : null}
             <Button
               type="button"
               className="h-11 w-full rounded-xl bg-[#22C55E] text-base font-semibold text-white shadow-lg shadow-[#22C55E]/20 hover:bg-[#16a34a]"

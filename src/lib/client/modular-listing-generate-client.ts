@@ -16,6 +16,7 @@ import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { ListingGenerationWarningsPayload } from "@/lib/listing/listing-generation-warnings";
 import type { GenerateOptimizedListingSuccess } from "@/lib/listing/generate-optimized-listing";
+import { fetchWithRetry } from "@/lib/client/fetch-with-retry";
 
 export type ModularGenerateBaseInput = {
   workspaceId: string;
@@ -32,6 +33,35 @@ export type ModularGenerateBaseInput = {
   vaultLocale: OptimizationQueueLocale;
   queueHash: string;
 };
+
+export type ModularGenerateClientHooks = {
+  onWorkspaceHandshakeFailed?: () => void | Promise<void>;
+};
+
+function listingGenerateHeaders(workspaceId: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "X-Workspace-Id": workspaceId,
+  };
+}
+
+async function handleModularApiFailure(
+  res: Response,
+  json: { ok: false; error: ModularApiError["error"] },
+  hooks?: ModularGenerateClientHooks,
+): Promise<ModularApiError> {
+  if (
+    res.status === 409 &&
+    json.error.code === "workspace_handshake_failed"
+  ) {
+    await hooks?.onWorkspaceHandshakeFailed?.();
+  }
+  return {
+    ok: false,
+    status: res.status,
+    error: json.error,
+  };
+}
 
 type ModularApiError = {
   ok: false;
@@ -180,10 +210,24 @@ async function postModularStep<TStep extends ModularListingGenerationStep, TData
   input: ModularGenerateBaseInput,
   step: TStep,
   extras?: Parameters<typeof buildModularRequestBody>[2],
+  hooks?: ModularGenerateClientHooks,
 ): Promise<ModularStepSuccess<TStep, TData> | ModularApiError> {
-  const res = await fetch("/api/listings/generate", {
+  const workspaceId = input.workspaceId?.trim();
+  if (!workspaceId) {
+    await hooks?.onWorkspaceHandshakeFailed?.();
+    return {
+      ok: false,
+      status: 409,
+      error: {
+        code: "workspace_handshake_failed",
+        message: "Workspace ID is missing. Re-select your workspace in Keyword Tracker.",
+      },
+    };
+  }
+
+  const res = await fetchWithRetry("/api/listings/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: listingGenerateHeaders(workspaceId),
     credentials: "same-origin",
     body: JSON.stringify(buildModularRequestBody(input, step, extras)),
   });
@@ -193,14 +237,15 @@ async function postModularStep<TStep extends ModularListingGenerationStep, TData
     | { ok: false; error: ModularApiError["error"] };
 
   if (!res.ok || !("ok" in json) || json.ok === false) {
-    return {
-      ok: false,
-      status: res.status,
-      error:
-        "ok" in json && json.ok === false
-          ? json.error
-          : { message: "Modular generation failed." },
-    };
+    const error =
+      "ok" in json && json.ok === false
+        ? json.error
+        : { message: "Modular generation failed." };
+    return handleModularApiFailure(
+      res,
+      { ok: false, error },
+      hooks,
+    );
   }
 
   return json;
@@ -210,22 +255,34 @@ export async function generateModularTitle(
   input: ModularGenerateBaseInput,
   lockedKeywords: string[],
   options?: { isRegenerate?: boolean },
+  hooks?: ModularGenerateClientHooks,
 ) {
-  return postModularStep<"title", ModularTitleStepData>(input, "title", {
-    lockedKeywords: lockedKeywords.length > 0 ? lockedKeywords : [],
-    isRegenerate: options?.isRegenerate ?? false,
-  });
+  return postModularStep<"title", ModularTitleStepData>(
+    input,
+    "title",
+    {
+      lockedKeywords: lockedKeywords.length > 0 ? lockedKeywords : [],
+      isRegenerate: options?.isRegenerate ?? false,
+    },
+    hooks,
+  );
 }
 
 export async function generateModularShort(
   input: ModularGenerateBaseInput,
   contextTitle: string,
   options?: { isRegenerate?: boolean },
+  hooks?: ModularGenerateClientHooks,
 ) {
-  return postModularStep<"short", ModularShortStepData>(input, "short", {
-    contextTitle,
-    isRegenerate: options?.isRegenerate ?? false,
-  });
+  return postModularStep<"short", ModularShortStepData>(
+    input,
+    "short",
+    {
+      contextTitle,
+      isRegenerate: options?.isRegenerate ?? false,
+    },
+    hooks,
+  );
 }
 
 export async function generateModularLong(
@@ -233,41 +290,67 @@ export async function generateModularLong(
   context: { title: string; shortDescription: string },
   modularListing?: ModularListingState,
   options?: { userInstruction?: string; isRegenerate?: boolean },
+  hooks?: ModularGenerateClientHooks,
 ) {
-  return postModularStep<"long", ModularLongStepData>(input, "long", {
-    contextTitle: context.title,
-    contextShortDescription: context.shortDescription,
-    modularListing,
-    userInstruction: options?.userInstruction,
-    isRegenerate: options?.isRegenerate ?? false,
-  });
+  return postModularStep<"long", ModularLongStepData>(
+    input,
+    "long",
+    {
+      contextTitle: context.title,
+      contextShortDescription: context.shortDescription,
+      modularListing,
+      userInstruction: options?.userInstruction,
+      isRegenerate: options?.isRegenerate ?? false,
+    },
+    hooks,
+  );
 }
 
 export async function regenerateModularLongBlock(
   input: ModularGenerateBaseInput,
   block: "hook" | "features" | "closing",
   modularListing: ModularListingState,
+  hooks?: ModularGenerateClientHooks,
 ) {
   const shortRow =
     modularListing.shortDescription.variations[
       modularListing.shortDescription.selectedIndex
     ];
   const short = shortRow ? shortVariationText(shortRow) : "";
-  return postModularStep<typeof block, ModularLongStepData>(input, block, {
-    contextTitle: modularListing.title.value,
-    contextShortDescription: short,
-    modularListing,
-    isRegenerate: true,
-  });
+  return postModularStep<typeof block, ModularLongStepData>(
+    input,
+    block,
+    {
+      contextTitle: modularListing.title.value,
+      contextShortDescription: short,
+      modularListing,
+      isRegenerate: true,
+    },
+    hooks,
+  );
 }
 
 export async function finalizeModularListing(
   input: ModularGenerateBaseInput,
   modularListing: ModularListingState,
+  hooks?: ModularGenerateClientHooks,
 ): Promise<GenerateOptimizedListingSuccess | ModularApiError> {
-  const res = await fetch("/api/listings/generate", {
+  const workspaceId = input.workspaceId?.trim();
+  if (!workspaceId) {
+    await hooks?.onWorkspaceHandshakeFailed?.();
+    return {
+      ok: false,
+      status: 409,
+      error: {
+        code: "workspace_handshake_failed",
+        message: "Workspace ID is missing. Re-select your workspace in Keyword Tracker.",
+      },
+    };
+  }
+
+  const res = await fetchWithRetry("/api/listings/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: listingGenerateHeaders(workspaceId),
     credentials: "same-origin",
     body: JSON.stringify(
       buildModularRequestBody(input, "finalize", { modularListing }),
@@ -280,11 +363,8 @@ export async function finalizeModularListing(
   };
 
   if (!res.ok || !json.ok) {
-    return {
-      ok: false,
-      status: res.status,
-      error: json.ok === false ? json.error : { message: "Finalize failed." },
-    };
+    const error = json.ok === false ? json.error : { message: "Finalize failed." };
+    return handleModularApiFailure(res, { ok: false, error }, hooks);
   }
 
   return json;

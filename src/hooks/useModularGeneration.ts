@@ -8,6 +8,7 @@ import {
   generateModularTitle,
   regenerateModularLongBlock,
   type ModularGenerateBaseInput,
+  type ModularGenerateClientHooks,
 } from "@/lib/client/modular-listing-generate-client";
 import type { GenerateOptimizedListingSuccess } from "@/lib/listing/generate-optimized-listing";
 import {
@@ -88,6 +89,7 @@ function isEmptyLongPayload(data: {
 export type UseModularGenerationOptions = {
   getBaseInput: () => ModularGenerateBaseInput | null;
   lockedKeywords?: string[];
+  clientHooks?: ModularGenerateClientHooks;
   onFinalizeSuccess?: (result: GenerateOptimizedListingSuccess) => void;
   onError?: (message: string, code?: string) => void;
   onBillingMeta?: (meta: {
@@ -102,6 +104,7 @@ export type UseModularGenerationOptions = {
 export function useModularGeneration({
   getBaseInput,
   lockedKeywords = [],
+  clientHooks,
   onFinalizeSuccess,
   onError,
   onBillingMeta,
@@ -203,7 +206,7 @@ export function useModularGeneration({
     clearBlockError("title");
     setBlockLoading("title", true);
     try {
-      const result = await generateModularTitle(input, resolveLockedKeywords(input));
+      const result = await generateModularTitle(input, resolveLockedKeywords(input), undefined, clientHooks);
       if (!result.ok) {
         markBlockError("title");
         onError?.(result.error.message, result.error.code);
@@ -248,7 +251,7 @@ export function useModularGeneration({
     clearBlockError("short");
     setBlockLoading("short", true);
     try {
-      const result = await generateModularShort(input, contextTitle);
+      const result = await generateModularShort(input, contextTitle, undefined, clientHooks);
       if (!result.ok) {
         markBlockError("short");
         onError?.(result.error.message, result.error.code);
@@ -304,6 +307,8 @@ export function useModularGeneration({
         input,
         { title: state.title.value, shortDescription: shortVariationText(short) },
         state,
+        undefined,
+        clientHooks,
       );
       if (!result.ok) {
         (["hook", "features", "closing"] as const).forEach(markBlockError);
@@ -357,7 +362,7 @@ export function useModularGeneration({
         try {
           const titleResult = await generateModularTitle(input, resolveLockedKeywords(input), {
             isRegenerate: true,
-          });
+          }, clientHooks);
           if (!titleResult.ok) {
             markBlockError("title");
             onError?.(titleResult.error.message, titleResult.error.code);
@@ -396,7 +401,7 @@ export function useModularGeneration({
         try {
           const shortResult = await generateModularShort(input, contextTitle, {
             isRegenerate: true,
-          });
+          }, clientHooks);
           if (!shortResult.ok) {
             markBlockError("short");
             onError?.(shortResult.error.message, shortResult.error.code);
@@ -433,7 +438,7 @@ export function useModularGeneration({
       clearBlockError(blockId);
       setBlockLoading(blockId, true);
       try {
-        const result = await regenerateModularLongBlock(input, blockId, state);
+        const result = await regenerateModularLongBlock(input, blockId, state, clientHooks);
         if (!result.ok) {
           markBlockError(blockId);
           onError?.(result.error.message, result.error.code);
@@ -482,7 +487,7 @@ export function useModularGeneration({
     setBlockLoading("title", true);
     let titleValue = "";
     try {
-      const titleResult = await generateModularTitle(input, resolveLockedKeywords(input));
+      const titleResult = await generateModularTitle(input, resolveLockedKeywords(input), undefined, clientHooks);
       if (!titleResult.ok) {
         markBlockError("title");
         onError?.(titleResult.error.message, titleResult.error.code);
@@ -502,7 +507,7 @@ export function useModularGeneration({
     setBlockLoading("short", true);
     let variations: ModularListingState["shortDescription"]["variations"] | null = null;
     try {
-      const shortResult = await generateModularShort(input, titleValue);
+      const shortResult = await generateModularShort(input, titleValue, undefined, clientHooks);
       if (!shortResult.ok) {
         markBlockError("short");
         onError?.(shortResult.error.message, shortResult.error.code);
@@ -542,7 +547,7 @@ export function useModularGeneration({
 
     setBlockLoading("finalize", true);
     try {
-      const result = await finalizeModularListing(input, state);
+      const result = await finalizeModularListing(input, state, clientHooks);
       if (!result.ok) {
         onError?.(result.error.message, result.error.code);
         return null;
@@ -586,6 +591,7 @@ export function useModularGeneration({
             userInstruction: instruction,
             isRegenerate: true,
           },
+          clientHooks,
         );
         if (!result.ok) {
           (["hook", "features", "closing"] as const).forEach(markBlockError);

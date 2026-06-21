@@ -9,6 +9,7 @@ import { isCreditBilledStep } from "@/lib/validation/listing-modular-generate-bo
 import {
   orchestratorPromptVersion,
   runListingGenerationOrchestrator,
+  MissingKeywordContextError,
 } from "@/lib/listing/listing-generation-orchestrator";
 import { resolveGeminiModel } from "@/lib/gemini/gemini-defaults";
 import {
@@ -48,8 +49,18 @@ import {
 } from "@/lib/optimization-queue/context-audit-log";
 import { validateActiveContextQueueHash } from "@/lib/optimization-queue/validate-active-context-queue-hash";
 import { assessListingInputWarnings } from "@/lib/listing/listing-generation-heuristics";
+import { dedupeWarnings } from "@/lib/listing/listing-generation-warnings";
+import { EMPTY_SYNTHESIS_VAULT_MESSAGE } from "@/lib/optimization-queue/vault-synthesis-preflight";
 import { applyOptimizerContextGate } from "@/lib/optimizer/apply-optimizer-context-gate";
 import { fetchOptimizedContext } from "@/lib/optimizer/fetch-optimized-context";
+import {
+  assertWorkspaceHandshake,
+  WorkspaceHandshakeError,
+} from "@/lib/workspace/workspace-handshake";
+import {
+  assertPreGenerationKeywordContext,
+  logTrackedKeywordSignalsPreflight,
+} from "@/lib/listing/listing-pre-generation-guard";
 
 const ROUTE = "POST /api/listings/generate";
 const LOCK_ACTION = "listing_generate";
@@ -155,6 +166,73 @@ export async function POST(request: NextRequest) {
   } = input;
 
   const step = generationStep ?? "full";
+  const headerWorkspaceId = request.headers.get("x-workspace-id");
+
+  try {
+    await assertWorkspaceHandshake({
+      supabase,
+      workspaceId,
+      userId: user.id,
+      headerWorkspaceId,
+    });
+  } catch (e) {
+    if (e instanceof WorkspaceHandshakeError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: e.code,
+            message: e.message,
+            refreshWorkspace: e.refreshWorkspace,
+            details: e.details,
+          },
+        },
+        { status: 409 },
+      );
+    }
+    throw e;
+  }
+
+  const queueHashValidation = await validateActiveContextQueueHash(supabase, {
+    workspaceId,
+    locale: vaultLocale,
+    appId: bodyAppId,
+    clientQueueHash: queueHash,
+    clientQueueItemCount,
+  });
+
+  if (!queueHashValidation.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "vault_queue_hash_mismatch",
+          message:
+            "Active context is out of date. Refresh Keyword Tracker, then try generating again.",
+        },
+      },
+      { status: 409 },
+    );
+  }
+
+  if (
+    includeOptimizerContext === true &&
+    (queueHashValidation.itemCount === 0 ||
+      queueHashValidation.signalBreakdown.keywordCount === 0)
+  ) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "empty_synthesis_vault",
+          message: EMPTY_SYNTHESIS_VAULT_MESSAGE,
+          signalBreakdown: queueHashValidation.signalBreakdown,
+        },
+      },
+      { status: 400 },
+    );
+  }
+
   const billsCredits = isCreditBilledStep(step);
   const billsModularPhase = billsModularListingPhase(step, isRegenerate ?? false);
 
@@ -311,14 +389,6 @@ export async function POST(request: NextRequest) {
     creditsRemaining: number;
   } | null = null;
 
-  const queueHashValidation = await validateActiveContextQueueHash(supabase, {
-    workspaceId,
-    locale: vaultLocale,
-    appId: bodyAppId,
-    clientQueueHash: queueHash,
-    clientQueueItemCount,
-  });
-
   const fetchedOptimizerContext =
     includeOptimizerContext === true
       ? await fetchOptimizedContext(supabase, {
@@ -333,6 +403,51 @@ export async function POST(request: NextRequest) {
     includeOptimizerContext === true,
     fetchedOptimizerContext,
   );
+
+  try {
+    assertPreGenerationKeywordContext({
+      trackedKeywordSignals: gatedListingInput.trackedKeywordSignals,
+      includeOptimizerContext: includeOptimizerContext === true,
+    });
+  } catch (e) {
+    if (e instanceof MissingKeywordContextError) {
+      releaseGenerationLock(workspaceId, LOCK_ACTION);
+      await logUsage(admin, {
+        route: ROUTE,
+        clientIp,
+        success: false,
+        durationMs: Date.now() - started,
+        errorMessage: e.code,
+        meta: {
+          user_id: user.id,
+          workspace_id: workspaceId,
+          generation_step: step,
+        },
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: e.code,
+            message: e.message,
+          },
+        },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
+
+  logTrackedKeywordSignalsPreflight({
+    workspaceId,
+    step,
+    appId: bodyAppId,
+    vaultLocale,
+    trackedKeywordSignals: gatedListingInput.trackedKeywordSignals,
+    queueHash,
+  });
+
+  const queueHashValidationEarly = queueHashValidation;
 
   const signalCount = (gatedListingInput.activeSignalTypes ?? activeSignalTypes ?? []).length;
   const qualityMeta =
@@ -357,18 +472,21 @@ export async function POST(request: NextRequest) {
       activeSignalTypes: gatedListingInput.activeSignalTypes ?? activeSignalTypes,
       queueHash: {
         client: queueHash,
-        server: queueHashValidation.serverQueueHash,
-        validation: queueHashValidation.ok ? "matched" : "mismatch",
+        server: queueHashValidationEarly.serverQueueHash,
+        validation: queueHashValidationEarly.ok ? "matched" : "mismatch",
         vaultLocale,
-        vaultItemCount: queueHashValidation.itemCount,
-        ...(queueHashValidation.clientQueueItemCount != null
-          ? { clientQueueItemCount: queueHashValidation.clientQueueItemCount }
+        vaultItemCount: queueHashValidationEarly.itemCount,
+        ...(queueHashValidationEarly.clientQueueItemCount != null
+          ? { clientQueueItemCount: queueHashValidationEarly.clientQueueItemCount }
           : {}),
       },
     }),
   );
 
-  const preflightWarnings = assessListingInputWarnings(input, queueHashValidation);
+  const preflightWarnings = dedupeWarnings([
+    ...assessListingInputWarnings(input, queueHashValidationEarly),
+    ...(fetchedOptimizerContext?.vaultWarnings ?? []),
+  ]);
 
   if (billsModularPhase) {
     const { data: wsBilling } = await supabase
@@ -495,6 +613,7 @@ export async function POST(request: NextRequest) {
       model,
       creditsLedgerId: ledgerId,
       preflightWarnings,
+      headerWorkspaceId,
     });
 
     const isFullOrFinalize =
@@ -606,6 +725,38 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (e) {
+    if (e instanceof MissingKeywordContextError) {
+      if (ledgerId) {
+        await refundWorkspaceAiCredits(supabase, {
+          ledgerId,
+          userId: user.id,
+          reason: "Listing generation blocked — missing keyword context",
+        });
+      }
+      releaseGenerationLock(workspaceId, LOCK_ACTION);
+      await logUsage(admin, {
+        route: ROUTE,
+        clientIp,
+        success: false,
+        durationMs: Date.now() - started,
+        errorMessage: e.code,
+        meta: {
+          user_id: user.id,
+          workspace_id: workspaceId,
+          generation_step: step,
+        },
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: e.code,
+            message: e.message,
+          },
+        },
+        { status: 400 },
+      );
+    }
     if (e instanceof ListingGenerationUnavailableError) {
       if (ledgerId) {
         await refundWorkspaceAiCredits(supabase, {

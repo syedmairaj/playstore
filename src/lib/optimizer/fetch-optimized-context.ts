@@ -8,11 +8,19 @@ import {
   logOptimizerSignalObserved,
   type OptimizedContextResult,
 } from "@/lib/optimizer/context-adapter";
+import {
+  validateSynthesisPayloadAfterVault,
+} from "@/lib/optimization-queue/vault-synthesis-preflight";
+import type { ListingGenerationWarning } from "@/lib/listing/listing-generation-warnings";
 
 export type FetchOptimizedContextArgs = {
   workspaceId: string;
   locale: OptimizationQueueLocale;
   appId?: string | null;
+};
+
+export type FetchOptimizedContextResult = OptimizedContextResult & {
+  vaultWarnings: ListingGenerationWarning[];
 };
 
 /**
@@ -22,7 +30,7 @@ export type FetchOptimizedContextArgs = {
 export async function fetchOptimizedContext(
   supabase: SupabaseClient,
   args: FetchOptimizedContextArgs,
-): Promise<OptimizedContextResult> {
+): Promise<FetchOptimizedContextResult> {
   const queueItems = await readOptimizationQueue(
     supabase,
     args.workspaceId,
@@ -30,10 +38,22 @@ export async function fetchOptimizedContext(
     args.appId,
   );
 
+  const validated = validateSynthesisPayloadAfterVault(queueItems, {
+    scope: "server",
+    workspaceId: args.workspaceId,
+    locale: args.locale,
+    appId: args.appId,
+  });
+
   // Log all vault signals for observability without injecting them into prompts.
   for (const item of queueItems) {
     logOptimizerSignalObserved(item);
   }
 
-  return buildOptimizedContextFromItems(queueItems);
+  const optimized = buildOptimizedContextFromItems(queueItems);
+
+  return {
+    ...optimized,
+    vaultWarnings: validated.warnings,
+  };
 }

@@ -12,7 +12,7 @@ import {
   longLengthWarningMessage,
   runModularLongAssembler,
 } from "@/lib/listing/modular-long-assembler";
-import { safeAssemble } from "@/lib/listing/listing-assembler";
+import { safeAssemble, suggestHighIntentTitle } from "@/lib/listing/listing-assembler";
 import { MODULAR_LONG_ACCEPT_MIN_CHARS } from "@/lib/listing/modular-output-validation";
 import { pruneContext } from "@/lib/optimizer/prune-context";
 import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
@@ -43,6 +43,17 @@ import { shortVariationText } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import { insertListingGeneration } from "@/lib/db/listing-generations";
 import { linkListingGenerationToTrackedKeywords } from "@/lib/keywords/link-listing-generation-to-keywords";
+import {
+  assertWorkspaceHandshake,
+  WorkspaceHandshakeError,
+} from "@/lib/workspace/workspace-handshake";
+import {
+  assertPreGenerationKeywordContext,
+  logTrackedKeywordSignalsPreflight,
+  MissingKeywordContextError,
+} from "@/lib/listing/listing-pre-generation-guard";
+
+export { WorkspaceHandshakeError, MissingKeywordContextError };
 
 export type OrchestratorRunContext = {
   step: ModularListingGenerationStep;
@@ -55,6 +66,7 @@ export type OrchestratorRunContext = {
   model: string;
   creditsLedgerId?: string | null;
   preflightWarnings?: ListingGenerationWarning[];
+  headerWorkspaceId?: string | null;
 };
 
 type OrchestratorResponseBase = {
@@ -114,17 +126,43 @@ export function orchestratorPromptVersion(step: ModularListingGenerationStep): s
 export async function runListingGenerationOrchestrator(
   ctx: OrchestratorRunContext,
 ): Promise<OrchestratorModularResponse> {
+  await assertWorkspaceHandshake({
+    supabase: ctx.supabase,
+    workspaceId: ctx.workspaceId,
+    userId: ctx.userId,
+    headerWorkspaceId: ctx.headerWorkspaceId,
+  });
+
   const { step, body } = ctx;
   const { input, warnings } = enrichListingInputForHeuristics(
     body,
     ctx.preflightWarnings ?? [],
   );
+
+  assertPreGenerationKeywordContext({
+    trackedKeywordSignals: input.trackedKeywordSignals,
+    includeOptimizerContext: body.includeOptimizerContext,
+  });
+
+  logTrackedKeywordSignalsPreflight({
+    workspaceId: ctx.workspaceId,
+    step,
+    appId: ctx.appId,
+    vaultLocale: body.vaultLocale,
+    trackedKeywordSignals: input.trackedKeywordSignals,
+    queueHash: body.queueHash,
+  });
+
   const warningsPayload = () => finalizeWarningsPayload(warnings);
 
   switch (step) {
     case "title": {
       const locked = resolveLockedKeywords(body);
-      const data = await generateListingTitleWithGemini(input, locked);
+      const raw = await generateListingTitleWithGemini(input, locked);
+      const data = {
+        ...raw,
+        title: suggestHighIntentTitle(raw.title),
+      };
       return { step: "title", data, warnings: warningsPayload() };
     }
 

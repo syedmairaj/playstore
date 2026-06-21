@@ -42,6 +42,7 @@ import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
 import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog";
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
+import { CreditTopUpModal } from "@/components/ui/CreditTopUpModal";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
 import { workspaceAppsQueryKey, useAppLimits } from "@/hooks/use-app-limits";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
@@ -82,7 +83,8 @@ import {
   AI_CREDIT_COSTS,
   KEYWORD_TRACK_AI_FREE_PER_GENERATION,
 } from "@/lib/features/billing/credit-costs";
-import { normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS } from "@/lib/plan-limits";
+import { normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS, canPurchaseCreditTopUps } from "@/lib/plan-limits";
+import { refreshWorkspaceContext } from "@/lib/client/refresh-workspace-context";
 import {
   parseLogoGeneratorMetadata,
   resolveListingPreviewIconUrl,
@@ -133,7 +135,15 @@ import {
   optimisticallyRemoveOptimizationQueueItem,
   patchOptimizationQueueStore,
 } from "@/lib/client/optimization-queue-store";
-import { buildSynthesisFromOptimizationQueue } from "@/lib/optimization-queue";
+import {
+  buildSynthesisFromOptimizationQueue,
+  EMPTY_SYNTHESIS_VAULT_MESSAGE,
+  assessVaultSynthesisReadiness,
+  buildVaultSynthesisWarnings,
+  logStagingVaultPreSynthesis,
+  verifyQueueHashSignalPopulation,
+} from "@/lib/optimization-queue";
+import { buildWarningsPayload } from "@/lib/listing/listing-generation-warnings";
 import { computeActiveContextQueueHashClient } from "@/lib/optimization-queue/optimization-queue-hash-client";
 import { pickTopAutoStageInsightInputs } from "@/lib/optimization-queue/auto-stage-top-insights";
 import type { OptimizationQueueItem } from "@/lib/optimization-queue";
@@ -703,6 +713,8 @@ export function ListingOptimizer({
   const [isProcessingCredits, setIsProcessingCredits] = useState(false);
   const [selectedAppId, setSelectedAppId] = useState("");
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [creditTopUpOpen, setCreditTopUpOpen] = useState(false);
+  const [workspaceLinkRecovering, setWorkspaceLinkRecovering] = useState(false);
   const [addAppOpen, setAddAppOpen] = useState(false);
   const [exportPlayOpen, setExportPlayOpen] = useState(false);
   const [logoGenOpen, setLogoGenOpen] = useState(false);
@@ -1079,6 +1091,21 @@ export function ListingOptimizer({
   const limits = useAppLimits(workspaceId, {
     initialData: initialAppLimits,
   });
+
+  useEffect(() => {
+    if (!workspaceId || searchParams.get("topup") !== "success") return;
+    void refreshWorkspaceContext({ workspaceId, vaultLocale: locale }).then((refreshed) => {
+      if (typeof refreshed.creditsRemaining === "number") {
+        setAiCreditsRemaining(refreshed.creditsRemaining);
+      }
+      toast.success(t("form.topUpSuccess"));
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete("topup");
+      next.delete("session_id");
+      const qs = next.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname);
+    });
+  }, [locale, pathname, router, searchParams, t, workspaceId]);
   const appsQuery = useQuery({
     queryKey: workspaceAppsQueryKey(workspaceId),
     enabled: Boolean(workspaceId),
@@ -1983,6 +2010,12 @@ export function ListingOptimizer({
     };
   }, [workspaceId, selectedAppId]);
 
+  const hasTrackedKeywords = trackerKeywordSignals.length > 0;
+
+  const keywordTrackerHref = workspaceId
+    ? `/app/${workspaceId}/keywords`
+    : null;
+
   const canSubmit = useMemo(() => {
     const appGateOk =
       appsList.length === 0 || Boolean(selectedAppId.trim());
@@ -1993,6 +2026,7 @@ export function ListingOptimizer({
       category.trim().length > 0 &&
       keywords.trim().length > 0 &&
       features.trim().length > 0 &&
+      hasTrackedKeywords &&
       !loading &&
       !isProcessingCredits
     );
@@ -2004,9 +2038,14 @@ export function ListingOptimizer({
     category,
     keywords,
     features,
+    hasTrackedKeywords,
     loading,
     isProcessingCredits,
   ]);
+
+  const generateButtonTooltip = !hasTrackedKeywords
+    ? t("form.generateBlockedNoTrackedKeywords")
+    : t("form.generateTooltip");
 
   const planLabelForLimits = limits.data
     ? PLAN_META[normalizePlan(limits.data.plan)].label
@@ -2431,7 +2470,15 @@ export function ListingOptimizer({
           req: AI_CREDIT_COSTS.listing_optimizer_autofill,
         })}${t("form.creditsSuffix")}`,
       });
-      setUpgradeOpen(true);
+      if (canPurchaseCreditTopUps(limits.data?.plan ?? "free") && hasTrackedKeywords) {
+        setCreditTopUpOpen(true);
+      } else if (!hasTrackedKeywords) {
+        toast.message(t("form.optimizationOpportunity.trackedKeywordsTitle"), {
+          description: t("form.optimizationOpportunity.trackedKeywordsBody"),
+        });
+      } else {
+        setUpgradeOpen(true);
+      }
       return;
     }
     // Hard debounce: block re-entry before React flushes setAutofillBusy.
@@ -2482,7 +2529,15 @@ export function ListingOptimizer({
           toast.message(t("form.autofill.insufficientTitle"), {
             description: `${json.error.message}${suffix}${t("form.creditsSuffix")}`,
           });
-          setUpgradeOpen(true);
+          if (canPurchaseCreditTopUps(limits.data?.plan ?? "free") && hasTrackedKeywords) {
+            setCreditTopUpOpen(true);
+          } else if (!hasTrackedKeywords) {
+            toast.message(t("form.optimizationOpportunity.trackedKeywordsTitle"), {
+              description: t("form.optimizationOpportunity.trackedKeywordsBody"),
+            });
+          } else {
+            setUpgradeOpen(true);
+          }
           if (typeof rem === "number") {
             setAiCreditsRemaining(rem);
           }
@@ -2652,6 +2707,22 @@ export function ListingOptimizer({
 
   const handleModularApiError = useCallback(
     (message: string, code?: string) => {
+      if (code === "missing_keyword_context") {
+        toast.message(t("form.optimizationOpportunity.trackedKeywordsTitle"), {
+          description: t("form.optimizationOpportunity.trackedKeywordsBody"),
+        });
+        return;
+      }
+      if (code === "empty_synthesis_vault") {
+        toast.message(t("form.optimizationOpportunity.emptySynthesisTitle"), {
+          description: message || t("form.optimizationOpportunity.emptySynthesisBody"),
+        });
+        return;
+      }
+      if (code === "workspace_handshake_failed") {
+        toast.message(t("form.workspaceHandshakeToast"));
+        return;
+      }
       if (code === "validation_error" || code === "section_generation_failed") {
         toast.error(t("results.modular.sectionGenerationFailed"));
         return;
@@ -2661,8 +2732,46 @@ export function ListingOptimizer({
     [t],
   );
 
+  const handleWorkspaceHandshakeFailed = useCallback(async () => {
+    if (!workspaceId || workspaceLinkRecovering) return;
+    setWorkspaceLinkRecovering(true);
+    try {
+      const refreshed = await refreshWorkspaceContext({
+        workspaceId,
+        vaultLocale: locale,
+        appId: selectedAppId.trim() || undefined,
+      });
+      await Promise.all([refreshOptimizerContext(), refetchOptimizationQueue()]);
+      if (typeof refreshed.creditsRemaining === "number") {
+        setAiCreditsRemaining(refreshed.creditsRemaining);
+      }
+      toast.success(t("form.workspaceHandshakeRecovered"));
+    } catch {
+      toast.error(t("form.workspaceHandshakeRecoverFailed"));
+    } finally {
+      setWorkspaceLinkRecovering(false);
+    }
+  }, [
+    locale,
+    refetchOptimizationQueue,
+    refreshOptimizerContext,
+    selectedAppId,
+    t,
+    workspaceId,
+    workspaceLinkRecovering,
+  ]);
+
   const handleModularWarnings = useCallback(
     (warnings: import("@/lib/listing/listing-generation-warnings").ListingGenerationWarningsPayload) => {
+      const hasEmptyVault = warnings.items.some(
+        (item) => item.code === "empty_synthesis_vault",
+      );
+      if (hasEmptyVault) {
+        toast.message(t("form.optimizationOpportunity.emptySynthesisTitle"), {
+          description: t("form.optimizationOpportunity.emptySynthesisBody"),
+        });
+        return;
+      }
       const hasPartial = warnings.items.some((item) => item.code === "partial_model_output");
       const hasStale = warnings.items.some((item) => item.code === "stale_active_context");
       if (hasStale) {
@@ -2778,6 +2887,7 @@ export function ListingOptimizer({
       .split(/[,;\n]+/)
       .map((s) => s.trim())
       .filter(Boolean),
+    clientHooks: { onWorkspaceHandshakeFailed: handleWorkspaceHandshakeFailed },
     onError: handleModularApiError,
     onWarnings: handleModularWarnings,
     onBillingMeta: handleModularBillingMeta,
@@ -3015,15 +3125,19 @@ export function ListingOptimizer({
   );
 
   const modularCopyBlocked = modularDraftReady && !listingGenerationId;
+  const notifyModularCopyBlocked = useCallback(() => {
+    if (!modularCopyBlocked) return;
+    toast.message(t("results.modular.draftMask.copyFinalizeToast"));
+  }, [modularCopyBlocked, t]);
   const guardModularCopy = useCallback(
     (action: () => void) => {
       if (!modularCopyBlocked) {
         action();
         return;
       }
-      toast.message(t("results.modular.draftMask.copyBlocked"));
+      notifyModularCopyBlocked();
     },
-    [modularCopyBlocked, t],
+    [modularCopyBlocked, notifyModularCopyBlocked],
   );
 
   const hasUnsavedModularDraft = modularDraftReady && !listingGenerationId;
@@ -3077,7 +3191,15 @@ export function ListingOptimizer({
           req: AI_CREDIT_COSTS.listing_generation,
         })}${t("form.creditsSuffix")}`,
       });
-      setUpgradeOpen(true);
+      if (canPurchaseCreditTopUps(limits.data?.plan ?? "free") && hasTrackedKeywords) {
+        setCreditTopUpOpen(true);
+      } else if (!hasTrackedKeywords) {
+        toast.message(t("form.optimizationOpportunity.trackedKeywordsTitle"), {
+          description: t("form.optimizationOpportunity.trackedKeywordsBody"),
+        });
+      } else {
+        setUpgradeOpen(true);
+      }
       return;
     }
     setLoading(true);
@@ -3167,7 +3289,15 @@ export function ListingOptimizer({
           req: AI_CREDIT_COSTS.listing_generation,
         })}${t("form.creditsSuffix")}`,
       });
-      setUpgradeOpen(true);
+      if (canPurchaseCreditTopUps(limits.data?.plan ?? "free") && hasTrackedKeywords) {
+        setCreditTopUpOpen(true);
+      } else if (!hasTrackedKeywords) {
+        toast.message(t("form.optimizationOpportunity.trackedKeywordsTitle"), {
+          description: t("form.optimizationOpportunity.trackedKeywordsBody"),
+        });
+      } else {
+        setUpgradeOpen(true);
+      }
       setIsProcessingCredits(false);
       return;
     }
@@ -3200,10 +3330,49 @@ export function ListingOptimizer({
         .map((s) => s.trim())
         .filter(Boolean);
 
+      logStagingVaultPreSynthesis({
+        scope: "client",
+        workspaceId,
+        locale,
+        appId: selectedAppId.trim() || undefined,
+        vaultItems: queueForHash,
+      });
+
+      const hashSignals = verifyQueueHashSignalPopulation(queueForHash, locale);
+      console.log(
+        JSON.stringify({
+          event: "listing_optimizer_queue_hash_preflight",
+          workspaceId,
+          locale,
+          hashSignals,
+        }),
+      );
+
+      if (!hashSignals.hashReady) {
+        toast.dismiss(runToastId);
+        const readiness = assessVaultSynthesisReadiness(queueForHash);
+        const vaultWarnings = buildVaultSynthesisWarnings(readiness, hashSignals);
+        const warningsPayload = buildWarningsPayload(vaultWarnings);
+        modularGeneration.ingestWarnings(warningsPayload);
+        handleModularWarnings(warningsPayload);
+        setError(vaultWarnings[0]?.message ?? EMPTY_SYNTHESIS_VAULT_MESSAGE);
+        return;
+      }
+
       const queueSynthesis = buildSynthesisFromOptimizationQueue(
         queueForGeneration,
         seedKwList,
       );
+
+      if (hashSignals.competitorCount === 0) {
+        const sparsePayload = buildWarningsPayload(
+          buildVaultSynthesisWarnings(
+            assessVaultSynthesisReadiness(queueForHash),
+            hashSignals,
+          ),
+        );
+        modularGeneration.ingestWarnings(sparsePayload);
+      }
 
       const effectiveInstruction = [
         opts.orchestrationModuleId
@@ -3280,6 +3449,20 @@ export function ListingOptimizer({
       if (!generationResult.ok) {
         if (generationResult.status === 401) {
           setError(t("form.signInError"));
+        } else if (generationResult.error.code === "workspace_handshake_failed") {
+          void handleWorkspaceHandshakeFailed();
+          setError(generationResult.error.message);
+          return;
+        } else if (generationResult.error.code === "missing_keyword_context") {
+          setError(generationResult.error.message);
+          toast.message(t("form.optimizationOpportunity.trackedKeywordsTitle"), {
+            description: t("form.optimizationOpportunity.trackedKeywordsBody"),
+          });
+        } else if (generationResult.error.code === "empty_synthesis_vault") {
+          setError(generationResult.error.message);
+          toast.message(t("form.optimizationOpportunity.emptySynthesisTitle"), {
+            description: t("form.optimizationOpportunity.emptySynthesisBody"),
+          });
         } else if (generationResult.error.code === "duplicate_request") {
           return;
         } else if (generationResult.error.code === "truncated_model_output") {
@@ -3299,7 +3482,15 @@ export function ListingOptimizer({
           setError(
             `${generationResult.error.message}${suffix}${t("form.creditsSuffix")}`,
           );
-          setUpgradeOpen(true);
+          if (canPurchaseCreditTopUps(limits.data?.plan ?? "free") && hasTrackedKeywords) {
+            setCreditTopUpOpen(true);
+          } else if (!hasTrackedKeywords) {
+            toast.message(t("form.optimizationOpportunity.trackedKeywordsTitle"), {
+              description: t("form.optimizationOpportunity.trackedKeywordsBody"),
+            });
+          } else {
+            setUpgradeOpen(true);
+          }
           if (typeof rem === "number") {
             setAiCreditsRemaining(rem);
           }
@@ -4043,6 +4234,15 @@ export function ListingOptimizer({
       />
 
       {workspaceId ? (
+        <CreditTopUpModal
+          open={creditTopUpOpen}
+          onOpenChange={setCreditTopUpOpen}
+          workspaceId={workspaceId}
+          workspacePlan={limits.data?.plan ?? "free"}
+        />
+      ) : null}
+
+      {workspaceId ? (
         <KeywordValidatorCard
           workspaceId={workspaceId}
           appId={selectedAppId.trim() || undefined}
@@ -4153,12 +4353,25 @@ export function ListingOptimizer({
           {t("title")}
         </h1>
         {typeof aiCreditsRemaining === "number" ? (
-          <p
-            className="inline-flex w-fit items-center rounded-full border border-emerald-400/35 bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-100"
-            role="status"
-          >
-            {t("creditsRemainingHeader", { count: aiCreditsRemaining })}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p
+              className="inline-flex w-fit items-center rounded-full border border-emerald-400/35 bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-100"
+              role="status"
+            >
+              {t("creditsRemainingHeader", { count: aiCreditsRemaining })}
+            </p>
+            {aiCreditsRemaining === 0 &&
+            canPurchaseCreditTopUps(limits.data?.plan ?? "free") ? (
+              <button
+                type="button"
+                onClick={() => setCreditTopUpOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-500/15 px-3 py-1 text-sm font-semibold text-amber-100 hover:bg-amber-500/25"
+              >
+                <Sparkles className="size-3.5" aria-hidden />
+                {t("performanceBoostCta")}
+              </button>
+            ) : null}
+          </div>
         ) : null}
         <p className="max-w-2xl text-[15px] leading-relaxed text-white/55 sm:text-base">{t("subtitle")}</p>
         <p
@@ -4663,19 +4876,42 @@ export function ListingOptimizer({
                       </div>
                     ) : null}
 
+                    {!hasTrackedKeywords ? (
+                      <div
+                        className="rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100/90"
+                        role="status"
+                      >
+                        <p className="font-semibold text-sky-100">
+                          {t("form.optimizationOpportunity.trackedKeywordsTitle")}
+                        </p>
+                        <p className="mt-1.5 text-[13px] leading-relaxed text-sky-100/75">
+                          {t("form.optimizationOpportunity.trackedKeywordsBody")}
+                        </p>
+                        {keywordTrackerHref ? (
+                          <Link
+                            href={keywordTrackerHref}
+                            className="mt-2 inline-flex text-[13px] font-semibold text-sky-200 underline underline-offset-4 hover:text-white"
+                          >
+                            {t("form.optimizationOpportunity.openKeywordTracker")}
+                          </Link>
+                        ) : null}
+                      </div>
+                    ) : null}
+
                     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-4 sm:gap-y-2">
                       <div className="flex min-w-0 flex-col items-stretch gap-2 sm:items-start">
                         <TooltipProvider>
                           <Tooltip
-                            content={t("form.generateTooltip")}
+                            content={generateButtonTooltip}
                             side="top"
                             asChild
                           >
+                            <span className="inline-flex w-full sm:w-auto">
                             <button
                               type="submit"
-                              disabled={!canSubmit || isProcessingCredits || loading}
+                              disabled={!canSubmit || isProcessingCredits || loading || workspaceLinkRecovering}
                               aria-busy={loading ? true : undefined}
-                              className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:w-auto sm:min-w-[300px]"
+                              className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-500 px-8 py-4 text-base font-bold text-white shadow-[0_10px_32px_-10px_rgba(34,197,94,0.55)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0 sm:min-w-[300px]"
                             >
                               {loading ? (
                                 <>
@@ -4689,6 +4925,7 @@ export function ListingOptimizer({
                                 </>
                               )}
                             </button>
+                            </span>
                           </Tooltip>
                         </TooltipProvider>
                         <p className="text-center text-sm font-medium text-emerald-300/90 sm:text-start">
@@ -4810,7 +5047,9 @@ export function ListingOptimizer({
               onCopyLong={() =>
                 guardModularCopy(() => void copyText("long", clampedListing.fullDescription))
               }
-              onExportOpen={() => setExportPlayOpen(true)}
+              onExportOpen={() =>
+                guardModularCopy(() => setExportPlayOpen(true))
+              }
               canRegenerate={canRegenerate}
               onRegeneratePunchier={() =>
                 handleGenerate({
@@ -4902,6 +5141,7 @@ export function ListingOptimizer({
                 .filter(Boolean)}
               isPublicationReady={Boolean(listingGenerationId)}
               copyListingBlocked={modularCopyBlocked}
+              onModularDraftCopyBlocked={notifyModularCopyBlocked}
               listingHealth={modularGeneration.generationWarnings}
               lockedKeywords={lockedKeywordList}
             />
@@ -5168,7 +5408,7 @@ export function ListingOptimizer({
               <button
                 type="submit"
                 form="listing-optimizer-form"
-                disabled={!canSubmit || isProcessingCredits || loading}
+                disabled={!canSubmit || isProcessingCredits || loading || workspaceLinkRecovering}
                 className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-7 py-3.5 text-sm font-bold text-white shadow-[0_8px_24px_-8px_rgba(34,197,94,0.5)] ring-2 ring-emerald-500/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50 disabled:shadow-none disabled:ring-0"
               >
                 {t("empty.runScanCta")}
