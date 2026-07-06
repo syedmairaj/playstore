@@ -41,3 +41,4 @@ yarn-error.log*
 *.swo
 *.swp
 *.swo
+oldnode_modules/
