@@ -148,7 +148,7 @@ npm uninstall @google/generative-ai
 
 # Remove API key from .env.local
 # Edit .env.local and delete the line:
-# GEMINI_API_KEY=REDACTED_GEMINI_KEY
+# GEMINI_API_KEY=your_gemini_api_key
 ```
 
 ### Optional (already correct)
