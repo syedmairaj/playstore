@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Trash2, Download, Image as ImageIcon, Layers, RefreshCw, Smartphone } from "lucide-react";
+import { Loader2, Trash2, Download, Image as ImageIcon, Layers, RefreshCw, Smartphone, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { VaultAsset } from "@/app/api/brand-assets/vault/route";
+import { BrandKitSyncPanel } from "@/components/brand-assets/BrandKitSyncPanel";
 
 type Filter = "all" | "icon" | "banner" | "screenshot";
 
@@ -23,12 +24,37 @@ function formatDate(iso: string, locale: string): string {
   } catch { return iso.slice(0, 10); }
 }
 
+// ── Screenshot live-preview frame (lightweight CSS phone shell) ───────────────
+
+function ScreenshotPhoneFrame({ src, alt }: { src: string; alt: string }) {
+  return (
+    <div className="relative mx-auto w-full max-w-[140px]">
+      {/* Phone shell */}
+      <div className="relative rounded-[18px] border-[3px] border-white/[0.18] bg-[#111] pb-3 pt-2 shadow-[0_0_0_1px_rgba(0,0,0,0.6),0_6px_24px_rgba(0,0,0,0.5)]">
+        {/* Pill camera */}
+        <div className="mx-auto mb-1.5 h-[6px] w-[26px] rounded-full bg-[#1a1a1a]" aria-hidden />
+        {/* Screen */}
+        <div className="overflow-hidden rounded-[10px] mx-0.5 bg-black">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={alt} className="h-full w-full object-cover" loading="lazy" />
+        </div>
+        {/* Home indicator */}
+        <div className="mx-auto mt-1.5 h-[3px] w-[32px] rounded-full bg-white/20" aria-hidden />
+      </div>
+    </div>
+  );
+}
+
+// ── AssetCard ─────────────────────────────────────────────────────────────────
+
 function AssetCard({
-  asset, onDelete, locale, workspaceId,
-}: { asset: VaultAsset; onDelete: (id: string) => void; locale: string; workspaceId: string }) {
+  asset, onDelete, locale, workspaceId, isManuallyOverridden,
+}: { asset: VaultAsset; onDelete: (id: string) => void; locale: string; workspaceId: string; isManuallyOverridden?: boolean }) {
   const t = useTranslations("brandAssets.vault");
+  const tSync = useTranslations("brandAssets.sync");
   const [deleting, setDeleting] = useState(false);
   const isWide = asset.assetType === "banner";
+  const isScreenshot = asset.assetType === "screenshot";
 
   async function handleDelete() {
     if (!confirm(t("deleteConfirm"))) return;
@@ -53,16 +79,22 @@ function AssetCard({
 
   return (
     <div className="group relative overflow-hidden rounded-xl border border-white/[0.08] bg-black/35 ring-1 ring-white/[0.05] transition-[border-color] hover:border-white/[0.15]">
-      {/* Image */}
-      <div className={cn("overflow-hidden bg-black/20", isWide ? "aspect-[2/1]" : "aspect-square")}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={asset.signedUrl}
-          alt={asset.fileName}
-          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-          loading="lazy"
-        />
-      </div>
+      {/* Image — screenshot type shows live-preview phone frame */}
+      {isScreenshot ? (
+        <div className="overflow-hidden bg-black/20 px-4 pt-4 pb-2">
+          <ScreenshotPhoneFrame src={asset.signedUrl} alt={asset.fileName} />
+        </div>
+      ) : (
+        <div className={cn("overflow-hidden bg-black/20", isWide ? "aspect-[2/1]" : "aspect-square")}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={asset.signedUrl}
+            alt={asset.fileName}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+            loading="lazy"
+          />
+        </div>
+      )}
 
       {/* Overlay actions — appear on hover */}
       <div className="absolute inset-0 flex items-end justify-end gap-1.5 p-2 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
@@ -104,6 +136,19 @@ function AssetCard({
         </span>
       </div>
 
+      {/* Manual override badge */}
+      {isManuallyOverridden && (
+        <div className="absolute end-2 top-2">
+          <span
+            title={tSync("overrideBadge")}
+            className="inline-flex items-center gap-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400"
+          >
+            <ShieldAlert className="size-2.5" aria-hidden />
+            {tSync("overrideBadgeShort")}
+          </span>
+        </div>
+      )}
+
       {/* Footer */}
       <div className="px-2.5 py-2">
         <p className="text-[11px] text-white/35">{formatDate(asset.createdAt, locale)}</p>
@@ -115,8 +160,8 @@ function AssetCard({
 const PAGE_SIZE = 48;
 
 export function VaultGrid({
-  workspaceId, appId,
-}: { workspaceId: string; appId?: string }) {
+  workspaceId, appId, showSyncPanel = false,
+}: { workspaceId: string; appId?: string; showSyncPanel?: boolean }) {
   const locale = useLocale();
   const t = useTranslations("brandAssets.vault");
   const queryClient = useQueryClient();
@@ -179,6 +224,11 @@ export function VaultGrid({
 
   return (
     <div className="space-y-5">
+      {/* Brand Kit Sync Panel — shown when the vault is in "My Vault" mode */}
+      {showSyncPanel && (
+        <BrandKitSyncPanel workspaceId={workspaceId} appId={appId} />
+      )}
+
       {/* Filter pills + refresh */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex gap-1.5">
@@ -217,7 +267,18 @@ export function VaultGrid({
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {allAssets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} onDelete={handleDeleted} locale={locale} workspaceId={workspaceId} />
+              <AssetCard
+                key={asset.id}
+                asset={asset}
+                onDelete={handleDeleted}
+                locale={locale}
+                workspaceId={workspaceId}
+                isManuallyOverridden={
+                  // The override flag lives on manifests, not on the asset row itself.
+                  // We surface it here via asset.meta if the vault API injects it.
+                  (asset.meta as Record<string, unknown> | null)?.isManuallyOverridden === true
+                }
+              />
             ))}
           </div>
           {hasMore && (

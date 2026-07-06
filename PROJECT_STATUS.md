@@ -1,13 +1,13 @@
 # Growth Hub - Project Status & Architecture Reference
 
-**Last Updated:** June 16, 2026  
+**Last Updated:** June 22, 2026  
 **Project Phase:** Production - Active Development  
 **Status:** 🟢 Stable with Active Enhancements  
-**Session:** Post-session 4 (Modular Listing Pipeline, Trial-to-Paid billing, draft auto-save, typed short schema)
+**Session:** Post-session 5 (Async QStash listing pipeline, Context Gateway, granular billing, Settings billing UI)
 
 > **Filename note:** Git tracks this file as `PROJECT_STATUS.md`. On case-insensitive filesystems (macOS default), `project_status.md` resolves to the **same file** — there is no separate copy. Use `PROJECT_STATUS.md` in links and tooling.
 
-**Related docs:** [`STAGING_VAULT_INTEGRATION_SUMMARY.md`](./STAGING_VAULT_INTEGRATION_SUMMARY.md) · [`docs/api.md`](./docs/api.md) · [`docs/database.md`](./docs/database.md)
+**Related docs:** [`STAGING_VAULT_INTEGRATION_SUMMARY.md`](./STAGING_VAULT_INTEGRATION_SUMMARY.md) · [`docs/architecture.md`](./docs/architecture.md) · [`docs/api.md`](./docs/api.md) · [`docs/database.md`](./docs/database.md)
 
 ---
 
@@ -16,6 +16,128 @@
 Growth Hub is a **pro-grade ASO (App Store Optimization) platform** built on modern cloud-native architecture. The platform leverages a **Staged-State architecture** pattern for feature isolation, workspace-scoped data management, and zero-breaking-changes deployment strategy.
 
 **Core Mission:** Enable indie app developers to optimize their Google Play Store listings through AI-powered keyword validation, experiment snapshots, and synthesis-driven improvements.
+
+---
+
+## Session 5 — Async Pipeline, Context Gateway & Billing Observability (June 22, 2026)
+
+Quick handoff for new chat sessions. Vault + queue detail: `STAGING_VAULT_INTEGRATION_SUMMARY.md`. API contracts: `docs/api.md`.
+
+### Architectural decisions
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | **Producer / Worker split (Upstash QStash)** | `POST /api/listings/generate` validates + enqueues; `POST /api/listings/worker` runs Gemini orchestration. Avoids Vercel timeout on long pipelines. |
+| 2 | **Orchestrator `executionMode`** | `read` on producer (phase check only, no Gemini/writes); `execute` on worker (full generation). |
+| 3 | **`WAITING_FOR_PHASES` → 202** | Producer returns `{ code: "WAITING_FOR_PHASES", status: "pending" }` when prerequisite draft phases are not persisted — not 500/409. Client polls `jobId` when available. |
+| 4 | **`checkModularPhaseOrder` vs `assertModularPhaseOrder`** | Read path returns a result object; execute path throws `modular_phase_order_conflict` (worker internal consistency). |
+| 5 | **Context Gateway (`stampAndCompileListingContext`)** | Atomically stamps `workspace_keywords.queue_hash` for staged rows, then compiles step-scoped signals before generation. |
+| 6 | **Redis queue-hash lock** | `SET NX` per `(workspaceId, queueHash)` blocks duplicate in-flight pipelines (300s TTL). Released in worker `finally`. |
+| 7 | **Post-success billing (pipeline/full/finalize)** | Credits debited only after successful worker run; refunds on hard failure. |
+| 8 | **Granular phase telemetry** | `listing_generation_costs` table + `GET /api/billing/usage-breakdown` for title/short/long/full credit + token aggregates. |
+| 9 | **DB draft persistence** | `workspace_listing_drafts` keyed by `(workspace_id, queue_hash)` with `generation_status`, `job_id`, `current_phase`, EN/AR `vault_locale`. |
+| 10 | **Monthly credit cap** | `workspaces.monthly_credit_cap` + `credit_budget_warning` alert at 80% usage (Integrations & Alerts settings). |
+| 11 | **Settings billing UI** | Phase breakdown chart, ranking impact metric (`recent_rank_gain`), monthly credit cap input — EN/AR i18n. |
+
+### Async listing generation flow
+
+```
+Client POST /api/listings/generate
+  → auth, credits precheck, context gateway stamp+compile
+  → orchestrator executionMode: "read" (phase guard)
+  → if WAITING_FOR_PHASES → 202 (poll jobId if active)
+  → acquire Redis lock (workspaceId, queueHash)
+  → upsert workspace_listing_drafts (pending, job_id)
+  → QStash publish → POST /api/listings/worker
+  → 202 { jobId, status: "pending" }
+
+Worker POST /api/listings/worker
+  → verify QStash signature (or INTERNAL_WORKER_SECRET in dev)
+  → executionMode: "execute" → runListingGenerationOrchestrator
+  → serialized pipeline: title → short → long (ModularPhaseOrderGuard between steps)
+  → post-success credit debit → generation_status: completed
+  → on failure: generation_error, refund, release Redis lock
+```
+
+**Polling:** `GET /api/listings/status?jobId=` — `status`, `currentPhase`, `phases`, `result`.  
+**Instant draft:** `isDraft: true` remains synchronous on the producer route (no queue).
+
+### Context Gateway & keyword stamping
+
+| Component | Role |
+|-----------|------|
+| `syncQueueHash` | Sets `workspace_keywords.queue_hash` for staged rows matching workspace + app + vault locale |
+| `stampAndCompileListingContext` | Atomic stamp + `compileContextForStep()` before orchestrator |
+| `workspace_keywords_queue_hash_idx` | B-tree index on `queue_hash` for fast compile lookups |
+| Step-scoped context | Title/short: top 5 keywords; long/full/finalize: top 5 keywords + 2 competitor signals |
+
+**Gate:** Zero staged keywords → `400 KEYWORD_CONTEXT_REQUIRED` (no blind generation).
+
+### Phase orchestration (updated)
+
+| Phase | Entry | Billing | Persistence |
+|-------|-------|---------|-------------|
+| Initial pipeline | `generationStep: pipeline` only (unless `isRegenerate`) | 5 credits post-success | Worker upserts draft per phase |
+| Regenerate step | `title` / `short` / `long` + `isRegenerate: true` | Trial slot or 1 credit post-success | Same draft row |
+| Finalize | `generationStep: finalize` | 5 credits post-success | `listing_generations` row |
+| Instant preview | `isDraft: true` | Free | Sync on producer |
+
+**Pipeline entry guard:** Individual `title`/`short`/`long` without `pipeline` or `isRegenerate` → `409 modular_pipeline_required`.
+
+### Billing & Settings UI (Session 5)
+
+| Surface | Data source |
+|---------|-------------|
+| Phase breakdown chart | `GET /api/billing/usage-breakdown` → `listing_generation_costs` |
+| Ranking impact chip | `GET /api/workspaces/:id/keywords/ranking-impact` → avg % from `recent_rank_gain` (7-day window) |
+| Monthly credit cap | `PATCH /api/workspaces/:id` `{ monthly_credit_cap }` via `updateBudgetCap()` |
+| Credit dashboard | `GET /api/workspaces/:id/billing/usage-summary` (donut, efficiency, 30-day trend) |
+
+### Session 5 key files
+
+```
+app/api/listings/generate/route.ts          — QStash producer (202)
+app/api/listings/worker/route.ts            — QStash consumer
+app/api/listings/status/route.ts            — job polling
+app/api/billing/usage-breakdown/route.ts
+app/api/workspaces/[id]/keywords/ranking-impact/route.ts
+src/lib/listing/listing-generation-executor.ts
+src/lib/listing/listing-generation-orchestrator.ts  — executionMode read|execute
+src/lib/listing/modular-phase-guard.ts      — checkModularPhaseOrder
+src/lib/listing/modular-pipeline-state-machine.ts
+src/lib/listing/context-gateway.ts
+src/lib/listing/sync-queue-hash.ts
+src/lib/listing/generation-queue-hash-lock.ts
+src/lib/qstash/publish-listing-generation.ts
+src/lib/db/listing-generation-costs.ts
+src/lib/db/listing-generation-job.ts
+src/lib/client/poll-listing-generation-status.ts
+src/components/settings/credit-dashboard/
+supabase/migrations/20260621130000_workspace_listing_drafts.sql
+supabase/migrations/20260622150000_add_queue_hash_index.sql
+supabase/migrations/20260622160000_add_listing_generation_costs.sql
+supabase/migrations/20260622170000_workspace_monthly_credit_cap.sql
+supabase/migrations/20260622180000_listing_generation_job_status.sql
+```
+
+### Session 5 environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `QSTASH_TOKEN` | Publish async listing jobs |
+| `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | Verify worker callbacks |
+| `QSTASH_CALLBACK_URL` or `NEXT_PUBLIC_APP_URL` | Worker URL target |
+| `INTERNAL_WORKER_SECRET` | Local dev worker invoke without QStash |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Queue-hash locks (+ optional context package) |
+
+### Session 5 verification checklist
+
+1. `supabase db push` — apply migrations through `20260622180000`
+2. Set QStash env vars (or `INTERNAL_WORKER_SECRET` for local)
+3. Stage keywords → Generate pipeline → receive `202` + `jobId` → poll until `completed`
+4. Call `finalize` before pipeline done → `202 WAITING_FOR_PHASES` (not 500)
+5. Settings → Billing: phase breakdown + ranking impact render
+6. Settings → Integrations: monthly credit cap saves; alert at 80% usage
 
 ---
 
@@ -31,7 +153,7 @@ Quick handoff for new chat sessions. Vault integration detail lives in `STAGING_
 | 2 | **Trial-to-Paid regenerates** — workspace-scoped | `trial_regenerations_used` + RPC `consume_modular_listing_regenerate`; server authoritative |
 | 3 | **Credits debit after success** | Regenerate RPC runs after orchestrator + Zod pass; validation failure → 400, no debit |
 | 4 | **Weighted credit ledger** | `generation_type`: `text` (1–5 credits) vs `media` (Creative Bundle @ 30) |
-| 5 | **Draft auto-save** | `useDraftPersistence` → `localStorage`; restore on mount; clear on finalize |
+| 5 | **Draft auto-save** | `useDraftPersistence` → `localStorage`; **also** server `workspace_listing_drafts` per `queue_hash` (Session 5) |
 | 6 | **Typed short schema** | `{ variations: [{ type: growth\|conversion\|utility, text }] }` × 3 + Gemini `responseSchema` |
 | 7 | **JSON mode per step** | `responseMimeType: application/json`; short step has no auto-retry on validation failure |
 | 8 | **Streaming (roadmap)** | Progressive render for 20s+ calls — not yet wired in modular pipeline |
@@ -158,10 +280,12 @@ supabase/migrations/20260612100000_drop_vault_features_btree_indexes.sql
 - **Authentication:** Supabase Auth (JWT-based)
 - **API:** REST endpoints with Zod validation
 - **Live Search:** Serper.dev Play Store API
+- **Background jobs:** Upstash QStash (listing generation worker)
+- **Cache / locks:** Upstash Redis REST (queue-hash locks, optional context package)
 
 ### Infrastructure
 - **Deployment:** Vercel
-- **Database:** Supabase (cloud) — 43 migrations, all reconciled
+- **Database:** Supabase (cloud) — 48+ migrations
 - **CLI:** Supabase CLI v2.90.0 (update to v2.105.0 recommended)
 
 ---
@@ -469,13 +593,17 @@ queryClient.invalidateQueries({ queryKey: ['optimization-queue', workspaceId, lo
 queryClient.invalidateQueries({ queryKey: ['optimizer-context', workspaceId, locale] });
 ```
 
-### Generate Full Listing (legacy + modular)
+### Generate Full Listing (modular — async since Session 5)
 
-- **Fresh generate (modular):** `title` + `short` phases; user completes Phase 3; **finalize** costs 5 credits
-- **Regenerate block:** `isRegenerate: true` → trial/credit via `consume_modular_listing_regenerate` **after** validation
-- **Monolithic path:** `generationStep: "full"` — 5 credits, `listing-optimizer-v12.0` prompt
-- Synthesis: `buildSynthesisFromOptimizationQueue()` — no grab-all from discovery APIs
-- Empty queue → standard ASO best practices (no silent injection of tracker/competitor data)
+- **Producer:** `POST /api/listings/generate` → validates, context gateway, phase read-check → `202 { jobId }` (or sync for `isDraft: true`)
+- **Worker:** QStash → `POST /api/listings/worker` → serialized title → short → long → post-success billing
+- **Polling:** `GET /api/listings/status?jobId=` until `completed` | `failed`
+- **WAITING_FOR_PHASES:** `202` when finalize/regenerate called before prerequisite phases persisted (not 500)
+- **Pipeline entry:** `generationStep: pipeline` or `isRegenerate: true` required for individual steps
+- **Finalize:** `generationStep: finalize` → 5 credits post-success in worker
+- **Regenerate:** `isRegenerate: true` → trial slot or 1 credit post-success
+- Synthesis: `buildSynthesisFromOptimizationQueue()` + Context Gateway keyword compile
+- Empty staged keywords → `400 KEYWORD_CONTEXT_REQUIRED`
 
 ### Competitor Spy → Optimizer flow
 
@@ -572,7 +700,28 @@ id, workspace_id, package_name (required for live rank), name, ...
 ### `experiment_snapshots`
 Language stored inside `listing` JSONB column: `listing->>language`. Query with `.eq("listing->>language", locale)`.
 
----
+### `workspace_listing_drafts` (Session 5 ✅)
+```
+workspace_id, queue_hash (UNIQUE together), app_id, vault_locale
+job_id, generation_status, generation_error, current_phase
+generation_payload JSONB, generation_result JSONB
+title, short_description, long_description JSONB (phase outputs)
+```
+
+### `listing_generation_costs` (Session 5 ✅)
+Per-phase telemetry: `workspace_id`, `generation_step`, `credits_charged`, token counts, `created_at`.
+
+### `workspaces` (billing additions)
+```
+monthly_credit_cap INT NULL   -- user budget (migration 20260622170000)
+trial_regenerations_used INT  -- modular regen trial slots (Session 4)
+```
+
+### `workspace_keywords` (context gateway)
+```
+queue_hash TEXT NULL   -- stamped by syncQueueHash before generation
+-- Index: workspace_keywords_queue_hash_idx
+```
 
 ## Troubleshooting
 
@@ -623,6 +772,15 @@ DROP INDEX IF EXISTS idx_vault_state_ar_features;
 
 ---
 
+## Manual Test Checklist (Session 5)
+
+1. **Async pipeline:** Stage keywords → Generate pipeline → `202` + `jobId` → poll until `completed`
+2. **WAITING_FOR_PHASES:** Call finalize before pipeline done → `202` (not 500)
+3. **Context gate:** Generate with zero staged keywords → `400 KEYWORD_CONTEXT_REQUIRED`
+4. **Billing dashboard:** Phase breakdown chart renders from usage-breakdown API
+5. **Monthly cap:** Settings → Integrations saves `monthly_credit_cap`
+6. **Locale isolation:** EN queue items do not appear in AR optimizer
+
 ## Manual Test Checklist (Session 3)
 
 1. **Competitor Spy (EN & AR):** select keywords → **Add to Optimization Queue** → badge updates
@@ -634,6 +792,6 @@ DROP INDEX IF EXISTS idx_vault_state_ar_features;
 
 ---
 
-**Version:** 4.0  
-**Last Updated:** June 16, 2026  
+**Version:** 5.0  
+**Last Updated:** June 22, 2026  
 **Status:** Production — Active Development

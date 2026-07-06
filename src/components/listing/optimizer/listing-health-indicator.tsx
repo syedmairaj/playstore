@@ -68,6 +68,7 @@ export function ListingHealthIndicator({
 
   const tone = HEALTH_TONE[warnings.healthLabel];
   const score = warnings.healthScore;
+  const hasContextGap = warnings.items.some((item) => item.code === "context_gap");
   const circumference = 2 * Math.PI * 18;
   const dashOffset = circumference - (score / 100) * circumference;
 
@@ -123,6 +124,13 @@ export function ListingHealthIndicator({
               {t("missingData", { percent: warnings.missingDataPercent })}
             </span>
           </div>
+
+          {hasContextGap ? (
+            <p className="text-sm leading-snug text-amber-100/95">
+              <span className="font-semibold">{t("contextGapTitle")}: </span>
+              {t("contextGapBody", { score })}
+            </p>
+          ) : null}
 
           {fixes.length > 0 ? (
             <div className="space-y-2">

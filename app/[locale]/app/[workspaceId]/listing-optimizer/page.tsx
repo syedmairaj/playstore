@@ -14,6 +14,9 @@ export default async function ListingOptimizerPage({
 }) {
   const { locale, workspaceId } = await params;
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const flags = await getFeatureFlags(supabase);
   if (!isModuleEnabled(flags, "listing_optimizer")) {
     redirect(`/${locale}/app/${workspaceId}`);
@@ -23,7 +26,11 @@ export default async function ListingOptimizerPage({
   const [{ rows: appsSnapshot, error: appsSnapshotError }, listingHydration] =
     await Promise.all([
       queryWorkspaceAppsList(supabase, workspaceId),
-      loadLatestListingHydrationMaps(supabase, workspaceId),
+      loadLatestListingHydrationMaps(
+        supabase,
+        workspaceId,
+        user?.id,
+      ),
     ]);
   const { data: wsRow } = await supabase
     .from("workspaces")

@@ -1,4 +1,5 @@
 import type { ActiveContextStrategyMode } from "@/lib/optimization-queue/resolve-strategy-mode";
+import { clampPlayStoreTitle } from "@/lib/listing/clamp-play-store-title";
 import {
   orchestrationProtocolSchema,
   type OrchestrationProtocol,
@@ -15,9 +16,10 @@ export function assembleExpansionFullDescription(
   expansion: OrchestrationProtocol["modules"]["expansion"],
 ): string {
   const { hook, features, trustClosing } = expansion.blocks;
-  const featureSections = features.categories
+  const categories = features?.categories ?? [];
+  const featureSections = categories
     .map((cat) => {
-      const bullets = cat.bullets.map((b) => `• ${b}`).join("\n");
+      const bullets = (cat.bullets ?? []).map((b) => `• ${b}`).join("\n");
       return `${cat.label}\n${bullets}`;
     })
     .join("\n\n");
@@ -43,26 +45,39 @@ export function applyOrchestrationToListingOutput(
   strategyMode: ActiveContextStrategyMode = "defensive",
 ): ListingGenerationOutput {
   const { anchor, conversion, expansion } = orchestration.modules;
+  const shortVariations = conversion?.shortVariations ?? [];
 
   const primaryVariation =
-    conversion.shortVariations.find((v) => v.variationId === "primary") ??
-    conversion.shortVariations.find(
+    shortVariations.find((v) => v.variationId === "primary") ??
+    shortVariations.find(
       (v) =>
         v.variationId ===
         (strategyMode === "offensive" ? "offensive" : "defensive"),
     ) ??
-    conversion.shortVariations[0];
+    shortVariations[0];
 
-  const assembled =
-    expansion.assembledFullDescription.trim().length > 0
+  const assembledRaw =
+    typeof expansion.assembledFullDescription === "string"
       ? expansion.assembledFullDescription.trim()
+      : "";
+  const assembled =
+    assembledRaw.length > 0
+      ? assembledRaw
       : assembleExpansionFullDescription(expansion);
+
+  const anchorTitle = clampPlayStoreTitle(
+    anchor?.title?.trim() ?? data.title?.trim() ?? "",
+  );
+  const shortDescription =
+    primaryVariation?.shortDescription?.trim().slice(0, 80) ??
+    data.shortDescription?.trim().slice(0, 80) ??
+    "";
 
   return {
     ...data,
-    title: anchor.title.trim().slice(0, 30),
-    shortDescription: primaryVariation.shortDescription.trim().slice(0, 80),
-    fullDescription: assembled.slice(0, 4000),
+    ...(anchorTitle ? { title: anchorTitle } : {}),
+    ...(shortDescription ? { shortDescription } : {}),
+    ...(assembled ? { fullDescription: assembled.slice(0, 4000) } : {}),
     orchestration,
   };
 }

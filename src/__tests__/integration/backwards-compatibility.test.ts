@@ -77,7 +77,9 @@ describe("Backward Compatibility - No Breaking Changes", () => {
     it("should maintain vault structure compatibility", () => {
       expect(mockVault).toHaveProperty("state_en");
       expect(mockVault).toHaveProperty("state_ar");
-      expect(mockVault).toHaveProperty("features");
+      // features live inside each locale state, not at the vault root
+      expect(mockVault.state_en).toHaveProperty("features");
+      expect(mockVault.state_ar).toHaveProperty("features");
       expect(mockVault).toHaveProperty("active_features");
       expect(mockVault).toHaveProperty("change_count");
       expect(mockVault.state_en.features).toEqual({});
@@ -317,6 +319,9 @@ describe("Backward Compatibility - No Breaking Changes", () => {
     });
 
     it("should return proper response format", () => {
+      // Populate a feature so the response data is defined
+      mockVault.state_en.features.keyword_tracker = { keywords: [{ term: "test" }] };
+
       const response = {
         ok: true,
         data: mockVault.state_en.features.keyword_tracker

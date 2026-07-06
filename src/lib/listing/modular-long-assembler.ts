@@ -73,6 +73,7 @@ export type ModularLongAssemblerResult = {
   expansionSkipped?: boolean;
   lengthAssessment: ModularLongLengthAssessment;
   assembleWarnings: string[];
+  tokensUsed: number;
 };
 
 export function isModularLongBillingReady(data: ModularLongStepData): boolean {
@@ -103,10 +104,11 @@ export async function runModularLongAssembler(
   let source: ModularLongAssemblerResult["source"] = "generated";
   let timedOut = false;
   let expansionSkipped = false;
+  let tokensUsed = 0;
   const assembleWarnings: string[] = [];
 
   try {
-    raw = await withGenerationTimeout(
+    const granular = await withGenerationTimeout(
       runGranularModularLongGeneration(
         params.input,
         params.context,
@@ -114,6 +116,8 @@ export async function runModularLongAssembler(
       ),
       remainingMs() || budgetMs,
     );
+    raw = granular.data;
+    tokensUsed = granular.tokensUsed;
   } catch (error) {
     if (error instanceof ModularLongGenerationTimeoutError) {
       timedOut = true;
@@ -157,6 +161,7 @@ export async function runModularLongAssembler(
     source,
     lengthAssessment: assembled.lengthAssessment,
     assembleWarnings,
+    tokensUsed,
     ...(timedOut ? { timedOut: true } : {}),
     ...(expansionSkipped ? { expansionSkipped: true } : {}),
   };

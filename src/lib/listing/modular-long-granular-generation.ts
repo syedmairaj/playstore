@@ -1,5 +1,6 @@
 import "server-only";
-import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+
+import { sumGeminiTokens } from "@/lib/gemini/gemini-token-usage";
 import {
   generateListingLongFeaturesWithGemini,
   generateListingLongHookClosingWithGemini,
@@ -7,10 +8,16 @@ import {
 import type { ModularLongStepData } from "@/lib/listing/modular-listing.types";
 import { pruneContext } from "@/lib/optimizer/prune-context";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
+import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 
 const GRANULAR_LONG_MAX_ATTEMPTS = 2;
 
 const EMPTY_LONG: ModularLongStepData = { hook: "", features: "", closing: "" };
+
+export type GranularModularLongGenerationResult = {
+  data: ModularLongStepData;
+  tokensUsed: number;
+};
 
 /**
  * Granular long generation: features array (call 1) → hook/closing (call 2) → merge.
@@ -20,32 +27,38 @@ export async function runGranularModularLongGeneration(
   input: ListingOptimizerInput,
   context: { title: string; shortDescription: string },
   lockedKeywords: string[],
-): Promise<ModularLongStepData> {
+): Promise<GranularModularLongGenerationResult> {
   const prunedInput = pruneContext(input);
   let lastPartial = { ...EMPTY_LONG };
+  let totalTokens = 0;
 
   for (let attempt = 0; attempt < GRANULAR_LONG_MAX_ATTEMPTS; attempt += 1) {
     const reducedComplexity = attempt > 0;
     try {
-      const featuresText = await generateListingLongFeaturesWithGemini(
+      const features = await generateListingLongFeaturesWithGemini(
         prunedInput,
         context,
         lockedKeywords,
         { reducedComplexity },
       );
+      totalTokens += features.tokensUsed;
 
       const hookClosing = await generateListingLongHookClosingWithGemini(
         prunedInput,
         context,
-        featuresText,
+        features.featuresText,
         lockedKeywords,
         { reducedComplexity },
       );
+      totalTokens += hookClosing.tokensUsed;
 
       return {
-        hook: hookClosing.hook,
-        features: featuresText,
-        closing: hookClosing.closing,
+        data: {
+          hook: hookClosing.data.hook,
+          features: features.featuresText,
+          closing: hookClosing.data.closing,
+        },
+        tokensUsed: totalTokens,
       };
     } catch (error) {
       lastPartial = {
@@ -67,5 +80,5 @@ export async function runGranularModularLongGeneration(
     }
   }
 
-  return lastPartial;
+  return { data: lastPartial, tokensUsed: totalTokens };
 }

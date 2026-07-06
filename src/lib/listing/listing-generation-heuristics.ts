@@ -16,6 +16,7 @@ import {
   type ListingGenerationWarning,
   type ListingGenerationWarningsPayload,
 } from "@/lib/listing/listing-generation-warnings";
+import { normalizeShortVariationText } from "@/lib/listing/modular-output-validation";
 
 function categorySeedTerms(category: string, appName: string): string[] {
   const cat = category.trim().toLowerCase();
@@ -38,8 +39,14 @@ export function assessListingInputWarnings(
 ): ListingGenerationWarning[] {
   const warnings: ListingGenerationWarning[] = [];
   const keywordCount = body.targetKeywords.length;
-  const queueItems =
-    body.clientQueueItemCount ?? queueValidation.itemCount ?? 0;
+  const requestKeywordCount = Math.max(
+    keywordCount,
+    body.trackedKeywordSignals?.length ?? 0,
+  );
+  const queueItems = Math.max(
+    body.clientQueueItemCount ?? queueValidation.itemCount ?? 0,
+    requestKeywordCount,
+  );
   const hasActiveContext =
     body.activeContext != null && activeContextHasSignals(body.activeContext);
   const hasExploitTargets = (body.exploitTargets?.length ?? 0) > 0;
@@ -57,7 +64,7 @@ export function assessListingInputWarnings(
     });
   }
 
-  if (queueItems === 0 && !hasActiveContext) {
+  if (queueItems === 0 && !hasActiveContext && requestKeywordCount === 0) {
     warnings.push({
       code: "empty_synthesis_vault",
       severity: "warning",
@@ -162,14 +169,16 @@ export function buildHeuristicTitle(
   input: ListingOptimizerInput,
   lockedKeywords: string[],
 ): ModularTitleStepData {
+  const appName = (input.appName ?? "App").trim() || "App";
+  const category = (input.category ?? "").trim();
   const anchor =
     lockedKeywords[0] ??
-    input.targetKeywords[0] ??
-    input.category.split(/\s+/)[0] ??
+    input.targetKeywords?.[0] ??
+    category.split(/\s+/)[0] ??
     "App";
-  const raw = `${input.appName}: ${anchor}`;
+  const raw = `${appName}: ${anchor}`;
   const title =
-    raw.length <= 30 ? raw : input.appName.slice(0, 30).trim() || raw.slice(0, 30);
+    raw.length <= 30 ? raw : appName.slice(0, 30).trim() || raw.slice(0, 30);
   return {
     title,
     lockedKeywords: lockedKeywords.length > 0 ? lockedKeywords.slice(0, 20) : [anchor],
@@ -180,26 +189,26 @@ export function buildHeuristicShortLine(
   input: ListingOptimizerInput,
   contextTitle: string,
 ): string {
-  const cat = input.category.trim() || "mobile";
-  const line = `${contextTitle} — professional ${cat} tools tailored for daily results`;
-  return line.slice(0, 80);
+  const cat = (input.category ?? "").trim() || "mobile";
+  const line = `${contextTitle} — professional ${cat} tools for daily results`;
+  return normalizeShortVariationText(line);
 }
 
 export function buildHeuristicShortVariations(
   input: ListingOptimizerInput,
   contextTitle: string,
 ): ModularShortStepData {
-  const cat = input.category.trim() || "your category";
-  const app = input.appName.trim();
+  const cat = (input.category ?? "").trim() || "your category";
+  const app = (input.appName ?? "App").trim() || "App";
   const templates: Record<(typeof SHORT_VARIATION_TYPES)[number], string> = {
-    growth: `${contextTitle}: discover ${cat} growth keywords and reach new users`,
-    conversion: `Trusted ${cat} app — ${app} delivers reliable results you can count on`,
-    utility: `Essential ${cat} features in one place — built for practical everyday use`,
+    growth: `${contextTitle}: ${cat} keywords to reach new users`,
+    conversion: `Trusted ${cat} app — ${app} delivers results you can count on`,
+    utility: `${cat} essentials in one app — practical everyday use`,
   };
   return {
     variations: SHORT_VARIATION_TYPES.map((type) => ({
       type,
-      text: templates[type].slice(0, 80),
+      text: normalizeShortVariationText(templates[type]),
     })),
   };
 }
@@ -208,10 +217,10 @@ export function buildHeuristicLongBlocks(
   input: ListingOptimizerInput,
   context: { title: string; shortDescription: string },
 ): ModularLongStepData {
-  const app = input.appName.trim();
-  const cat = input.category.trim() || "your category";
+  const app = (input.appName ?? "App").trim() || "App";
+  const cat = (input.category ?? "").trim() || "your category";
   const featureSnippet =
-    input.appFeatures.trim().slice(0, 280) ||
+    (input.appFeatures ?? "").trim().slice(0, 280) ||
     `Everything you need for ${cat} in one thoughtfully designed experience.`;
   return {
     hook: `${context.title} helps you get more from ${cat}. ${context.shortDescription}`.slice(

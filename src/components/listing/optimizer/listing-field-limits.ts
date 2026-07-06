@@ -1,3 +1,8 @@
+import { normalizeShortVariationText } from "@/lib/listing/modular-output-validation";
+import { clampPlayStoreTitle } from "@/lib/listing/clamp-play-store-title";
+
+export { clampPlayStoreTitle } from "@/lib/listing/clamp-play-store-title";
+
 export const LISTING_TITLE_MAX = 30;
 export const LISTING_SHORT_MAX = 80;
 export const LISTING_LONG_MAX = 4000;
@@ -7,10 +12,27 @@ export const LISTING_LONG_WARN_FROM = Math.floor(
   (LISTING_LONG_MAX * LISTING_SHORT_WARN_FROM) / LISTING_SHORT_MAX,
 );
 
+export function coerceListingText(value: string | null | undefined): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** True when unlock/full output has non-empty Play Console copy fields. */
+export function hasListingUnlockCoreCopy(output: {
+  title?: string | null;
+  shortDescription?: string | null;
+  fullDescription?: string | null;
+}): boolean {
+  return Boolean(
+    coerceListingText(output.title).trim() &&
+      coerceListingText(output.shortDescription).trim() &&
+      coerceListingText(output.fullDescription).trim(),
+  );
+}
+
 export function clampListingTexts(title: string, short: string, long: string) {
   return {
-    title: title.slice(0, LISTING_TITLE_MAX),
-    shortDescription: short.slice(0, LISTING_SHORT_MAX),
+    title: clampPlayStoreTitle(title),
+    shortDescription: normalizeShortVariationText(short),
     fullDescription: long.slice(0, LISTING_LONG_MAX),
   };
 }

@@ -2,6 +2,7 @@ import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { ActiveContextStrategyMode } from "@/lib/optimization-queue/resolve-strategy-mode";
 import type { PrioritizedStagedIssue } from "@/lib/optimization-queue/resolve-strategy-mode";
 import type { ClusterSynthesisPayload } from "@/lib/optimization-queue/build-active-context-synthesis";
+import type { GenerationSignalContext } from "@/lib/listing/generation-signal-context.types";
 
 export type ToneStyle = "professional" | "friendly" | "bold" | "minimal";
 
@@ -44,6 +45,15 @@ export type ListingOptimizerInput = {
    * Replaces flat exploitTargets / prose userInstruction for queue signals.
    */
   activeContext?: ClusterSynthesisPayload;
+  /** SHA-256 of the active optimization vault — binds synthesis to staged signals. */
+  synthesisQueueHash?: string;
+  /**
+   * @server-only  Populated by `listing-generation-executor` before the Gemini call.
+   * Aggregates all five workspace intelligence signals (brand kit, market intel,
+   * reviews, keyword tracker, competitor signals) for prompt injection.
+   * Never included in client-side API bodies.
+   */
+  signalContext?: GenerationSignalContext;
 };
 
 /** Gemini listing JSON shape (includes optional Certified ASO Score metadata). */

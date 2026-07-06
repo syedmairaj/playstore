@@ -35,6 +35,7 @@ type Props = {
   draftMasked?: boolean;
   finalizeCreditCost?: number;
   finalizeBusy?: boolean;
+  finalizeReady?: boolean;
   onCopyBlocked?: () => void;
   onFinalize?: () => void;
   onChange?: (value: string) => void;
@@ -54,6 +55,7 @@ export function LongDescriptionAsoEditor({
   draftMasked = false,
   finalizeCreditCost = 5,
   finalizeBusy = false,
+  finalizeReady = false,
   onCopyBlocked,
   onFinalize,
   onChange,
@@ -215,7 +217,7 @@ export function LongDescriptionAsoEditor({
             {onFinalize ? (
               <button
                 type="button"
-                disabled={finalizeBusy || !hasContent}
+                disabled={finalizeBusy || !hasContent || !finalizeReady}
                 onClick={onFinalize}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-[0_8px_28px_-8px_rgba(16,185,129,0.55)] ring-2 ring-emerald-500/35 hover:bg-emerald-500 disabled:opacity-50"
               >

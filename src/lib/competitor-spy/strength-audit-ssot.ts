@@ -36,6 +36,10 @@ export function isLegacyCompetitorStrengthStaging(
   item: Pick<OptimizationQueueItem, "type" | "metadata">,
 ): boolean {
   const meta = item.metadata ?? {};
+  // Items explicitly created from gap analysis (from_gap_analysis: true) are
+  // new-path items and must never be treated as legacy keyword curation entries.
+  if (meta.from_gap_analysis === true) return false;
+
   return (
     meta.from_keyword_curation === true ||
     (item.type === "competitor_keyword" &&

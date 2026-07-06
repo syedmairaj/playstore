@@ -55,7 +55,7 @@ describe("optimizer context category routing", () => {
     const routing = routeQueueItemToSection(item);
     expect(routing?.blocked_competitor_tracker).toBe(true);
     expect(routing?.category).toBe("opportunity");
-    expect(routing?.destination_section).toBe("MARKET OPPORTUNITIES");
+    expect(routing?.destination_section).toBe("MARKET INTELLIGENCE SIGNALS");
   });
 
   it("partitions queue items by category without leaking competitor keywords into tracker", () => {

@@ -866,7 +866,7 @@ export function BrandAssetsClient(props: {
 
         {/* ── My Vault ──────────────────────────────────────────────────── */}
         {mode === "vault" && (
-          <VaultGrid workspaceId={props.workspaceId} appId={appId || undefined} />
+          <VaultGrid workspaceId={props.workspaceId} appId={appId || undefined} showSyncPanel />
         )}
 
         {/* ── Generate mode ─────────────────────────────────────────────── */}

@@ -3,7 +3,7 @@ import "server-only";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 
 export const MISSING_KEYWORD_CONTEXT_MESSAGE =
-  "Missing Keyword Context. Please visit the Keyword Tracker to select target keywords.";
+  "ASO optimization requires keyword context. Please add keywords to your Tracker.";
 
 export class MissingKeywordContextError extends Error {
   readonly code = "missing_keyword_context" as const;
@@ -18,6 +18,17 @@ export function countTrackedKeywordSignals(
   input: Pick<ListingOptimizerInput, "trackedKeywordSignals">,
 ): number {
   return input.trackedKeywordSignals?.length ?? 0;
+}
+
+export function hasPreGenerationKeywordContext(
+  input: Pick<ListingOptimizerInput, "trackedKeywordSignals"> & {
+    includeOptimizerContext?: boolean;
+  },
+): boolean {
+  if (input.includeOptimizerContext === false) {
+    return false;
+  }
+  return countTrackedKeywordSignals(input) > 0;
 }
 
 /**

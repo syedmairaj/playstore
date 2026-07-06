@@ -14,6 +14,7 @@ import {
   readOptimizationQueue,
 } from "@/lib/optimization-queue";
 import type { OptimizationQueueLocale } from "@/lib/optimization-queue";
+import { scheduleSignalCompression } from "@/lib/listing/signal-compressor";
 
 type Ctx = { params: Promise<{ workspaceId: string }> };
 
@@ -155,6 +156,13 @@ export async function POST(request: Request, context: Ctx) {
       body.items,
       { appId: body.appId, userId: user.id },
     );
+
+    scheduleSignalCompression({
+      supabase,
+      workspaceId,
+      locale,
+      appId: body.appId,
+    });
 
     return NextResponse.json({
       ok: true,

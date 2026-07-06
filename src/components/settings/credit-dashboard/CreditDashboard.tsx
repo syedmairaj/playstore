@@ -1,7 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { Brain, Clock, Info, Zap } from "lucide-react";
+import { Brain, Clock, Info, TrendingUp, Zap } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
@@ -193,9 +194,15 @@ export type CreditDashboardProps = {
  * decorative animation path without needing `React.lazy` or a dynamic import.
  */
 export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
+  const t = useTranslations("settings.billing.creditDashboard");
   const [data, setData]       = useState<UsageSummaryPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
+  const [rankingImpact, setRankingImpact] = useState<{
+    averageImprovementPercent: number;
+    keywordCount: number;
+  } | null>(null);
+  const [rankingLoading, setRankingLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -225,6 +232,39 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
     return () => { cancelled = true; };
   }, [workspaceId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/workspaces/${workspaceId}/keywords/ranking-impact`,
+          { credentials: "same-origin" },
+        );
+        const json = (await res.json()) as {
+          ok: boolean;
+          averageImprovementPercent?: number;
+          keywordCount?: number;
+        };
+
+        if (!cancelled && json.ok) {
+          setRankingImpact({
+            averageImprovementPercent: json.averageImprovementPercent ?? 0,
+            keywordCount: json.keywordCount ?? 0,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setRankingImpact({ averageImprovementPercent: 0, keywordCount: 0 });
+        }
+      } finally {
+        if (!cancelled) setRankingLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+
   // ── Error state ─────────────────────────────────────────────────────────────
   if (error) {
     return (
@@ -244,15 +284,18 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
   const usedPct      = credits ? Math.round((credits.used / Math.max(1, credits.total)) * 100) : 0;
   const tokensFill   = efficiency ? Math.min(1, efficiency.tokensSpent / 50_000) : 0;
   const hoursFill    = efficiency ? Math.min(1, efficiency.savedHours / 40) : 0;
+  const rankingFill  = rankingImpact
+    ? Math.min(1, rankingImpact.averageImprovementPercent / 25)
+    : 0;
 
   return (
     <Card className="border-white/[0.08] bg-zinc-950/60 shadow-none">
       <CardHeader className="pb-4">
         <CardTitle className="text-base font-semibold text-zinc-100">
-          AI Credit Usage
+          {t("title")}
         </CardTitle>
         <CardDescription className="text-zinc-500">
-          Live snapshot of your billing period consumption and efficiency gains.
+          {t("hint")}
         </CardDescription>
       </CardHeader>
 
@@ -271,7 +314,10 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
               total={credits?.total ?? 1}
               sublabel={
                 credits
-                  ? `${credits.remaining.toLocaleString()} of ${credits.total.toLocaleString()} credits`
+                  ? t("creditsSublabel", {
+                      remaining: credits.remaining.toLocaleString(),
+                      total: credits.total.toLocaleString(),
+                    })
                   : undefined
               }
             />
@@ -289,7 +335,7 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
                   {credits?.used ?? 0}
                 </span>
                 <span className="text-sm text-zinc-500">
-                  credits used ({usedPct}%)
+                  {t("creditsUsed", { pct: usedPct })}
                 </span>
               </div>
             )}
@@ -317,7 +363,7 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
             {loading ? (
               <EfficiencySkeleton />
             ) : (
-              <div className="grid grid-cols-1 gap-2 xs:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
 
                 {/* Tokens processed chip */}
                 <div className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
@@ -325,7 +371,7 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
                   <div className="min-w-0">
                     <p className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center gap-1">
                       <Brain className="size-2.5 shrink-0" aria-hidden />
-                      Tokens processed
+                      {t("tokensProcessed")}
                     </p>
                     <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-100">
                       {(efficiency?.tokensSpent ?? 0).toLocaleString()}
@@ -339,19 +385,45 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
                   <div className="min-w-0">
                     <p className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center gap-1">
                       <Clock className="size-2.5 shrink-0" aria-hidden />
-                      Hours saved
+                      {t("hoursSaved")}
                       <Tooltip
                         asChild
                         side="top"
                         className="max-w-[280px]"
-                        content="Estimated at a conservative baseline of 12 minutes saved per review for automated multi-market scraping, thematic clustering, and semantic synthesis."
+                        content={t("hoursSavedTooltip")}
                       >
-                        <Info className="size-3.5 text-zinc-500 hover:text-zinc-400 cursor-help shrink-0" aria-label="Hours saved methodology" />
+                        <Info className="size-3.5 text-zinc-500 hover:text-zinc-400 cursor-help shrink-0" aria-label={t("hoursSavedTooltipAria")} />
                       </Tooltip>
                     </p>
                     <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-100">
-                      ~{Math.round(efficiency?.savedHours ?? 0)} hrs
+                      ~{Math.round(efficiency?.savedHours ?? 0)} {t("hoursUnit")}
                     </p>
+                  </div>
+                </div>
+
+                {/* Ranking impact chip */}
+                <div className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
+                  {rankingLoading ? (
+                    <Skeleton className="size-7 rounded-full" />
+                  ) : (
+                    <MicroRing fill={rankingFill} color="#22d3ee" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-500 flex items-center gap-1">
+                      <TrendingUp className="size-2.5 shrink-0" aria-hidden />
+                      {t("rankingImpact")}
+                    </p>
+                    {rankingLoading ? (
+                      <Skeleton className="mt-1 h-4 w-16" />
+                    ) : (
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-100">
+                        {rankingImpact && rankingImpact.keywordCount > 0
+                          ? t("rankingImpactValue", {
+                              pct: rankingImpact.averageImprovementPercent,
+                            })
+                          : t("rankingImpactEmpty")}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -364,7 +436,7 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
         <div className="space-y-2 border-t border-white/[0.06] pt-5">
           <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
             <Zap className="size-3 shrink-0" aria-hidden />
-            30-day spend trend
+            {t("spendTrend")}
           </p>
 
           {/*
@@ -385,7 +457,7 @@ export function CreditDashboard({ workspaceId }: CreditDashboardProps) {
           </Suspense>
 
           <p className="text-[10px] text-zinc-600">
-            Daily credit consumption over the last 30 billing cycles
+            {t("spendTrendHint")}
           </p>
         </div>
 

@@ -7,7 +7,7 @@
 - Database: PostgreSQL.
 - Auth: Supabase or Clerk.
 - AI: OpenAI-compatible API (Phase 1 MVP listing optimizer uses **Google Gemini** via `@google/generative-ai`; other modules may stay OpenAI-compatible later).
-- Jobs: Background worker for tracking and alerts.
+- Jobs: **Upstash QStash** for async listing generation (`POST /api/listings/worker`); keyword rank tracking/alerts may use background workers later.
 
 ## Phase 1 MVP (implemented)
 
@@ -79,91 +79,157 @@
 - Make it easy to maintain.
 - Favor readable code over clever code.
 
+---
 
+## Listing versioning — stateful growth workflow (Session 6, June 2026)
 
-new data:
+The ASO Listing Optimizer now maintains a **version history** that maps every completed pipeline run to a `ListingVersion` row. Status advances manually: `draft` → `published` → `deployed`.
 
-1. Core Stack & Infrastructure
-Framework: Next.js 16 (App Router) at repo root.
+### Version lifecycle
 
-Database & Auth: Supabase (PostgreSQL) with RLS for multi-tenancy.
+```
+POST /api/listings/generate  (producer — async path)
+  → createListingVersion(workspaceId, appId, vaultLocale, source_job_id=jobId)
+  → 202 { jobId, versionId, ... }
 
-AI Engine: Multi-Model Orchestrator.
+Worker completes job
+  → populateListingVersionByJobId(jobId, { title, short, long, keywords })
+  → version.status stays "draft" with full content
 
-Claude 3.5 Sonnet: Primary for ASO and long-form App Descriptions.
+User reviews in DeploymentView
+  → PATCH /api/workspaces/:id/listing-versions/:versionId  { action: "publish" }
+  → version.status = "published", published_at set
 
-Google Gemini 1.5 Pro: Used for Competitor Analysis and large-context scans.
+User deploys to Play Console
+  → PATCH /api/workspaces/:id/listing-versions/:versionId  { action: "deploy" }
+  → version.status = "deployed", deployed_at set
+```
 
-GPT-4o-mini: Used for rapid-fire Ad Copy and Push Notifications.
+### Screenshot captions step
 
-Queue/Background: Inngest or Vercel Cron for keyword rank tracking.
+A new `captions` generation step derives 7 Play Store screenshot captions from the long description's tone and voice. The step is non-credit-billed and can run after `pipeline` completes. Captions are stored in `listing_versions.screenshot_captions` and shown in the **DeploymentView** carousel section.
 
-2. Advanced Tenancy & Wallet (The $2k/mo Engine)
-The system moves from simple rate-limiting to a Consumption-based Wallet.
+### Key new modules
 
-Workspace-Level Credits: Credits are owned by the workspace, not the individual user, allowing team collaboration.
+| Module | Role |
+|--------|------|
+| `src/lib/listing/listing-version.types.ts` | `ListingVersion`, `ScreenshotCaption`, `LiveListingSnapshot`, `CaptionsStepData` types |
+| `src/lib/db/listing-versions.ts` | CRUD layer for `listing_versions` table |
+| `src/lib/gemini/generate-screenshot-captions.ts` | `generateListingPipelineCaptions()` for the `captions` step |
+| `src/components/listing/deployment-view.tsx` | Side-by-side live vs draft comparison UI |
+| `src/components/listing/version-history-panel.tsx` | Version list + embedded DeploymentView |
+| `app/api/workspaces/[workspaceId]/listing-versions/route.ts` | `GET` (list) + `POST` (create) |
+| `app/api/workspaces/[workspaceId]/listing-versions/[versionId]/route.ts` | `GET` (single) + `PATCH` (status/actions) |
 
-Immutable Ledger: Every AI generation must create a record in credits_ledger before the API returns the result.
+### EN/AR support
 
-Credit Costs:
+Both `vault_locale = 'en'` and `vault_locale = 'ar'` versions are tracked independently. `DeploymentView` and `VersionHistoryPanel` accept an `isRtl` prop. All i18n keys are under `optimizer.deployment.*` and `optimizer.versionHistory.*`.
 
-ASO Growth Pack: 5 Credits.
+---
 
-Ad Copy / Push Hooks: 1 Credit.
+## Listing generation — async producer/worker (Session 5, June 2026)
 
-Localization: 2 Credits.
+Long modular pipelines exceed Vercel serverless timeouts. Generation is split into a **producer** (user-facing) and **worker** (background).
 
-3. System Modules (v2)
-AI Orchestrator (lib/features/ai/): Manages prompt injection, model selection, and streaming chunks to the UI.
+### Flow
 
-Wallet & Billing (lib/features/billing/): Handles Stripe Webhooks, credit replenishment, and consumption checks.
+```
+Client → POST /api/listings/generate (producer)
+  → auth, credit precheck, context gateway (stamp + compile)
+  → orchestrator executionMode: "read" (phase guard only)
+  → if WAITING_FOR_PHASES → 202 (client polls jobId)
+  → Redis SET NX lock on (workspaceId, queueHash)
+  → upsert workspace_listing_drafts (pending, job_id)
+  → QStash publish → POST /api/listings/worker
+  → 202 { jobId, status: "pending" }
 
-Visualizer Service (components/features/visualizer/): A specialized UI component that renders AI JSON into real-time mockups (Phone, FB Ad, Play Store listing).
+Worker → POST /api/listings/worker
+  → verify QStash signature (or INTERNAL_WORKER_SECRET in dev)
+  → executionMode: "execute" → runListingGenerationOrchestrator
+  → serialized pipeline: title → short → long (phase guard between steps)
+  → post-success credit debit → generation_status: completed
+  → on failure: generation_error, refund, release Redis lock
 
-Keyword Pipeline: Automated daily tracking of SERP positions via Supabase Edge Functions.
+Client → GET /api/listings/status?jobId= (poll until completed | failed)
+```
 
-Localization Engine: Specialized prompts for MENA region (Arabic MSA/Gulf) and global markets.
+**Exceptions:** `isDraft: true` (instant preview) stays **synchronous** on the producer route.
 
-4. Database Schema (Additions)
-credits_ledger: id, workspace_id, amount, description, source_type (generation/purchase).
+### Key modules
 
-ai_generations: Updated to include tool_type (aso, ads, push) and metadata (model used, tokens spent).
+| Module | Role |
+|--------|------|
+| `src/lib/listing/context-gateway.ts` | `stampAndCompileListingContext()` — atomic keyword stamp + step-scoped signal compile |
+| `src/lib/listing/sync-queue-hash.ts` | Sets `workspace_keywords.queue_hash` for staged rows |
+| `src/lib/listing/generation-queue-hash-lock.ts` | Upstash Redis `SET NX` — one in-flight pipeline per queue hash |
+| `src/lib/listing/modular-phase-guard.ts` | `checkModularPhaseOrder()` (read) vs `assertModularPhaseOrder()` (execute) |
+| `src/lib/listing/modular-pipeline-state-machine.ts` | Pipeline step state transitions |
+| `src/lib/listing/listing-generation-executor.ts` | Worker job runner |
+| `src/lib/qstash/publish-listing-generation.ts` | Enqueue to Upstash QStash |
+| `src/lib/db/listing-generation-job.ts` | Draft row job lifecycle (`pending` → `processing` → `completed` \| `failed`) |
 
-competitor_tracking: Stores competitor package names and their historical rank shifts.
+### Phase guard semantics
 
-5. The "Growth Loop" Data Flow
-Ingestion: User adds an app; system triggers a background scan of current Play Store metadata.
+- **Producer (`executionMode: "read"`):** `checkModularPhaseOrder()` returns `{ ok: false, code: "WAITING_FOR_PHASES" }` when prerequisite draft phases are not persisted — HTTP **202**, not 500.
+- **Worker (`executionMode: "execute"`):** `assertModularPhaseOrder()` throws `modular_phase_order_conflict` for internal consistency.
+- **Pipeline entry:** Individual `title`/`short`/`long` without `pipeline` or `isRegenerate` → `409 modular_pipeline_required`.
 
-Audit: ASO Score service analyzes current keywords vs. competitors.
+### Environment
 
-Generation: User selects a tool. The AI Orchestrator fetches the "App Context" (keywords, score, category) and sends it to the best model.
+| Variable | Purpose |
+|----------|---------|
+| `QSTASH_TOKEN` | Publish async jobs |
+| `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | Verify worker callbacks |
+| `QSTASH_CALLBACK_URL` or `NEXT_PUBLIC_APP_URL` | Worker URL target |
+| `INTERNAL_WORKER_SECRET` | Local dev worker invoke without QStash |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Queue-hash locks |
 
-Live Stream: Text streams into the Mobile Visualizer on the dashboard.
+See `docs/api.md` for request/response contracts and `docs/database.md` for `workspace_listing_drafts` job columns.
 
-Deduction: On successful stream completion, the Wallet Service commits the credit deduction.
+---
 
-6. Implementation Principles
-Agentic Prompts: Don't just ask for a description; provide the AI with the "Current Rank" and "Target Keywords" as context.
+## Context gateway (keyword stamping)
 
-Failsafe Auth: Use middleware.ts to ensure users with negative credit balances are redirected to the pricing page.
+Before generation, the **Context Gateway** binds staged Keyword Tracker rows to the active optimization queue hash and compiles step-scoped signals.
 
-Shadow Mode: New features ship under FF_ (Feature Flags) in lib/features/flags/ before public release.
+1. **`syncQueueHash`** — `UPDATE workspace_keywords SET queue_hash = … WHERE workspace_id, app_id, is_staged`.
+2. **`stampAndCompileListingContext`** — atomic stamp + `compileContextForStep()` for the requested `generationStep`.
+3. **Gate:** Zero staged keywords → `400 KEYWORD_CONTEXT_REQUIRED` (no blind generation).
 
-7. Code Layout
-lib/features/product/growth-suite/ — Logic for Ad copy, Push hooks, and ASO bundles.
+**Step-scoped context:**
+- Title / short: top 5 keywords
+- Long / full / finalize: top 5 keywords + 2 competitor signals
 
-lib/features/billing/ — Wallet, ledger logic, and Stripe integration.
+Index: `workspace_keywords_queue_hash_idx` on `queue_hash` (migration `20260622150000`).
 
-components/features/visualizer/ — The CSS-based Phone Frame and Mockup components.
+Vault integration unchanged: Active Context still reads **only** `features.optimization_queue`; the gateway reads `workspace_keywords` + queue synthesis, not raw discovery namespaces.
+
+---
+
+## Billing observability (Session 5)
+
+### Granular phase telemetry
+
+Table `listing_generation_costs` logs per-phase token and credit usage after each Gemini phase in the worker. Aggregated by `GET /api/billing/usage-breakdown` (title / short / long / full bars in Settings billing dashboard).
+
+### Monthly credit cap
+
+`workspaces.monthly_credit_cap` (nullable) — user-defined budget. `evaluate-credit-budget-alert.ts` fires `credit_budget_warning` at 80% of cap. UI in Settings → Integrations & Alerts via `updateBudgetCap()`.
+
+### Ranking impact
+
+`GET /api/workspaces/:id/keywords/ranking-impact` — average `recent_rank_gain` over 7-day window; displayed as chip in credit dashboard.
 
 ---
 
 ## Implemented: workspace wallet + ledger (listing AI)
 
 - **Table:** `credits_ledger` (append-only; negative `amount` = spend, positive = refund/top-up).
-- **RPCs:** `consume_workspace_ai_credits` (member + balance check, row lock, debit + ledger row) and `refund_workspace_ai_credits` (reverses a spend; idempotent via `already_refunded`).
-- **API:** `POST /api/listings/generate`, `POST /api/listings/optimizer-autofill`, and `POST /api/apps/suggest` read `ai_credits_remaining` (non-mutating) when credits are required, then call `consumeWorkspaceAiCredits` **before** the external provider (`SELECT … FOR UPDATE` in the RPC); on hard failure they call `refundWorkspaceAiCredits`, so **net balance matches a successful outcome**. Keyword Tracker **live preview** (`POST /api/serper/play-store-search`) and **refresh** (`POST …/keywords/:keywordId/serper-refresh`) use the same wallet pattern for Serper (**debit before Serper**, **refund on throw**). Successful full listing runs persist `listing_generations.credits_ledger_id` and `tool_type = aso_listing`. Autofill does not create a `listing_generations` row.
-- **Costs:** `lib/features/billing/credit-costs.ts` — `listing_generation` = **5** credits per full listing run (including regenerate with `userInstruction`); `listing_optimizer_autofill` = **3** credits per single-field autofill click (keywords or features); **`serper_preview_per_country`** = **1** credit per market for **live preview** (`POST /api/serper/play-store-search`, per selected country) and **per-keyword refresh** (`serper-refresh`). **`reviews_ai_reply`** = **1** credit per AI reply draft on the Reviews dashboard (`POST …/reviews/:reviewId/draft-reply`). **`POST …/keywords/serper-save`** does not debit (persists an already-paid preview).
+- **RPCs:** `consume_workspace_ai_credits` (member + balance check, row lock, debit + ledger row) and `refund_workspace_ai_credits` (reverses a spend; idempotent via `already_refunded`). Modular regenerates use `consume_modular_listing_regenerate` (trial slots 0–2 free, then 1 credit).
+- **Modular pipeline billing (Session 4–5):** Pipeline, full, and finalize steps debit **post-success** in the worker after orchestrator + Zod validation succeed; refunds on hard worker failure. Regenerate steps use trial slot or 1 credit post-success.
+- **API:** `POST /api/listings/generate` (producer — validates, enqueues, or sync draft), `POST /api/listings/worker` (consumer), `GET /api/listings/status`. Legacy routes `POST /api/listings/optimizer-autofill` and `POST /api/apps/suggest` still debit before provider call. Keyword Tracker Serper preview/refresh uses debit-before, refund-on-failure.
+- **Costs:** `lib/features/billing/credit-costs.ts` — `listing_generation` = **5** credits; `modular_listing_regenerate` = **1** credit (after trial slots); `listing_optimizer_autofill` = **3**; `serper_preview_per_country` = **1**; `reviews_ai_reply` = **1**.
+- **Telemetry:** `listing_generation_costs` table + `GET /api/billing/usage-breakdown` for per-phase aggregates (Settings dashboard).
 
 ### AI Image Engine (Runware Integration)
 - **Endpoint:** `https://api.runware.ai/v1`

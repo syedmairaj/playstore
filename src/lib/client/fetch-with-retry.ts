@@ -18,15 +18,23 @@ function shouldRetryResponse(
   return retryStatuses.includes(response.status);
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 /**
  * fetch with exponential backoff for transient provider / gateway failures.
+ * When `init.signal` is set, retries are disabled and abort propagates immediately.
  */
 export async function fetchWithRetry(
   input: RequestInfo | URL,
   init?: RequestInit,
   options?: FetchWithRetryOptions,
 ): Promise<Response> {
-  const maxAttempts = Math.max(1, options?.maxAttempts ?? 3);
+  const hasAbortSignal = Boolean(init?.signal);
+  const maxAttempts = hasAbortSignal
+    ? 1
+    : Math.max(1, options?.maxAttempts ?? 3);
   const baseDelayMs = options?.baseDelayMs ?? 1000;
   const retryStatuses = options?.retryStatuses ?? DEFAULT_RETRY_STATUSES;
 
@@ -34,6 +42,10 @@ export async function fetchWithRetry(
   let lastResponse: Response | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (init?.signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     try {
       const response = await fetch(input, init);
       lastResponse = response;
@@ -45,6 +57,9 @@ export async function fetchWithRetry(
 
       return response;
     } catch (error) {
+      if (isAbortError(error) || init?.signal?.aborted) {
+        throw error;
+      }
       lastError = error;
       if (attempt >= maxAttempts) break;
       await sleep(baseDelayMs * 2 ** (attempt - 1));

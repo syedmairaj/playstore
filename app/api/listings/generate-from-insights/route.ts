@@ -47,6 +47,8 @@ import type { ToneStyle } from "@/lib/types/listing";
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const maxDuration = 300;
+
 const ROUTE      = "POST /api/listings/generate-from-insights";
 const LOCK_ACTION = "listing_generate"; // shares lock namespace with manual generate
 

@@ -120,6 +120,94 @@ export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
 
 export type ListingGenerationOutput = z.infer<typeof listingGenerationOutputSchema>;
 
+function mergeOptionalPersistedListingFields(
+  base: ListingGenerationCore,
+  raw: Record<string, unknown>,
+): ListingGenerationOutput {
+  const merged: ListingGenerationOutput = { ...base };
+
+  const asoBundle = tryParseListingAsoBundle(raw);
+  if (asoBundle.ok) {
+    merged.asoScore = asoBundle.value.asoScore;
+    merged.scoreBreakdown = asoBundle.value.scoreBreakdown;
+    merged.improvementTips = asoBundle.value.improvementTips;
+  } else if (typeof raw.asoScore === "number" && Number.isFinite(raw.asoScore)) {
+    merged.asoScore = Math.round(raw.asoScore);
+  }
+
+  if (raw.asoScoreDegraded === true) {
+    merged.asoScoreDegraded = true;
+  }
+
+  for (const key of [
+    "strategySummary",
+    "strategicNote",
+    "ctaSuggestion",
+    "whatsNew",
+  ] as const) {
+    const v = raw[key];
+    if (typeof v === "string" && v.trim()) {
+      merged[key] = v.trim();
+    }
+  }
+
+  if (Array.isArray(raw.screenshotCaptions)) {
+    const captions = raw.screenshotCaptions.filter(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    );
+    if (captions.length > 0) {
+      merged.screenshotCaptions = captions;
+    }
+  }
+
+  if (raw.abTestVariant && typeof raw.abTestVariant === "object") {
+    const ab = raw.abTestVariant as Record<string, unknown>;
+    if (
+      typeof ab.titleB === "string" &&
+      ab.titleB.trim() &&
+      typeof ab.hypothesis === "string" &&
+      ab.hypothesis.trim()
+    ) {
+      merged.abTestVariant = {
+        titleB: ab.titleB.trim(),
+        hypothesis: ab.hypothesis.trim(),
+      };
+    }
+  }
+
+  if (raw.strategicRationale && typeof raw.strategicRationale === "object") {
+    const sr = raw.strategicRationale as Record<string, unknown>;
+    if (
+      typeof sr.strategicIntent === "string" &&
+      typeof sr.exploitationResolutionSummary === "string" &&
+      typeof sr.roiPrediction === "string"
+    ) {
+      merged.strategicRationale = {
+        strategicIntent: sr.strategicIntent,
+        exploitationResolutionSummary: sr.exploitationResolutionSummary,
+        roiPrediction: sr.roiPrediction,
+      };
+    }
+  }
+
+  if (raw.listingVariants && typeof raw.listingVariants === "object") {
+    const parsedVariants = listingGenerationOutputSchema.shape.listingVariants.safeParse(
+      raw.listingVariants,
+    );
+    if (parsedVariants.success) {
+      merged.listingVariants = parsedVariants.data;
+    }
+  }
+
+  const parsedOrchestration =
+    listingGenerationOutputSchema.shape.orchestration.safeParse(raw.orchestration);
+  if (parsedOrchestration.success) {
+    merged.orchestration = parsedOrchestration.data;
+  }
+
+  return merged;
+}
+
 /** Hydration / DB read: tolerate legacy rows or partial ASO by falling back to core-only. */
 export function parsePersistedListingOutput(
   raw: unknown,
@@ -127,7 +215,9 @@ export function parsePersistedListingOutput(
   const full = listingGenerationOutputSchema.safeParse(raw);
   if (full.success) return full.data;
   const core = listingGenerationCoreSchema.safeParse(raw);
-  return core.success ? { ...core.data } : null;
+  if (!core.success) return null;
+  if (!raw || typeof raw !== "object") return { ...core.data };
+  return mergeOptionalPersistedListingFields(core.data, raw as Record<string, unknown>);
 }
 
 function sumBreakdown(b: ListingScoreBreakdown): number {

@@ -4,6 +4,7 @@ import { clampListingGenerationParsed } from "@/lib/gemini/clamp-listing-generat
 import type { ClampListingResult } from "@/lib/gemini/clamp-listing-generation-parsed";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { checkFinishReason, extractText, isBlockedFinishReason } from "@/lib/ai/extract-model-text";
+import { resolveTokensFromGeminiResponse } from "@/lib/gemini/gemini-token-usage";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
 import {
   normalizeListingGenerationParsed,
@@ -26,6 +27,7 @@ import {
   tryParseListingAsoBundle,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
+import type { ZodError } from "zod";
 
 /** Headroom for full listing JSON (core + v11 variants + Arabic copy). */
 const LISTING_MAX_OUTPUT_TOKENS = 32_768;
@@ -70,11 +72,11 @@ function parseStrategicRationale(
 function parseVariantSlice(raw: unknown): ListingVariantFields | null {
   const o = asRecord(raw);
   if (!o) return null;
-  const title = typeof o.title === "string" ? o.title.trim() : "";
+  const title = typeof o.title === "string" ? o.title.trim().slice(0, 30) : "";
   const shortDescription =
-    typeof o.shortDescription === "string" ? o.shortDescription.trim() : "";
+    typeof o.shortDescription === "string" ? o.shortDescription.trim().slice(0, 80) : "";
   const fullDescription =
-    typeof o.fullDescription === "string" ? o.fullDescription.trim() : "";
+    typeof o.fullDescription === "string" ? o.fullDescription.trim().slice(0, 4000) : "";
   if (!title || !shortDescription || !fullDescription) return null;
   const whatsNew =
     typeof o.whatsNew === "string" && o.whatsNew.trim()
@@ -92,6 +94,33 @@ function parseListingVariants(
   const growth = parseVariantSlice(o.growth);
   if (!aggressive || !growth) return null;
   return { aggressive, growth };
+}
+
+/** Drop optional v8/v11 extensions that fail schema — keep core Play fields. */
+function salvageListingOutputAfterOptionalFailure(
+  data: ListingGenerationOutput,
+): ListingGenerationOutput | null {
+  const core = listingGenerationCoreSchema.safeParse(data);
+  if (!core.success) return null;
+
+  const salvaged: ListingGenerationOutput = { ...core.data };
+
+  if (data.asoScore != null && data.scoreBreakdown && data.improvementTips?.length) {
+    const withAso = listingGenerationOutputSchema.safeParse({
+      ...salvaged,
+      asoScore: data.asoScore,
+      scoreBreakdown: data.scoreBreakdown,
+      improvementTips: data.improvementTips,
+      ...(data.asoScoreDegraded ? { asoScoreDegraded: true as const } : {}),
+    });
+    if (withAso.success) return withAso.data;
+  }
+
+  if (data.asoScoreDegraded) {
+    salvaged.asoScoreDegraded = true;
+  }
+
+  return salvaged;
 }
 
 // ── Structured-output schema ──────────────────────────────────────────────────
@@ -231,6 +260,8 @@ const STRICT_RETRY_ADDENDUM =
 
 export type GenerateListingWithGeminiResult = {
   data: ListingGenerationOutput;
+  /** Total Gemini tokens consumed across attempts. */
+  tokensUsed: number;
   /** True when ASO scoring was attempted but failed validation — copy is still valid. */
   asoScorePartial: boolean;
   /** True when the first attempt failed and a server-side retry succeeded. */
@@ -279,6 +310,8 @@ async function attemptGeneration(
         : LISTING_MAX_OUTPUT_TOKENS,
     },
   });
+
+  const tokensUsed = resolveTokensFromGeminiResponse(result);
 
   const finish = checkFinishReason(result);
   const finishReason = finish.finishReason;
@@ -376,7 +409,9 @@ async function attemptGeneration(
     ...(typeof clampedRecord.whatsNew === "string" && clampedRecord.whatsNew.trim()
       ? { whatsNew: clampedRecord.whatsNew }
       : {}),
-    ...(Array.isArray(clampedRecord.screenshotCaptions) && clampedRecord.screenshotCaptions.length > 0
+    ...(Array.isArray(clampedRecord.screenshotCaptions) &&
+    clampedRecord.screenshotCaptions.length >= 3 &&
+    clampedRecord.screenshotCaptions.length <= 6
       ? { screenshotCaptions: clampedRecord.screenshotCaptions as string[] }
       : {}),
     ...(clampedRecord.abTestVariant !== null &&
@@ -407,11 +442,23 @@ async function attemptGeneration(
 
   const orchestration = extractOrchestrationFromParsed(clampedRecord);
   if (orchestration) {
-    data = applyOrchestrationToListingOutput(
-      data,
-      orchestration,
-      input.strategyMode ?? "defensive",
-    );
+    try {
+      data = applyOrchestrationToListingOutput(
+        data,
+        orchestration,
+        input.strategyMode ?? "defensive",
+      );
+    } catch (orchApplyError) {
+      console.log(
+        JSON.stringify({
+          event: "listing_orchestration_apply_failed",
+          message:
+            orchApplyError instanceof Error
+              ? orchApplyError.message
+              : String(orchApplyError),
+        }),
+      );
+    }
   }
 
   let asoScorePartial = false;
@@ -431,13 +478,42 @@ async function attemptGeneration(
   // ── Final validation ──────────────────────────────────────────────────────
   const final = listingGenerationOutputSchema.safeParse(data);
   if (!final.success) {
+    const salvaged = salvageListingOutputAfterOptionalFailure(data);
+    if (salvaged) {
+      if (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1") {
+        console.warn(
+          `[listing-generate${isRetry ? "/retry" : ""}] optional fields failed schema — salvaged core listing`,
+          JSON.stringify(final.error.flatten(), null, 2),
+        );
+      }
+      return {
+        data: salvaged,
+        tokensUsed,
+        asoScorePartial,
+        retried: isRetry,
+        shortDescriptionClamped,
+      };
+    }
+
+    if (process.env.NODE_ENV !== "production" || process.env.DEBUG_GEMINI === "1") {
+      console.error(
+        `[listing-generate${isRetry ? "/retry" : ""}] finalSchema failure:`,
+        JSON.stringify(final.error.flatten(), null, 2),
+      );
+    }
     throw new InvalidModelOutputError(
       "Model output failed final schema validation. Please try again.",
-      { zodError: final.error, truncated, finishReason },
+      { zodError: final.error as ZodError, truncated, finishReason },
     );
   }
 
-  return { data: final.data, asoScorePartial, retried: isRetry, shortDescriptionClamped };
+  return {
+    data: final.data,
+    tokensUsed,
+    asoScorePartial,
+    retried: isRetry,
+    shortDescriptionClamped,
+  };
 }
 
 // ── Public entry point — with one automatic server-side retry ────────────────
@@ -468,9 +544,14 @@ export async function generateListingWithGemini(
         finishReason: firstErr.finishReason,
       });
     }
-    return await attemptGeneration(input, {
+    const retry = await attemptGeneration(input, {
       isRetry: true,
       afterTruncation: firstErr.truncated,
     });
+    return {
+      ...retry,
+      tokensUsed: retry.tokensUsed,
+      retried: true,
+    };
   }
 }

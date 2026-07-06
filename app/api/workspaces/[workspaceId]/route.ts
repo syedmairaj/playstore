@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { maybeCreateCreditBudgetAlert } from "@/lib/features/billing/evaluate-credit-budget-alert";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { patchWorkspaceSchema } from "@/lib/validation/api";
@@ -47,6 +48,9 @@ export async function PATCH(request: Request, context: Ctx) {
     if (parsed.plan != null && role === "owner") {
       updates.plan = parsed.plan;
     }
+    if (parsed.monthly_credit_cap !== undefined) {
+      updates.monthly_credit_cap = parsed.monthly_credit_cap;
+    }
     if (Object.keys(updates).length === 0) {
       return NextResponse.json(
         { ok: false, error: { code: "validation_error", message: "No valid fields" } },
@@ -58,7 +62,7 @@ export async function PATCH(request: Request, context: Ctx) {
       .from("workspaces")
       .update(updates)
       .eq("id", workspaceId)
-      .select("id,name,plan,onboarding_state")
+      .select("id,name,plan,onboarding_state,monthly_credit_cap")
       .single();
 
     if (error || !data) {
@@ -66,6 +70,10 @@ export async function PATCH(request: Request, context: Ctx) {
         { ok: false, error: { code: "update_error", message: error?.message ?? "Failed" } },
         { status: 400 },
       );
+    }
+
+    if (parsed.monthly_credit_cap !== undefined) {
+      await maybeCreateCreditBudgetAlert({ workspaceId, supabase });
     }
 
     return NextResponse.json({ ok: true, workspace: data });

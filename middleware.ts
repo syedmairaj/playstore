@@ -11,6 +11,12 @@ import { routing } from "./i18n/routing";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
+const LISTING_GENERATE_API_PATH = "/api/listings/generate";
+
+function isListingGenerateApi(pathname: string): boolean {
+  return pathname === LISTING_GENERATE_API_PATH;
+}
+
 function forwardCookies(from: NextResponse, to: NextResponse) {
   from.cookies.getAll().forEach((c) => {
     to.cookies.set(c.name, c.value);
@@ -56,25 +62,62 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/api/auth");
 
   if (pathname.startsWith("/api") && !isPublicApi) {
+    const debugListingGenerate = isListingGenerateApi(pathname);
+    if (debugListingGenerate) {
+      console.log(
+        "--- [DEBUG] Middleware: entering protected API path",
+        pathname,
+      );
+    }
     const apiResponse = NextResponse.next({ request });
     const supabase = createSupabaseMiddlewareClient(request, apiResponse);
     if (supabase) {
       try {
+        if (debugListingGenerate) {
+          console.log("[DEBUG] Middleware: before supabase.auth.getUser()");
+        }
         const {
           data: { user },
         } = await supabase.auth.getUser();
+        if (debugListingGenerate) {
+          console.log("[DEBUG] Middleware: after supabase.auth.getUser()", {
+            hasUser: Boolean(user),
+          });
+        }
         if (user) {
+          if (debugListingGenerate) {
+            console.log("[DEBUG] Middleware: before fetchProfileAccountStatus()");
+          }
           const status = await fetchProfileAccountStatus(supabase, user.id);
+          if (debugListingGenerate) {
+            console.log("[DEBUG] Middleware: after fetchProfileAccountStatus()", {
+              status,
+            });
+          }
           if (isProfileAccessBlocked(status)) {
             return NextResponse.json(suspendedAccountJsonResponse(), {
               status: 403,
             });
           }
         }
-      } catch {
+      } catch (error) {
+        if (debugListingGenerate) {
+          const message =
+            error instanceof Error ? error.message : "unknown middleware error";
+          console.warn("[DEBUG] Middleware: API auth block failed (fail-open)", {
+            message,
+          });
+        }
         // Supabase auth fetch can fail on cold-start or network blip in the
         // edge runtime. Fail open — let the API route's own auth check handle it.
       }
+    } else if (debugListingGenerate) {
+      console.warn(
+        "[DEBUG] Middleware: Supabase client unavailable (missing env)",
+      );
+    }
+    if (debugListingGenerate) {
+      console.log("[DEBUG] Middleware: forwarding to route handler");
     }
     return apiResponse;
   }

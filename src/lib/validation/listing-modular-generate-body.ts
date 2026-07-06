@@ -1,10 +1,12 @@
-import { z } from "zod";
+import { z, type ZodError } from "zod";
 import { orchestrationProtocolSchema } from "@/lib/listing/orchestration-protocol.schema";
 import {
   modularListingDraftStateSchema,
   modularListingFinalizeStateSchema,
 } from "@/lib/listing/modular-listing.types";
 import { listingGenerateBodySchema } from "@/lib/validation/listing-generate-body";
+import { sanitizeModularListingForApiIngress } from "@/lib/listing/sanitize-modular-listing-for-api";
+import type { ModularListingState } from "@/lib/listing/modular-listing.types";
 
 export {
   modularListingStateSchema,
@@ -28,6 +30,7 @@ export const modularTitlePayloadSchema = z.object({
 });
 
 export const generationStepSchema = z.enum([
+  "pipeline",
   "full",
   "title",
   "short",
@@ -36,14 +39,33 @@ export const generationStepSchema = z.enum([
   "features",
   "closing",
   "finalize",
+  "captions",
 ]);
 
 const lockedKeywordItemSchema = z.string().trim().min(1).max(80);
 
+/** Play Console / modular prompt cap — vault queues may exceed this; trim before validate. */
+export const MAX_LOCKED_KEYWORDS = 20;
+
+export function capLockedKeywords(keywords: readonly string[]): string[] {
+  return keywords
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, MAX_LOCKED_KEYWORDS);
+}
+
+/** First Zod issue as a short client-facing message. */
+export function formatFirstZodIssueMessage(error: ZodError): string {
+  const issue = error.issues[0];
+  if (!issue) return "Invalid input";
+  const prefix = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
+  return `${prefix}${issue.message}`;
+}
+
 /** Coerce request lockedKeywords — never undefined; may be empty []. */
 export const lockedKeywordsRequestSchema = z
   .array(lockedKeywordItemSchema)
-  .max(20)
+  .max(MAX_LOCKED_KEYWORDS)
   .default([]);
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -94,7 +116,33 @@ export function normalizeModularGenerateRequest(raw: unknown): unknown {
     o.contextTitle = mlTitle.value.trim().slice(0, 30);
   }
 
-  o.lockedKeywords = lockedKeywords;
+  if (modularListing) {
+    o.modularListing = sanitizeModularListingForApiIngress(
+      modularListing as unknown as ModularListingState,
+    );
+  }
+
+  const step = typeof o.generationStep === "string" ? o.generationStep : "full";
+  if (
+    (step === "short" ||
+      step === "long" ||
+      step === "hook" ||
+      step === "features" ||
+      step === "closing") &&
+    typeof o.contextTitle !== "string" &&
+    typeof o.appName === "string" &&
+    o.appName.trim()
+  ) {
+    const mlTitle =
+      modularListing && asRecord(modularListing.title)
+        ? asRecord(modularListing.title)?.value
+        : undefined;
+    if (typeof mlTitle !== "string" || !mlTitle.trim()) {
+      o.contextTitle = o.appName.trim().slice(0, 30);
+    }
+  }
+
+  o.lockedKeywords = capLockedKeywords(lockedKeywords);
   return o;
 }
 
@@ -143,7 +191,8 @@ export const listingModularGenerateBodySchema = z
     if (
       (step === "short" || step === "long" || step === "hook" || step === "features" || step === "closing") &&
       !data.contextTitle?.trim() &&
-      !data.modularListing?.title?.value?.trim()
+      !data.modularListing?.title?.value?.trim() &&
+      !data.appName?.trim()
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -161,8 +210,12 @@ export function isModularGenerationStep(
   return step !== "full" && step !== "finalize";
 }
 
-export function isCreditBilledStep(step: z.infer<typeof generationStepSchema>): boolean {
-  return step === "full" || step === "finalize";
+export function isCreditBilledStep(
+  step: z.infer<typeof generationStepSchema>,
+  options?: { isDraft?: boolean },
+): boolean {
+  if (options?.isDraft) return false;
+  return step === "full" || step === "finalize" || step === "pipeline";
 }
 
 /** Resolve locked keywords for title step — body array, orchestration anchor, or targetKeywords. */
@@ -170,8 +223,9 @@ export function resolveRequestLockedKeywords(
   body: ListingModularGenerateBody,
 ): string[] {
   if (body.lockedKeywords.length > 0) return body.lockedKeywords;
-  if (body.orchestration?.modules.anchor.lockedKeywords.length) {
-    return body.orchestration.modules.anchor.lockedKeywords;
+  const anchorLocked = body.orchestration?.modules?.anchor?.lockedKeywords;
+  if (anchorLocked?.length) {
+    return anchorLocked;
   }
   return body.targetKeywords;
 }

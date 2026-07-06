@@ -2,12 +2,13 @@
 
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import type { ListingOptimizerHydrationPayload } from "@/lib/listing/latest-listing-hydration";
+import { listingOutputForPublicationState } from "@/lib/listing/listing-export-unlock";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import {
   applyOrchestrationToListingOutput,
@@ -21,7 +22,11 @@ import {
   PlayConsoleExportDialog,
   type PlayConsoleExportCopyField,
 } from "@/components/listing/play-console-export-dialog";
-import { clampListingTexts } from "@/components/listing/optimizer/listing-field-limits";
+import {
+  clampListingTexts,
+  coerceListingText,
+  hasListingUnlockCoreCopy,
+} from "@/components/listing/optimizer/listing-field-limits";
 import {
   OptimizerResultsGeneratingView,
   OptimizerResultsPanel,
@@ -64,8 +69,12 @@ import { precheckAddApp } from "@/lib/client/precheck-add-app";
 import {
   clearFinalListingCache,
   finalListingCacheToOutput,
+  isFinalListingCachePublicationUnlocked,
   listingOutputToFinalListingCache,
   readFinalListingCache,
+  readFinalListingCacheSavedAtMs,
+  shouldPreferFinalListingCacheOverHydration,
+  shouldWritePreviewFinalListingCache,
   writeFinalListingCache,
 } from "@/lib/client/listing-optimizer-generated-cache";
 import {
@@ -85,6 +94,8 @@ import {
 } from "@/lib/features/billing/credit-costs";
 import { normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS, canPurchaseCreditTopUps } from "@/lib/plan-limits";
 import { refreshWorkspaceContext } from "@/lib/client/refresh-workspace-context";
+import { formatInstallCtasForCopy } from "@/lib/listing/cta-suggestions-utils";
+import { useWorkspaceCredits } from "@/contexts/WorkspaceCreditsContext";
 import {
   parseLogoGeneratorMetadata,
   resolveListingPreviewIconUrl,
@@ -137,13 +148,17 @@ import {
 } from "@/lib/client/optimization-queue-store";
 import {
   buildSynthesisFromOptimizationQueue,
-  EMPTY_SYNTHESIS_VAULT_MESSAGE,
   assessVaultSynthesisReadiness,
   buildVaultSynthesisWarnings,
   logStagingVaultPreSynthesis,
   verifyQueueHashSignalPopulation,
 } from "@/lib/optimization-queue";
-import { buildWarningsPayload } from "@/lib/listing/listing-generation-warnings";
+import {
+  fetchDraftState,
+  type ListingDraftPersistState,
+} from "@/lib/client/fetch-listing-draft-client";
+import { generateInstantDraftListing, type InstantDraftListingSuccess } from "@/lib/client/instant-draft-listing-client";
+import { capLockedKeywords } from "@/lib/validation/listing-modular-generate-body";
 import { computeActiveContextQueueHashClient } from "@/lib/optimization-queue/optimization-queue-hash-client";
 import { pickTopAutoStageInsightInputs } from "@/lib/optimization-queue/auto-stage-top-insights";
 import type { OptimizationQueueItem } from "@/lib/optimization-queue";
@@ -153,14 +168,16 @@ import {
   generateOptimizedListing,
   type GenerateOptimizedListingSuccess,
 } from "@/lib/listing/generate-optimized-listing";
-import { modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
+import { listingCopyToModularState, modularStateToListingCopy } from "@/lib/listing/assemble-modular-listing";
 import { normalizeHighlightKeywords } from "@/lib/listing/keyword-highlight";
 import type { ListingHealthFixActionId } from "@/lib/listing/listing-health-fix-actions";
 import type { LongDescriptionAiTool } from "@/components/listing/optimizer/long-description-aso-editor";
 import type { ModularGenerateBaseInput } from "@/lib/client/modular-listing-generate-client";
 import { useModularGeneration } from "@/hooks/useModularGeneration";
+import { useListingPipeline } from "@/hooks/useListingPipeline";
+import { PipelineProgressShell } from "@/components/listing/optimizer/pipeline-progress-shell";
 import { shortVariationText } from "@/lib/listing/modular-short-variations";
-import { useDraftPersistence } from "@/hooks/useDraftPersistence";
+import { useDraftPersistence, readModularDraftSavedAtMs } from "@/hooks/useDraftPersistence";
 import type {
   ModularListingBlockId,
   ModularListingDraftSnapshot,
@@ -566,10 +583,10 @@ function StagingWorkspaceSection({
             <div className="mb-2 flex items-center gap-1.5">
               <Shield className="size-3 shrink-0 text-amber-400/80" aria-hidden />
               <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-400/80">
-                {isRtl ? "نقاط ضعف المنافسين" : "Competitor Weaknesses"}
+                {t("competitorWeaknessesTitle")}
               </span>
               <span className="text-[10px] text-white/25">
-                {isRtl ? "← تُستخدم لإبراز التميز في الوصف الطويل" : "→ position you as the superior alternative"}
+                {t("competitorWeaknessesHint")}
               </span>
             </div>
             {competitorWeaknesses.length > 0 ? (
@@ -707,6 +724,8 @@ export function ListingOptimizer({
   const [listingGenerationId, setListingGenerationId] = useState<
     string | undefined
   >();
+  /** True after paid full AI / finalize — unlocks copy, export, and Play Console publish. */
+  const [listingExportUnlocked, setListingExportUnlocked] = useState(false);
   const [trackKwBusy, setTrackKwBusy] = useState(false);
   /** Dedicated debounce flag: set true the instant a credit-consuming action is dispatched,
    *  cleared in the finally block. Prevents double-click / double-fire before React re-renders. */
@@ -740,6 +759,15 @@ export function ListingOptimizer({
     typeof initialAiCreditsRemaining === "number"
       ? initialAiCreditsRemaining
       : null,
+  );
+  const workspaceCredits = useWorkspaceCredits();
+
+  const syncCreditsBalance = useCallback(
+    (next: number) => {
+      setAiCreditsRemaining(next);
+      workspaceCredits?.setBalance(next);
+    },
+    [workspaceCredits],
   );
 
   // ── Staging Vault Context ────────────────────────────────────────────────
@@ -1039,8 +1067,54 @@ export function ListingOptimizer({
    */
   const [generationQueueSnapshot, setGenerationQueueSnapshot] = useState<ListingImprovementItem[]>([]);
   const optimizerSessionRestoredRef = useRef(false);
+  const instantDraftLoadedRef = useRef<string | null>(null);
+  const dbDraftLoadedRef = useRef<string | null>(null);
+  /** Timestamp (ms) of the last DB draft applied — blocks stale hydration overwrite. */
+  const draftAppliedAtRef = useRef(0);
+  if (
+    typeof window !== "undefined" &&
+    workspaceId &&
+    draftAppliedAtRef.current === 0
+  ) {
+    const savedAt = readModularDraftSavedAtMs(workspaceId, "modular-listing");
+    if (savedAt > 0) {
+      draftAppliedAtRef.current = savedAt;
+    }
+    const aid = selectedAppId.trim();
+    if (aid) {
+      const finalTs = readFinalListingCacheSavedAtMs(aid);
+      if (finalTs > draftAppliedAtRef.current) {
+        draftAppliedAtRef.current = finalTs;
+      }
+    }
+  }
   const [pickAppGate, setPickAppGate] = useState(false);
-  const [wizardStep, setWizardStep] = useState<OptimizerWizardStep>(0);
+  const [wizardStep, setWizardStepRaw] = useState<OptimizerWizardStep>(0);
+  // Becomes true after the first hydration effect resolves wizardStep.
+  // Until then the Continue button is suppressed to prevent a one-frame
+  // flash at step-0 before a pre-existing result bumps the step to 2.
+  const [wizardStepHydrated, setWizardStepHydrated] = useState(false);
+  const setWizardStep = useCallback(
+    (step: React.SetStateAction<OptimizerWizardStep>) => {
+      setWizardStepRaw(step);
+      setWizardStepHydrated(true);
+    },
+    [],
+  );
+
+  /**
+   * Server-authoritative pipeline step.
+   *
+   * null  — server check not yet resolved; all Continue buttons hidden.
+   * 0     — server confirmed no result/draft; steps 0 and 1 are valid.
+   * 2     — server confirmed a result or modularDraftReady draft exists;
+   *         step-1 Continue is hidden and the guard-clause effect syncs
+   *         wizardStep to 2 to force Final Optimization.
+   *
+   * (Step value 1 is never set server-side — it only exists client-side
+   * after the user explicitly clicks Continue from step 0.)
+   */
+  const [serverStep, setServerStep] = useState<0 | 2 | null>(null);
   const [wizardPanelPeek, setWizardPanelPeek] = useState<
     Partial<Record<OptimizerWizardStep, boolean>>
   >({});
@@ -1076,16 +1150,10 @@ export function ListingOptimizer({
   const appliedNoAppHydrationRef = useRef(false);
 
   useEffect(() => {
-    if (typeof initialAiCreditsRemaining === "number") {
-      setAiCreditsRemaining(initialAiCreditsRemaining);
-    }
-  }, [initialAiCreditsRemaining]);
-
-  useEffect(() => {
     if (!result) return;
-    setEditedTitle(result.title);
-    setEditedShort(result.shortDescription);
-    setEditedLong(result.fullDescription);
+    setEditedTitle(coerceListingText(result.title));
+    setEditedShort(coerceListingText(result.shortDescription));
+    setEditedLong(coerceListingText(result.fullDescription));
   }, [result]);
 
   const limits = useAppLimits(workspaceId, {
@@ -1096,7 +1164,7 @@ export function ListingOptimizer({
     if (!workspaceId || searchParams.get("topup") !== "success") return;
     void refreshWorkspaceContext({ workspaceId, vaultLocale: locale }).then((refreshed) => {
       if (typeof refreshed.creditsRemaining === "number") {
-        setAiCreditsRemaining(refreshed.creditsRemaining);
+        syncCreditsBalance(refreshed.creditsRemaining);
       }
       toast.success(t("form.topUpSuccess"));
       const next = new URLSearchParams(searchParams.toString());
@@ -1242,6 +1310,7 @@ export function ListingOptimizer({
       setEditedLong("");
       setMeta(undefined);
       setListingGenerationId(undefined);
+      setListingExportUnlocked(false);
       setLastGeneratedAtIso(null);
       setGenerateJustSucceeded(false);
       setWizardStep(0);
@@ -1267,34 +1336,77 @@ export function ListingOptimizer({
       output: ListingGenerationOutput,
       savedAt: string,
       generationId?: string,
+      publicationUnlocked = true,
     ) => {
-      setResult(output);
+      const displayOutput = listingOutputForPublicationState(
+        output,
+        publicationUnlocked,
+      );
+      setResult(displayOutput);
       setWizardStep(2);
+      setServerStep(2); // server has confirmed a result — authoritative step
       setWizardPanelPeek({});
-      setEditedTitle(output.title);
-      setEditedShort(output.shortDescription);
-      setEditedLong(output.fullDescription);
+      setEditedTitle(displayOutput.title);
+      setEditedShort(displayOutput.shortDescription);
+      setEditedLong(displayOutput.fullDescription);
       setLastGeneratedAtIso(savedAt);
       if (generationId) setListingGenerationId(generationId);
+      setListingExportUnlocked(publicationUnlocked);
       setPurgedAwaitingGenerate(false);
     },
     [],
   );
 
+  const hasActiveModularDraftSession = useCallback((): boolean => {
+    if (draftAppliedAtRef.current > 0) return true;
+    if (!workspaceId) return false;
+    return readModularDraftSavedAtMs(workspaceId, "modular-listing") > 0;
+  }, [workspaceId]);
+
   const tryApplyFinalListingCache = useCallback(
     (aid: string): boolean => {
       const final = readFinalListingCache(aid);
       if (!final) return false;
+      const paidUnlock = isFinalListingCachePublicationUnlocked(final);
+      if (hasActiveModularDraftSession() && !paidUnlock) {
+        return false;
+      }
+      const draftTs = Math.max(
+        draftAppliedAtRef.current,
+        workspaceId
+          ? readModularDraftSavedAtMs(workspaceId, "modular-listing")
+          : 0,
+      );
+      const cacheTs = Date.parse(final.generatedAt);
+      // Paid unlock cache wins over an in-progress modular draft from a prior session.
+      if (
+        !paidUnlock &&
+        draftTs > 0 &&
+        Number.isFinite(cacheTs) &&
+        cacheTs <= draftTs
+      ) {
+        return false;
+      }
       applyCachedOrHydratedListingOutput(
         aid,
         finalListingCacheToOutput(final),
         final.generatedAt,
         final.generationId,
+        paidUnlock,
       );
+      if (final.generationQueueSnapshot?.length) {
+        setGenerationQueueSnapshot(final.generationQueueSnapshot);
+      }
       return true;
     },
-    [applyCachedOrHydratedListingOutput],
+    [applyCachedOrHydratedListingOutput, hasActiveModularDraftSession, workspaceId],
   );
+
+  useLayoutEffect(() => {
+    const aid = selectedAppId.trim();
+    if (!aid || !workspaceId) return;
+    tryApplyFinalListingCache(aid);
+  }, [selectedAppId, workspaceId, tryApplyFinalListingCache]);
 
   const syncPreviewFromWorkspaceApp = useCallback(
     (appId: string) => {
@@ -2022,11 +2134,11 @@ export function ListingOptimizer({
     return (
       Boolean(workspaceId) &&
       appGateOk &&
+      hasTrackedKeywords &&
       displayAppName.length > 0 &&
       category.trim().length > 0 &&
       keywords.trim().length > 0 &&
       features.trim().length > 0 &&
-      hasTrackedKeywords &&
       !loading &&
       !isProcessingCredits
     );
@@ -2034,11 +2146,11 @@ export function ListingOptimizer({
     workspaceId,
     appsList.length,
     selectedAppId,
+    hasTrackedKeywords,
     displayAppName,
     category,
     keywords,
     features,
-    hasTrackedKeywords,
     loading,
     isProcessingCredits,
   ]);
@@ -2089,30 +2201,62 @@ export function ListingOptimizer({
         setFeatures(hyd.appFeatures);
         setToneStyle(hyd.toneStyle);
         setListingGenerationId(hyd.generationId);
+        const preferLocalFinalCache = shouldPreferFinalListingCacheOverHydration(
+          id,
+          hyd.createdAt,
+        );
+        setListingExportUnlocked(
+          preferLocalFinalCache ? true : hyd.publicationUnlocked,
+        );
         setLastGeneratedAtIso(hyd.createdAt);
       } else if (switchingApps) {
         setCategory(appRowMeta.category);
       }
       setMeta(undefined);
       if (hyd.output && !suppressHydration) {
-        applyCachedOrHydratedListingOutput(
+        const hydTs = Date.parse(hyd.createdAt);
+        const finalCache = readFinalListingCache(id);
+        const finalCacheTs = readFinalListingCacheSavedAtMs(id);
+        const paidLocalCache =
+          finalCache != null &&
+          isFinalListingCachePublicationUnlocked(finalCache);
+        const preferLocalFinalCache = shouldPreferFinalListingCacheOverHydration(
           id,
-          hyd.output,
           hyd.createdAt,
-          hyd.generationId,
         );
-        writeFinalListingCache(
-          id,
-          listingOutputToFinalListingCache(
+        const skipOutputOverwrite =
+          (hasActiveModularDraftSession() && !paidLocalCache) ||
+          preferLocalFinalCache ||
+          (draftAppliedAtRef.current > 0 &&
+            Number.isFinite(hydTs) &&
+            hydTs < draftAppliedAtRef.current &&
+            !(paidLocalCache && finalCacheTs >= draftAppliedAtRef.current));
+        if (!skipOutputOverwrite) {
+          applyCachedOrHydratedListingOutput(
+            id,
             hyd.output,
             hyd.createdAt,
             hyd.generationId,
-          ),
-        );
+            preferLocalFinalCache ? true : hyd.publicationUnlocked,
+          );
+          writeFinalListingCache(
+            id,
+            listingOutputToFinalListingCache(
+              hyd.output,
+              hyd.createdAt,
+              hyd.generationId,
+              { publicationUnlocked: preferLocalFinalCache ? true : hyd.publicationUnlocked },
+            ),
+          );
+        } else if (preferLocalFinalCache) {
+          tryApplyFinalListingCache(id);
+        }
       } else if (!suppressHydration) {
         if (!purgedAwaitingGenerateRef.current) {
-          const cacheRestored = tryApplyFinalListingCache(id);
-          if (!cacheRestored && !resultRef.current) {
+          const cacheRestored = hasActiveModularDraftSession()
+            ? false
+            : tryApplyFinalListingCache(id);
+          if (!cacheRestored && !resultRef.current && draftAppliedAtRef.current === 0) {
             setWizardStep(0);
             setWizardPanelPeek({});
             setResult(null);
@@ -2121,7 +2265,7 @@ export function ListingOptimizer({
             setEditedLong("");
           }
         }
-        if (purgedAwaitingGenerateRef.current && !resultRef.current) {
+        if (purgedAwaitingGenerateRef.current && !resultRef.current && draftAppliedAtRef.current === 0) {
           setWizardStep(0);
           setWizardPanelPeek({});
           setResult(null);
@@ -2271,8 +2415,15 @@ export function ListingOptimizer({
               setPreviewIconUrl(appRowMeta.iconUrl);
             }
             if (!purgedAwaitingGenerateRef.current && !suppressNoHyd) {
-              const cacheRestored = tryApplyFinalListingCache(aid);
-              if (!cacheRestored && !resultRef.current) {
+              const cacheRestored = hasActiveModularDraftSession()
+                ? false
+                : tryApplyFinalListingCache(aid);
+              if (
+                !cacheRestored &&
+                !resultRef.current &&
+                draftAppliedAtRef.current === 0 &&
+                !hasActiveModularDraftSession()
+              ) {
                 setListingGenerationId(undefined);
                 setLastGeneratedAtIso(null);
                 setMeta(undefined);
@@ -2298,25 +2449,57 @@ export function ListingOptimizer({
           setKeywords(hyd.keywordsText);
           setFeatures(hyd.appFeatures);
           setToneStyle(hyd.toneStyle);
-          setListingGenerationId(hyd.generationId);
-          setLastGeneratedAtIso(hyd.createdAt);
+          const preferLocalFinalCache = shouldPreferFinalListingCacheOverHydration(
+            aid,
+            hyd.createdAt,
+          );
+          if (!hasActiveModularDraftSession()) {
+            setListingGenerationId(hyd.generationId);
+            setListingExportUnlocked(
+              preferLocalFinalCache ? true : hyd.publicationUnlocked,
+            );
+            setLastGeneratedAtIso(hyd.createdAt);
+          }
         }
         setMeta(undefined);
         if (hyd.output && !suppressHydrationAsync) {
-          applyCachedOrHydratedListingOutput(
+          const hydTs = Date.parse(hyd.createdAt);
+          const finalCacheTs = readFinalListingCacheSavedAtMs(aid);
+          const finalCache = readFinalListingCache(aid);
+          const paidLocalCache =
+            finalCache != null &&
+            isFinalListingCachePublicationUnlocked(finalCache);
+          const preferLocalFinalCache = shouldPreferFinalListingCacheOverHydration(
             aid,
-            hyd.output,
             hyd.createdAt,
-            hyd.generationId,
           );
-          writeFinalListingCache(
-            aid,
-            listingOutputToFinalListingCache(
+          const skipOutputOverwrite =
+            (hasActiveModularDraftSession() && !paidLocalCache) ||
+            preferLocalFinalCache ||
+            (draftAppliedAtRef.current > 0 &&
+              Number.isFinite(hydTs) &&
+              hydTs < draftAppliedAtRef.current &&
+              !(paidLocalCache && finalCacheTs >= draftAppliedAtRef.current));
+          if (!skipOutputOverwrite) {
+            applyCachedOrHydratedListingOutput(
+              aid,
               hyd.output,
               hyd.createdAt,
               hyd.generationId,
-            ),
-          );
+              hyd.publicationUnlocked,
+            );
+            writeFinalListingCache(
+              aid,
+              listingOutputToFinalListingCache(
+                hyd.output,
+                hyd.createdAt,
+                hyd.generationId,
+                { publicationUnlocked: hyd.publicationUnlocked },
+              ),
+            );
+          } else if (preferLocalFinalCache) {
+            tryApplyFinalListingCache(aid);
+          }
         } else if (!suppressHydrationAsync) {
           // hyd.output is null — the DB returned an inputs-only row (e.g. from autofill).
           // Only clear result if:
@@ -2326,8 +2509,15 @@ export function ListingOptimizer({
           // refresh / page bounce when router.refresh() re-triggers this effect
           // before the DB two-pass query can find the prior generation row.
           if (!purgedAwaitingGenerateRef.current) {
-            const cacheRestored = tryApplyFinalListingCache(aid);
-            if (!cacheRestored && !resultRef.current) {
+            const cacheRestored = hasActiveModularDraftSession()
+              ? false
+              : tryApplyFinalListingCache(aid);
+            if (
+              !cacheRestored &&
+              !resultRef.current &&
+              draftAppliedAtRef.current === 0 &&
+              !hasActiveModularDraftSession()
+            ) {
               setWizardStep(0);
               setWizardPanelPeek({});
               setResult(null);
@@ -2339,7 +2529,7 @@ export function ListingOptimizer({
           // purgedAwaitingGenerate is set by keyword injection — in that case we do
           // want to stay on the "awaiting generate" empty canvas, but only if there
           // really is no result already showing.
-          if (purgedAwaitingGenerateRef.current && !resultRef.current) {
+          if (purgedAwaitingGenerateRef.current && !resultRef.current && draftAppliedAtRef.current === 0) {
             setWizardStep(0);
             setWizardPanelPeek({});
             setResult(null);
@@ -2367,25 +2557,6 @@ export function ListingOptimizer({
     // The effect only needs to re-run when the workspace or the selected app changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, selectedAppId, applyCachedOrHydratedListingOutput]);
-
-  /**
-   * Final-listing hydration guard — fires synchronously when `selectedAppId`
-   * resolves so F5 refresh shows results before /api/listings/latest returns.
-   *
-   * Hydration order (output blocks): playstore_final_listing_{id} (with one-time
-   * legacy read of playstore_last_generated_ / playstore_saved_listing_), then
-   * async DB via /api/listings/latest. Skipped when injection suppresses hydration
-   * or purgedAwaitingGenerate is true.
-   */
-  useEffect(() => {
-    const aid = selectedAppId.trim();
-    if (!aid || aid === "undefined") return;
-    if (suppressListingHydrationRef.current) return;
-    if (result) return;
-    if (purgedAwaitingGenerateRef.current) return;
-    tryApplyFinalListingCache(aid);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAppId, tryApplyFinalListingCache]);
 
   function tryOpenAddApp() {
     if (!workspaceId) return;
@@ -2584,7 +2755,7 @@ export function ListingOptimizer({
         AI_CREDIT_COSTS.listing_optimizer_autofill;
       const remaining = json.meta?.creditsRemaining;
       if (typeof remaining === "number") {
-        setAiCreditsRemaining(remaining);
+        syncCreditsBalance(remaining);
       }
       void router.refresh();
       toast.success(t("form.autofill.successTitle"), {
@@ -2689,7 +2860,7 @@ export function ListingOptimizer({
       result.keywordSuggestions.join(", "),
       "",
       "--- CTA SUGGESTIONS ---",
-      result.ctaSuggestions.join("\n"),
+      formatInstallCtasForCopy(result.ctaSuggestions),
       "",
       "--- JSON (same data, machine-readable) ---",
       json,
@@ -2723,13 +2894,60 @@ export function ListingOptimizer({
         toast.message(t("form.workspaceHandshakeToast"));
         return;
       }
+      if (code === "modular_phase_order_conflict") {
+        toast.error(message || t("form.modularPhaseOrderConflict"));
+        return;
+      }
+      if (code === "context_serialization_failed") {
+        toast.error(message || t("form.contextSerializationFailed"));
+        return;
+      }
+      if (code === "service_unavailable") {
+        toast.error(message || t("form.serviceUnavailable"));
+        return;
+      }
       if (code === "validation_error" || code === "section_generation_failed") {
-        toast.error(t("results.modular.sectionGenerationFailed"));
+        toast.error(
+          message && message !== "Invalid input"
+            ? message
+            : t("results.modular.sectionGenerationFailed"),
+        );
+        return;
+      }
+      // Polling detected a terminal error (failed / failed_permanently / result
+      // missing).  Surface a persistent error banner so the user knows they must
+      // retry — not just a transient toast.
+      if (
+        code === "generation_failed" ||
+        code === "generation_result_missing" ||
+        code === "failed_permanently"
+      ) {
+        setError(message || t("form.networkError"));
+        return;
+      }
+      // The polling loop timed out waiting for the worker.  Don't set a
+      // persistent red error banner — the generation may have succeeded and is
+      // simply slow.  Show a recoverable toast instead and let the auto-draft
+      // effect populate the UI once the DB row lands.
+      if (code === "generation_timeout") {
+        const draftRecentlyApplied =
+          draftAppliedAtRef.current > 0 &&
+          Date.now() - draftAppliedAtRef.current < 180_000;
+        if (modularDraftReady || result != null || draftRecentlyApplied) {
+          return;
+        }
+        toast.error(
+          message ||
+            t("results.modular.status.waiting", {
+              defaultValue: "Generation is taking longer than expected. Check back shortly.",
+            }),
+          { duration: 8_000 },
+        );
         return;
       }
       setError(message || t("form.networkError"));
     },
-    [t],
+    [t, modularDraftReady, result],
   );
 
   const handleWorkspaceHandshakeFailed = useCallback(async () => {
@@ -2743,7 +2961,7 @@ export function ListingOptimizer({
       });
       await Promise.all([refreshOptimizerContext(), refetchOptimizationQueue()]);
       if (typeof refreshed.creditsRemaining === "number") {
-        setAiCreditsRemaining(refreshed.creditsRemaining);
+        syncCreditsBalance(refreshed.creditsRemaining);
       }
       toast.success(t("form.workspaceHandshakeRecovered"));
     } catch {
@@ -2762,7 +2980,10 @@ export function ListingOptimizer({
   ]);
 
   const handleModularWarnings = useCallback(
-    (warnings: import("@/lib/listing/listing-generation-warnings").ListingGenerationWarningsPayload) => {
+    (
+      warnings: import("@/lib/listing/listing-generation-warnings").ListingGenerationWarningsPayload,
+      isDraft?: boolean,
+    ) => {
       const hasEmptyVault = warnings.items.some(
         (item) => item.code === "empty_synthesis_vault",
       );
@@ -2778,6 +2999,10 @@ export function ListingOptimizer({
         void refetchOptimizationQueue();
         void refreshOptimizerContext();
       }
+      // For instant-draft / fast-draft responses the context is intentionally limited
+      // (context-gateway is skipped).  Don't show the health-label warning toast for
+      // those — the draft UI already signals "draft mode" via its own indicators.
+      if (isDraft) return;
       if (hasPartial) {
         toast.message(t("results.modular.listingHealth.partialToast"));
       } else if (warnings.healthLabel === "limited" || warnings.healthLabel === "fair") {
@@ -2787,6 +3012,34 @@ export function ListingOptimizer({
     [refetchOptimizationQueue, refreshOptimizerContext, t],
   );
 
+  const handleModularBillingMeta = useCallback(
+    (meta: {
+      trialRegenerationsUsed?: number;
+      trialRegenerationsRemaining?: number;
+      creditsRemaining?: number;
+      creditsCharged?: number;
+    }) => {
+      if (typeof meta.trialRegenerationsUsed === "number") {
+        setTrialRegenerationsUsed(meta.trialRegenerationsUsed);
+      }
+      if (typeof meta.creditsRemaining === "number") {
+        syncCreditsBalance(meta.creditsRemaining);
+      } else if (typeof meta.creditsCharged === "number") {
+        setAiCreditsRemaining((prev) => {
+          const next =
+            typeof prev === "number"
+              ? Math.max(0, prev - meta.creditsCharged!)
+              : prev;
+          if (typeof next === "number") {
+            workspaceCredits?.setBalance(next);
+          }
+          return next;
+        });
+      }
+    },
+    [syncCreditsBalance, workspaceCredits],
+  );
+
   const applyFinalizeGenerationSuccess = useCallback(
     (
       json: GenerateOptimizedListingSuccess,
@@ -2794,9 +3047,11 @@ export function ListingOptimizer({
     ) => {
       const d = json.data;
       setError(null);
-      suppressListingHydrationRef.current = false;
+      draftAppliedAtRef.current = Date.now();
+      suppressListingHydrationRef.current = json.meta?.persisted === false;
       setPurgedAwaitingGenerate(false);
       setModularDraftReady(false);
+      setListingExportUnlocked(true);
       setResult(d);
       const freshKeywordsText = d.keywordSuggestions?.length
         ? d.keywordSuggestions.join(", ")
@@ -2826,9 +3081,9 @@ export function ListingOptimizer({
       setWizardPanelPeek({});
       setMetadataVariant("growth");
       setActiveStrategyMode(queueSynthesis.strategyMode);
-      setEditedTitle(d.title);
-      setEditedShort(d.shortDescription);
-      setEditedLong(d.fullDescription);
+      setEditedTitle(coerceListingText(d.title));
+      setEditedShort(coerceListingText(d.shortDescription));
+      setEditedLong(coerceListingText(d.fullDescription));
       setMeta(json.meta);
       const generationIdFromApi = json.meta?.generationId;
       setListingGenerationId(generationIdFromApi);
@@ -2836,57 +3091,135 @@ export function ListingOptimizer({
       setLastGeneratedAtIso(savedIso);
       const sid = selectedAppId.trim();
       if (sid) {
+        const queueSnapshot = optimizationQueueItemsToImprovements(
+          optimizationQueueItems,
+        );
         writeFinalListingCache(
           sid,
-          listingOutputToFinalListingCache(d, savedIso, generationIdFromApi),
+          listingOutputToFinalListingCache(d, savedIso, generationIdFromApi, {
+            publicationUnlocked: true,
+            generationQueueSnapshot: queueSnapshot,
+          }),
         );
+        setHydrationByApp((prev) => ({
+          ...prev,
+          [sid]: {
+            generationId: generationIdFromApi ?? prev[sid]?.generationId ?? "",
+            createdAt: savedIso,
+            appName: displayAppName,
+            category: category.trim(),
+            keywordsText: freshKeywordsText,
+            appFeatures: freshFeatures,
+            toneStyle,
+            output: d,
+            publicationUnlocked: true,
+          },
+        }));
+        setServerStep(2);
       }
       if (json.meta?.persisted === false) {
         toast.warning(t("results.persistWarning"));
-      } else {
+      } else if (hasListingUnlockCoreCopy(d)) {
         toast.success(t("form.generateSuccessToastSaved"));
       }
-      clearDraftRef.current?.();
+      handleModularBillingMeta({
+        creditsCharged: json.meta?.creditsCharged,
+        creditsRemaining: json.meta?.creditsRemaining,
+      });
+      if (workspaceId) {
+        void refreshWorkspaceContext({
+          workspaceId,
+          vaultLocale: locale,
+          appId: sid || undefined,
+        }).then((refreshed) => {
+          if (typeof refreshed.creditsRemaining === "number") {
+            syncCreditsBalance(refreshed.creditsRemaining);
+          }
+        });
+      }
+      setGenerationQueueSnapshot(
+        optimizationQueueItemsToImprovements(optimizationQueueItems),
+      );
     },
     [
+      category,
+      displayAppName,
       features,
+      handleModularBillingMeta,
       keywords,
+      locale,
+      optimizationQueueItems,
       queuedImprovements,
       selectedAppId,
       t,
+      toneStyle,
       workspaceId,
     ],
   );
 
-  const handleModularBillingMeta = useCallback(
-    (meta: {
-      trialRegenerationsUsed?: number;
-      trialRegenerationsRemaining?: number;
-      creditsRemaining?: number;
-      creditsCharged?: number;
-    }) => {
-      if (typeof meta.trialRegenerationsUsed === "number") {
-        setTrialRegenerationsUsed(meta.trialRegenerationsUsed);
-      }
-      if (typeof meta.creditsRemaining === "number") {
-        setAiCreditsRemaining(meta.creditsRemaining);
-      } else if (typeof meta.creditsCharged === "number") {
-        setAiCreditsRemaining((prev) =>
-          typeof prev === "number"
-            ? Math.max(0, prev - meta.creditsCharged!)
-            : prev,
-        );
-      }
+  // ── Async job progress tracker ────────────────────────────────────────────
+  // When POST /api/listings/generate returns 202 with a queued jobId we start
+  // polling here for UI progress only.  The actual result is still applied via
+  // runModularPipeline()'s return value; this hook drives the progress bar and
+  // the 30-second timeout warning toast.
+  const {
+    pipelineState: asyncPipelineState,
+    progressPercent: asyncProgressPercent,
+    partialContent: asyncPartialContent,
+    startPolling: startAsyncPolling,
+    reset: resetAsyncPipeline,
+  } = useListingPipeline({
+    jobId: null,
+    // queueHash is only needed for stale-context state labeling; the hook is
+    // used here for display only so an empty string is acceptable.
+    queueHash: "",
+    phase: "pipeline",
+    maxPollMs: 120_000, // match LISTING_GENERATION_TIMEOUT_MS — pipeline can take 60–90s
+  });
+
+  // versionId returned by POST /api/listings/generate for the optimistic shell
+  const [currentBuildVersionId, setCurrentBuildVersionId] = useState<string | null>(null);
+
+  const pollForListingStatus = useCallback(
+    (jobId: string, versionId?: string) => {
+      if (versionId) setCurrentBuildVersionId(versionId);
+      startAsyncPolling(jobId);
     },
-    [],
+    [startAsyncPolling],
   );
+
+  // Show a one-time toast when the async poll times out (30 s).
+  const asyncTimeoutToastShownRef = useRef(false);
+  useEffect(() => {
+    if (
+      asyncPipelineState.status === "error" &&
+      "error" in asyncPipelineState &&
+      asyncPipelineState.error.code === "generation_timeout" &&
+      !asyncTimeoutToastShownRef.current
+    ) {
+      asyncTimeoutToastShownRef.current = true;
+      toast.message(t("results.modular.status.waiting"), {
+        description: t("results.modular.status.timeoutDescription", {
+          defaultValue:
+            "Generation is taking longer than usual. Your listing will appear once it completes.",
+        }),
+        duration: 8_000,
+      });
+    }
+  }, [asyncPipelineState, t]);
+
+  // Reset the timeout flag whenever a new generation starts.
+  useEffect(() => {
+    if (asyncPipelineState.status === "queued") {
+      asyncTimeoutToastShownRef.current = false;
+    }
+  }, [asyncPipelineState.status]);
 
   const modularGeneration = useModularGeneration({
     getBaseInput: () => modularBaseInputRef.current,
-    lockedKeywords: keywords
-      .split(/[,;\n]+/)
-      .map((s) => s.trim())
-      .filter(Boolean),
+    lockedKeywords: capLockedKeywords(
+      keywords.split(/[,;\n]+/),
+    ),
     clientHooks: { onWorkspaceHandshakeFailed: handleWorkspaceHandshakeFailed },
     onError: handleModularApiError,
     onWarnings: handleModularWarnings,
@@ -2896,7 +3229,106 @@ export function ListingOptimizer({
       if (!ctx) return;
       applyFinalizeGenerationSuccess(json, ctx.queueSynthesis);
     },
+    onJobQueued: pollForListingStatus,
   });
+
+  const modularWorkInFlight = useMemo(
+    () => Object.values(modularGeneration.loading).some(Boolean),
+    [modularGeneration.loading],
+  );
+
+  const applyInstantDraftResult = useCallback(
+    (draft: InstantDraftListingSuccess) => {
+      const syncedModular = listingCopyToModularState(
+        {
+          title: draft.data.title,
+          shortDescription: draft.data.shortDescription,
+          fullDescription: draft.data.fullDescription,
+        },
+        {
+          modularLong: draft.modularDraftLong,
+          shortVariations: draft.modularDraftShort?.variations,
+        },
+      );
+      modularGeneration.setState(syncedModular);
+      modularGeneration.markDraftRestoredFromPersistence(syncedModular);
+      modularGeneration.clearAllBlockErrors();
+      setModularDraftReady(true);
+      setListingExportUnlocked(false);
+      setWizardStep(2);
+      setResult(draft.data);
+      setEditedTitle(draft.data.title ?? "");
+      setEditedShort(draft.data.shortDescription ?? "");
+      setEditedLong(draft.data.fullDescription ?? "");
+      setLastGeneratedAtIso(new Date().toISOString());
+      setListingGenerationId(undefined);
+      const sid = selectedAppId.trim();
+      if (sid) {
+        draftAppliedAtRef.current = Date.now();
+        writeFinalListingCache(
+          sid,
+          listingOutputToFinalListingCache(
+            draft.data,
+            new Date().toISOString(),
+            undefined,
+            { publicationUnlocked: false },
+          ),
+        );
+      }
+      if (draft.warnings) {
+        modularGeneration.ingestWarnings(draft.warnings);
+      }
+    },
+    [modularGeneration, selectedAppId, setWizardStep],
+  );
+
+  const applyPersistedListingDraft = useCallback(
+    (draft: ListingDraftPersistState) => {
+      const draftTs = Date.parse(draft.updatedAt ?? "");
+      draftAppliedAtRef.current = Number.isFinite(draftTs)
+        ? draftTs
+        : Date.now();
+      modularGeneration.setState(draft.modularState);
+      modularGeneration.markDraftRestoredFromPersistence(draft.modularState);
+      modularGeneration.clearAllBlockErrors();
+      setEditedTitle(draft.editedTitle ?? "");
+      setEditedShort(draft.editedShort ?? "");
+      setEditedLong(draft.editedLong ?? "");
+      setModularDraftReady(draft.modularDraftReady);
+      setListingExportUnlocked(false);
+      const draftOutput = {
+        title: draft.editedTitle,
+        shortDescription: draft.editedShort,
+        fullDescription: draft.editedLong ?? "",
+        keywordSuggestions: [] as string[],
+        ctaSuggestions: [] as string[],
+      };
+      setResult(draftOutput);
+      if (draft.modularDraftReady) {
+        setWizardStep(2);
+        setServerStep(2); // DB draft confirmed — force Final Optimization
+        // Sync the localStorage cache so the very next F5 refresh shows draft
+        // content immediately (before /api/listings/latest returns), eliminating
+        // the brief flash of a prior stale generation.
+        const sid = selectedAppId.trim();
+        if (sid && shouldWritePreviewFinalListingCache(sid, false)) {
+          writeFinalListingCache(
+            sid,
+            listingOutputToFinalListingCache(
+              draftOutput,
+              draft.updatedAt ?? new Date().toISOString(),
+              draft.id ?? undefined,
+              { publicationUnlocked: false },
+            ),
+          );
+        }
+      } else {
+        // Draft exists but not ready for finalization; server says step 0
+        setServerStep((prev) => (prev === null ? 0 : prev));
+      }
+    },
+    [modularGeneration, selectedAppId],
+  );
 
   const modularDraftPayload = useMemo((): ModularListingDraftSnapshot | null => {
     if (!workspaceId) return null;
@@ -2904,7 +3336,7 @@ export function ListingOptimizer({
       modularDraftReady ||
       Boolean(modularGeneration.state.title.value.trim()) ||
       modularGeneration.state.shortDescription.variations.length > 0 ||
-      Boolean(editedLong.trim());
+      Boolean((editedLong ?? "").trim());
     if (!hasContent) return null;
     return {
       modularState: modularGeneration.state,
@@ -2930,28 +3362,152 @@ export function ListingOptimizer({
       storageKey: "modular-listing",
       payload: modularDraftPayload,
       enabled: Boolean(workspaceId),
-      onRestore: (draft) => {
+      onRestore: (draft, savedAt) => {
+        const savedTs = Date.parse(savedAt);
+        draftAppliedAtRef.current = Number.isFinite(savedTs)
+          ? savedTs
+          : Date.now();
         modularGeneration.setState(draft.modularState);
-        setEditedTitle(draft.editedTitle);
-        setEditedShort(draft.editedShort);
-        setEditedLong(draft.editedLong);
+        modularGeneration.markDraftRestoredFromPersistence(draft.modularState);
+        setEditedTitle(draft.editedTitle ?? "");
+        setEditedShort(draft.editedShort ?? "");
+        setEditedLong(draft.editedLong ?? "");
         setModularDraftReady(draft.modularDraftReady);
         setModularLongUiMode(draft.longUiMode);
-        setResult((prev) =>
-          prev ?? {
-            title: draft.editedTitle,
-            shortDescription: draft.editedShort,
-            fullDescription: draft.editedLong,
-            keywordSuggestions: [],
-            ctaSuggestions: [],
-          },
+        setListingExportUnlocked(false);
+        setResult({
+          title: coerceListingText(draft.editedTitle),
+          shortDescription: coerceListingText(draft.editedShort),
+          fullDescription: coerceListingText(draft.editedLong),
+          keywordSuggestions: [],
+          ctaSuggestions: [],
+        });
+        setLastGeneratedAtIso(
+          Number.isFinite(savedTs) ? savedAt : new Date().toISOString(),
         );
+        setListingGenerationId(undefined);
+        if (draft.modularDraftReady) {
+          setWizardStep(2);
+          setServerStep(2); // localStorage draft confirmed — force Final Optimization
+        } else {
+          setServerStep((prev) => (prev === null ? 0 : prev));
+        }
       },
     });
 
   useEffect(() => {
     clearDraftRef.current = clearDraft;
   }, [clearDraft]);
+
+  useEffect(() => {
+    if (!workspaceId || optimizationQueueLoading) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const queueHash = await computeActiveContextQueueHashClient(
+          allOptimizationQueueItems,
+          locale,
+        );
+        const loadKey = `${workspaceId}:${selectedAppId.trim() || "_no_app"}:${queueHash}:${locale}`;
+        if (dbDraftLoadedRef.current === loadKey) return;
+        dbDraftLoadedRef.current = loadKey;
+
+        const dbDraft = await fetchDraftState(workspaceId, queueHash, {
+          appId: selectedAppId.trim() || undefined,
+          vaultLocale: locale,
+        });
+        if (cancelled || !dbDraft.ok) return;
+        if (dbDraft.draft.isEmpty || dbDraft.draft.vaultLocale !== locale) return;
+
+        applyPersistedListingDraft(dbDraft.draft);
+        instantDraftLoadedRef.current = `${workspaceId}:${selectedAppId.trim() || "_no_app"}:${locale}`;
+      } catch {
+        /* non-blocking rehydration */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    workspaceId,
+    selectedAppId,
+    locale,
+    allOptimizationQueueItems,
+    optimizationQueueLoading,
+    applyPersistedListingDraft,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    if (displayAppName.length === 0 || !category.trim() || !keywords.trim() || !features.trim()) {
+      return;
+    }
+    if (result) return;
+    if (loading) return;
+    if (modularWorkInFlight) return;
+    if (
+      asyncPipelineState.status === "queued" ||
+      asyncPipelineState.status === "processing"
+    ) {
+      return;
+    }
+    if (optimizationQueueLoading) return;
+
+    const draftKey = `${workspaceId}:${selectedAppId.trim() || "_no_app"}:${locale}`;
+    if (instantDraftLoadedRef.current === draftKey) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const queueHash = await computeActiveContextQueueHashClient(
+          allOptimizationQueueItems,
+          locale,
+        );
+        if (instantDraftLoadedRef.current === draftKey) return;
+        instantDraftLoadedRef.current = draftKey;
+
+        const draft = await generateInstantDraftListing({
+          workspaceId,
+          appId: selectedAppId.trim() || undefined,
+          appName: displayAppName,
+          category: category.trim(),
+          targetKeywords: keywords.trim(),
+          appFeatures: features.trim(),
+          toneStyle,
+          targetArabic: locale === "ar",
+          vaultLocale: locale,
+          queueHash,
+          queueItemCount: allOptimizationQueueItems.length,
+        });
+        if (cancelled || !draft.ok) return;
+        applyInstantDraftResult(draft);
+      } catch {
+        /* non-blocking preview */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    workspaceId,
+    selectedAppId,
+    locale,
+    displayAppName,
+    category,
+    keywords,
+    features,
+    toneStyle,
+    allOptimizationQueueItems,
+    optimizationQueueLoading,
+    result,
+    loading,
+    modularWorkInFlight,
+    asyncPipelineState.status,
+    applyInstantDraftResult,
+  ]);
 
   useEffect(() => {
     if (!result?.orchestration) {
@@ -3041,7 +3597,7 @@ export function ListingOptimizer({
       .split(/[,;\n]+/)
       .map((s) => s.trim())
       .filter(Boolean);
-    const fromAnchor = result?.orchestration?.modules.anchor.lockedKeywords ?? [];
+    const fromAnchor = result?.orchestration?.modules?.anchor?.lockedKeywords ?? [];
     return fromAnchor.length > 0 ? fromAnchor : fromForm;
   }, [keywords, result?.orchestration]);
 
@@ -3097,7 +3653,7 @@ export function ListingOptimizer({
         case "insert_primary_keyword_hook": {
           const primary = normalizeHighlightKeywords(lockedKeywordList)[0];
           const current =
-            editedLong.trim() || modularGeneration.assembledCopy.fullDescription;
+            (editedLong ?? "").trim() || modularGeneration.assembledCopy.fullDescription;
           if (!primary || !current.trim()) return;
           const paragraphs = current.split(/\n\n/);
           paragraphs[0] = `${primary} — ${(paragraphs[0] ?? "").trim()}`.trim();
@@ -3124,7 +3680,7 @@ export function ListingOptimizer({
     ],
   );
 
-  const modularCopyBlocked = modularDraftReady && !listingGenerationId;
+  const modularCopyBlocked = Boolean(result) && !listingExportUnlocked;
   const notifyModularCopyBlocked = useCallback(() => {
     if (!modularCopyBlocked) return;
     toast.message(t("results.modular.draftMask.copyFinalizeToast"));
@@ -3141,10 +3697,6 @@ export function ListingOptimizer({
   );
 
   const hasUnsavedModularDraft = modularDraftReady && !listingGenerationId;
-  const modularWorkInFlight = useMemo(
-    () => Object.values(modularGeneration.loading).some(Boolean),
-    [modularGeneration.loading],
-  );
 
   useEffect(() => {
     if (!hasUnsavedModularDraft && !modularWorkInFlight) return;
@@ -3157,7 +3709,9 @@ export function ListingOptimizer({
 
   const handleModularBlockRegenerate = useCallback(
     (blockId: ModularListingBlockId) => {
-      if (result?.orchestration) {
+      // Paid orchestration module regen (5 credits) only after full unlock.
+      // Draft/preview rows may carry partial orchestration — route to 1-credit modular regen.
+      if (result?.orchestration && listingExportUnlocked) {
         const moduleId: OrchestrationModuleId =
           blockId === "title"
             ? "anchor"
@@ -3175,12 +3729,24 @@ export function ListingOptimizer({
         applyModularCopyToResult(modularStateToListingCopy(nextState));
       });
     },
-    [applyModularCopyToResult, modularGeneration, result?.orchestration],
+    [
+      applyModularCopyToResult,
+      handleGenerate,
+      listingExportUnlocked,
+      modularGeneration,
+      result?.orchestration,
+    ],
   );
 
   async function runFinalizeListing() {
     if (!workspaceId || !modularGeneration.isPipelineReady) return;
-    if (loading || modularGeneration.loading.finalize) return;
+    if (!modularGeneration.isDraftFullyPersisted) {
+      toast.message(t("form.finalizeAwaitingPersistence"));
+      return;
+    }
+    if (loading || modularGeneration.loading.finalize || modularGeneration.loading.short) {
+      return;
+    }
     if (
       typeof aiCreditsRemaining === "number" &&
       aiCreditsRemaining < AI_CREDIT_COSTS.listing_generation
@@ -3209,19 +3775,125 @@ export function ListingOptimizer({
       }),
     );
     try {
-      const result = await modularGeneration.finalizeListing();
+      const seedKwList = keywords
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const queueSynthesis = buildSynthesisFromOptimizationQueue(
+        optimizationQueueItems,
+        seedKwList,
+      );
+      const queueHash = await computeActiveContextQueueHashClient(
+        allOptimizationQueueItems,
+        locale,
+      );
+      const mergedKeywords = queueSynthesis.mergedKeywords;
+
+      modularBaseInputRef.current = {
+        workspaceId,
+        appId: selectedAppId.trim() || undefined,
+        appName: displayAppName,
+        category: category.trim(),
+        targetKeywords:
+          mergedKeywords.length > 0 ? mergedKeywords.join(", ") : keywords.trim(),
+        appFeatures: features.trim(),
+        toneStyle,
+        targetArabic: locale === "ar",
+        queueSynthesis,
+        queueItemCount: allOptimizationQueueItems.length,
+        vaultLocale: locale,
+        queueHash,
+      };
+      generationSuccessContextRef.current = { queueSynthesis };
+
+      setGenerationQueueSnapshot(
+        optimizationQueueItemsToImprovements(optimizationQueueItems),
+      );
+
+      const generationResult = await generateOptimizedListing({
+        workspaceId,
+        appId: selectedAppId.trim() || undefined,
+        appName: displayAppName,
+        category: category.trim(),
+        targetKeywords:
+          mergedKeywords.length > 0 ? mergedKeywords.join(", ") : keywords.trim(),
+        appFeatures: features.trim(),
+        toneStyle,
+        targetArabic: locale === "ar",
+        queueSynthesis,
+        queueItemCount: allOptimizationQueueItems.length,
+        vaultLocale: locale,
+        queueHash,
+        modularListing: modularGeneration.state,
+      });
+
       toast.dismiss(toastId);
-      if (!result) return;
-      if (typeof result.meta?.creditsRemaining === "number") {
-        setAiCreditsRemaining(result.meta.creditsRemaining);
-      } else if (typeof result.meta?.creditsCharged === "number") {
-        setAiCreditsRemaining((prev) =>
-          typeof prev === "number"
-            ? Math.max(0, prev - result.meta!.creditsCharged!)
-            : prev,
+
+      if (!generationResult.ok) {
+        if (generationResult.status === 402 || generationResult.error.code === "insufficient_credits") {
+          const rem = generationResult.error.remaining;
+          const req = generationResult.error.required;
+          toast.message(t("form.autofill.insufficientTitle"), {
+            description: `${t("form.creditsDetail", {
+              rem: rem ?? aiCreditsRemaining ?? 0,
+              req: req ?? AI_CREDIT_COSTS.listing_generation,
+            })}${t("form.creditsSuffix")}`,
+          });
+          if (typeof rem === "number") setAiCreditsRemaining(rem);
+          return;
+        }
+        handleModularApiError(
+          generationResult.error.message,
+          generationResult.error.code,
         );
+        return;
       }
-      clearDraftRef.current?.();
+
+      if (generationResult.warnings) {
+        modularGeneration.ingestWarnings(generationResult.warnings);
+        handleModularWarnings(generationResult.warnings);
+      }
+
+      if (!hasListingUnlockCoreCopy(generationResult.data)) {
+        toast.error(t("results.modular.sectionGenerationFailed"));
+        return;
+      }
+
+      applyFinalizeGenerationSuccess(generationResult, queueSynthesis);
+
+      const nextModularState = await modularGeneration.applyFullGenerationOutput(
+        generationResult.data,
+        { modularDraftShort: generationResult.modularDraftShort },
+      );
+      if (nextModularState) {
+        const copy = modularStateToListingCopy(nextModularState);
+        setEditedTitle(copy.title);
+        setEditedShort(copy.shortDescription);
+        setEditedLong(copy.fullDescription);
+        setResult({
+          ...generationResult.data,
+          title: copy.title,
+          shortDescription: copy.shortDescription,
+          fullDescription: copy.fullDescription,
+        });
+      }
+
+      handleModularBillingMeta({
+        creditsCharged: generationResult.meta?.creditsCharged,
+        creditsRemaining: generationResult.meta?.creditsRemaining,
+      });
+      void router.refresh();
+      if (workspaceId) {
+        void refreshWorkspaceContext({
+          workspaceId,
+          vaultLocale: locale,
+          appId: selectedAppId.trim() || undefined,
+        }).then((refreshed) => {
+          if (typeof refreshed.creditsRemaining === "number") {
+            syncCreditsBalance(refreshed.creditsRemaining);
+          }
+        });
+      }
     } catch {
       toast.dismiss(toastId);
       setError(t("form.networkError"));
@@ -3273,6 +3945,7 @@ export function ListingOptimizer({
       setResult(null);
       setMeta(undefined);
       setListingGenerationId(undefined);
+      setListingExportUnlocked(false);
       setLastGeneratedAtIso(null);
       setModularDraftReady(false);
       modularGeneration.resetModularState();
@@ -3301,13 +3974,7 @@ export function ListingOptimizer({
       setIsProcessingCredits(false);
       return;
     }
-    const runToastId = toast.loading(
-      useModularPipeline
-        ? t("form.modularGenerating")
-        : t("form.generateStarting", {
-            credits: AI_CREDIT_COSTS.listing_generation,
-          }),
-    );
+    const runToastId = toast.loading(t("form.processingWithEstimate"));
     setLoading(true);
     if (opts.orchestrationModuleId) {
       setRegeneratingOrchestrationModule(opts.orchestrationModuleId);
@@ -3316,10 +3983,10 @@ export function ListingOptimizer({
       runOptions?.queueOverride ?? optimizationQueueItems;
     const queueForHash =
       runOptions?.queueOverride ?? allOptimizationQueueItems;
+    const queueSnapshotForCache =
+      optimizationQueueItemsToImprovements(queueForGeneration);
     // Snapshot the queue before generation — used for "Optimization Factors" pills
-    setGenerationQueueSnapshot(
-      optimizationQueueItemsToImprovements(queueForGeneration),
-    );
+    setGenerationQueueSnapshot(queueSnapshotForCache);
     try {
       // ── Curated optimization queue only (no raw discovery streams) ────────
       competitorVulnerabilitiesRef.current = [];
@@ -3349,14 +4016,11 @@ export function ListingOptimizer({
       );
 
       if (!hashSignals.hashReady) {
-        toast.dismiss(runToastId);
         const readiness = assessVaultSynthesisReadiness(queueForHash);
         const vaultWarnings = buildVaultSynthesisWarnings(readiness, hashSignals);
         const warningsPayload = buildWarningsPayload(vaultWarnings);
         modularGeneration.ingestWarnings(warningsPayload);
         handleModularWarnings(warningsPayload);
-        setError(vaultWarnings[0]?.message ?? EMPTY_SYNTHESIS_VAULT_MESSAGE);
-        return;
       }
 
       const queueSynthesis = buildSynthesisFromOptimizationQueue(
@@ -3409,22 +4073,60 @@ export function ListingOptimizer({
       generationSuccessContextRef.current = { queueSynthesis };
 
       if (useModularPipeline) {
-        const finalState = await modularGeneration.runModularPipeline();
-        toast.dismiss(runToastId);
-        if (!finalState) return;
-        const copy = modularStateToListingCopy(finalState);
-        setModularDraftReady(true);
-        setResult({
-          title: copy.title,
-          shortDescription: copy.shortDescription,
-          fullDescription: copy.fullDescription,
-          keywordSuggestions: [],
-          ctaSuggestions: [],
+        resetAsyncPipeline();
+        setCurrentBuildVersionId(null);
+
+        const draft = await generateInstantDraftListing({
+          workspaceId,
+          appId: selectedAppId.trim() || undefined,
+          appName: displayAppName,
+          category: category.trim(),
+          targetKeywords:
+            mergedKeywords.length > 0 ? mergedKeywords.join(", ") : keywords.trim(),
+          appFeatures: features.trim(),
+          toneStyle,
+          targetArabic: opts.targetArabicOverride ?? locale === "ar",
+          vaultLocale: locale,
+          queueHash,
+          queueItemCount: queueForHash.length,
         });
-        setEditedTitle(copy.title);
-        setEditedShort(copy.shortDescription);
-        setEditedLong(copy.fullDescription);
-        setWizardStep(2);
+        toast.dismiss(runToastId);
+
+        if (!draft.ok) {
+          handleModularApiError(draft.error.message, draft.error.code);
+          return;
+        }
+
+        applyInstantDraftResult(draft);
+        setLastGeneratedAtIso(new Date().toISOString());
+        const sid = selectedAppId.trim();
+        if (sid) {
+          const previewOutput = {
+            title: draft.data.title,
+            shortDescription: draft.data.shortDescription,
+            fullDescription: draft.data.fullDescription,
+            keywordSuggestions: [] as string[],
+            ctaSuggestions: [] as string[],
+          };
+          const savedIso = new Date().toISOString();
+          setHydrationByApp((prev) => ({
+            ...prev,
+            [sid]: {
+              generationId: prev[sid]?.generationId ?? "",
+              createdAt: savedIso,
+              appName: displayAppName,
+              category: category.trim(),
+              keywordsText:
+                mergedKeywords.length > 0
+                  ? mergedKeywords.join(", ")
+                  : keywords.trim(),
+              appFeatures: features.trim(),
+              toneStyle,
+              output: previewOutput,
+              publicationUnlocked: false,
+            },
+          }));
+        }
         toast.success(t("form.modularDraftReady"));
         return;
       }
@@ -3444,6 +4146,7 @@ export function ListingOptimizer({
         queueItemCount: queueForHash.length,
         vaultLocale: locale,
         queueHash,
+        modularListing: modularGeneration.state,
       });
       toast.dismiss(runToastId);
       if (!generationResult.ok) {
@@ -3463,8 +4166,38 @@ export function ListingOptimizer({
           toast.message(t("form.optimizationOpportunity.emptySynthesisTitle"), {
             description: t("form.optimizationOpportunity.emptySynthesisBody"),
           });
+        } else if (generationResult.error.code === "stale_vault_context") {
+          toast.error(t("results.modular.errors.staleContext"), {
+            description: t("results.modular.errors.staleContext"),
+            duration: 8_000,
+          });
+          setError(t("results.modular.errors.staleContext"));
+        } else if (generationResult.error.code === "WAITING_FOR_PHASES") {
+          toast.message(t("results.modular.status.waiting"), {
+            description: generationResult.error.message,
+            duration: 5_000,
+          });
+          setError(t("results.modular.status.waiting"));
+        } else if (generationResult.error.code === "intel_module_processing") {
+          // 423 Locked — an intel module has uncurated DISCOVERY signals.
+          // Surface the blocker in the modular panel via the hook's state.
+          const details = generationResult.error.details as
+            | { module?: string; discoveryCount?: number }
+            | undefined;
+          modularGeneration.clearDiscoveryBlocker?.(); // reset stale state
+          // Set via toast; the modular panel will show the IntelCurationBanner
+          // when discoveryBlocker is set by the hook's runModularPipeline.
+          toast.warning(generationResult.error.message, { duration: 8_000 });
+          setError(t("results.modular.errors.intelModuleProcessing", {
+            module: details?.module ?? "",
+          }));
         } else if (generationResult.error.code === "duplicate_request") {
           return;
+        } else if (generationResult.error.code === "service_unavailable") {
+          handleModularApiError(
+            generationResult.error.message,
+            "service_unavailable",
+          );
         } else if (generationResult.error.code === "truncated_model_output") {
           setError(t("form.truncatedModelOutput"));
         } else if (generationResult.error.code === "validation_error") {
@@ -3614,12 +4347,13 @@ export function ListingOptimizer({
       setWizardPanelPeek({});
       setMetadataVariant("growth");
       setActiveStrategyMode(queueSynthesis.strategyMode);
-      setEditedTitle(d.title);
-      setEditedShort(d.shortDescription);
-      setEditedLong(d.fullDescription);
+      setEditedTitle(coerceListingText(d.title));
+      setEditedShort(coerceListingText(d.shortDescription));
+      setEditedLong(coerceListingText(d.fullDescription));
       setMeta(json.meta);
       const generationIdFromApi = json.meta?.generationId;
       setListingGenerationId(generationIdFromApi);
+      setListingExportUnlocked(true);
       const savedIso =
         json.meta?.savedAt ?? new Date().toISOString();
       setLastGeneratedAtIso(savedIso);
@@ -3627,7 +4361,10 @@ export function ListingOptimizer({
       if (sid) {
         writeFinalListingCache(
           sid,
-          listingOutputToFinalListingCache(d, savedIso, generationIdFromApi),
+          listingOutputToFinalListingCache(d, savedIso, generationIdFromApi, {
+            publicationUnlocked: true,
+            generationQueueSnapshot: queueSnapshotForCache,
+          }),
         );
       }
       // Back-patch the listing_generations row with AI-derived values so that a
@@ -3643,6 +4380,7 @@ export function ListingOptimizer({
           credentials: "include",
           body: JSON.stringify({
             generationId: generationIdFromApi,
+            workspaceId,
             appFeatures: freshFeatures,
             targetKeywords: kws,
           }),
@@ -3667,6 +4405,7 @@ export function ListingOptimizer({
             appFeatures: freshFeatures,
             toneStyle,
             output: d,
+            publicationUnlocked: true,
           },
         }));
       }
@@ -3675,10 +4414,11 @@ export function ListingOptimizer({
       } else {
         toast.success(t("form.generateSuccessToastSaved"));
       }
-      // asoScorePartial: listing is fully generated — the ASO score section
+      // asoScorePartial: listing is fully generated
       // is an optional metric. Silently skip it; don't show a warning toast
       // that confuses users into thinking generation failed.
-    } catch {
+    } catch (e) {
+      console.error("Frontend Fetch Error:", e);
       toast.dismiss(runToastId);
       setError(t("form.networkError"));
     } finally {
@@ -3888,7 +4628,7 @@ export function ListingOptimizer({
         : undefined;
 
   const clampedListing = useMemo(
-    () => clampListingTexts(editedTitle, editedShort, editedLong),
+    () => clampListingTexts(editedTitle ?? "", editedShort ?? "", editedLong ?? ""),
     [editedTitle, editedShort, editedLong],
   );
 
@@ -4147,6 +4887,31 @@ export function ListingOptimizer({
     setWizardPanelPeek({});
   }
 
+  // ── serverStep settler ────────────────────────────────────────────────────
+  // When the wizard has been hydrated at step 0 with no server result we know
+  // the session is fresh.  Confirm serverStep = 0 so Continue buttons unhide.
+  useEffect(() => {
+    if (wizardStepHydrated && wizardStep === 0 && serverStep === null) {
+      setServerStep(0);
+    }
+  }, [wizardStepHydrated, wizardStep, serverStep]);
+
+  // ── serverStep guard clause ───────────────────────────────────────────────
+  // If the server returns a step value higher than the current client step
+  // (stale state), immediately sync wizardStep upward.  This runs AFTER the
+  // render so the inline Continue-button check is the primary flash defence.
+  useEffect(() => {
+    if (serverStep === null || serverStep <= wizardStep) return;
+    setWizardStep(serverStep as OptimizerWizardStep);
+  }, [serverStep, wizardStep]);
+
+  // ── re-arm serverStep on app change ──────────────────────────────────────
+  // When the selected app changes we lose our server-authoritative step; reset
+  // to null so the step-1 Continue is hidden until the new app's fetches land.
+  useEffect(() => {
+    setServerStep(null);
+  }, [selectedAppId]);
+
   function expandedWizardPanel(step: OptimizerWizardStep) {
     return wizardStep === step || Boolean(wizardPanelPeek[step]);
   }
@@ -4263,6 +5028,12 @@ export function ListingOptimizer({
           dir={isRtl ? "rtl" : "ltr"}
           clamped={clampedListing}
           disabled={resultsBusy}
+          exportLocked={modularCopyBlocked}
+          unlockCreditCost={AI_CREDIT_COSTS.listing_generation}
+          onUnlockExport={() => {
+            setExportPlayOpen(false);
+            void runFinalizeListing();
+          }}
           onCopy={(field, text) => void copyText("export", text, field)}
           onCopyAllPlayConsole={() =>
             void copyText(
@@ -4639,7 +5410,7 @@ export function ListingOptimizer({
                       ) : null}
                     </div>
                   </div>
-                  {wizardStep === 0 ? (
+                  {wizardStep === 0 && wizardStepHydrated ? (
                     <div className={cn("mt-6 flex", isRtl ? "justify-start" : "justify-end")}>
                       <button
                         type="button"
@@ -4725,7 +5496,10 @@ export function ListingOptimizer({
                       ) : null}
                     </div>
                   </div>
-                  {wizardStep === 1 ? (
+                  {/* Step-1 Continue: hidden while serverStep is null (server check
+                      pending) or when serverStep is already 2 (Final Optimization
+                      should be shown instead — guard-clause effect will sync). */}
+                  {wizardStep === 1 && serverStep !== null && serverStep < 2 ? (
                     <div className="mt-6 flex flex-wrap justify-between gap-2">
                       <button
                         type="button"
@@ -4824,9 +5598,9 @@ export function ListingOptimizer({
                     />
 
                     <AsoSandboxPanel
-                      title={editedTitle}
-                      shortDescription={editedShort}
-                      longDescription={editedLong}
+                      title={coerceListingText(editedTitle)}
+                      shortDescription={coerceListingText(editedShort)}
+                      longDescription={coerceListingText(editedLong)}
                       keywordSignals={sandboxKeywordSignals}
                       isRtl={isRtl}
                       loading={keywordSignalsLoading}
@@ -4916,7 +5690,7 @@ export function ListingOptimizer({
                               {loading ? (
                                 <>
                                   <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-                                  {isRtl ? "جارٍ التوليد…" : t("form.generating")}
+                                  {t("form.processingWithEstimate")}
                                 </>
                               ) : (
                                 <>
@@ -4928,6 +5702,27 @@ export function ListingOptimizer({
                             </span>
                           </Tooltip>
                         </TooltipProvider>
+                        {/* ── Async job progress bar (compact, above Build button) ── */}
+                        {(asyncPipelineState.status === "queued" ||
+                          asyncPipelineState.status === "processing") && (
+                          <div className="w-full max-w-[300px]" aria-live="polite">
+                            <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-700">
+                              <div
+                                className="h-full rounded-full bg-emerald-400 transition-all duration-700"
+                                style={{ width: `${asyncProgressPercent}%` }}
+                              />
+                            </div>
+                            <p className="mt-1 text-center text-[11px] text-zinc-400 sm:text-start">
+                              {asyncPipelineState.status === "processing"
+                                ? t("results.modular.status.processing", {
+                                    defaultValue: "Generating your listing…",
+                                  })
+                                : t("results.modular.status.waiting", {
+                                    defaultValue: "Job queued — starting generation…",
+                                  })}
+                            </p>
+                          </div>
+                        )}
                         <p className="text-center text-sm font-medium text-emerald-300/90 sm:text-start">
                           {isRtl
                             ? "يوليف الذكاء الاصطناعي جميع الإشارات النشطة في قائمة واحدة محسّنة"
@@ -4964,6 +5759,35 @@ export function ListingOptimizer({
             </form>
           </section>
 
+          {/* ── Optimistic pipeline progress shell ────────────────────────────
+               Shows immediately on "Build" click (even before 202 returns),
+               then streams in partial content as each phase completes.
+               Disappears when the pipeline finishes.
+          ─────────────────────────────────────────────────────────────────── */}
+          {(asyncPipelineState.status === "queued" ||
+            asyncPipelineState.status === "processing") && (
+            <div className="mt-6">
+              <PipelineProgressShell
+                buildMode={{
+                  isBuilding: true,
+                  progressPercent: asyncProgressPercent,
+                  currentPhase:
+                    asyncPipelineState.status === "processing"
+                      ? asyncPipelineState.currentPhase
+                      : null,
+                  partialContent: asyncPartialContent,
+                  versionId: currentBuildVersionId ?? undefined,
+                }}
+                phases={
+                  "progress" in asyncPipelineState
+                    ? asyncPipelineState.progress
+                    : { title: false, short: false, long: false, full: false }
+                }
+                isRtl={isRtl}
+              />
+            </div>
+          )}
+
           <AnimatePresence mode="wait">
           {result || localizedMarkets.length > 0 ? (
             <motion.div
@@ -4987,17 +5811,13 @@ export function ListingOptimizer({
                 <div className="min-w-0 space-y-0.5">
                   <p className="font-semibold text-[13px]">
                     {meta.quality_status
-                      ? (isRtl ? "وضع التوليف الأقصى" : "Maximum Synthesis")
-                      : (isRtl ? "بيانات جزئية" : "Partial Data")}
+                      ? t("signalQuality.maximumSynthesis")
+                      : t("signalQuality.partialData")}
                   </p>
                   <p className="text-[11px] leading-relaxed opacity-80">
                     {meta.quality_status
-                      ? (isRtl
-                          ? "جميع الإشارات نشطة — المراجعات + السوق + المنافسون. هذا هو أعلى مستوى من التخصيص."
-                          : "All signals active — Reviews + Market + Competitors. This is peak personalisation.")
-                      : (isRtl
-                          ? "تم التوليد ببيانات جزئية. أضف إشارات المراجعات أو السوق أو المنافسين للحصول على استراتيجية أكثر شمولاً."
-                          : "Generated using partial data. Add Review, Market, or Competitor signals for a more comprehensive strategy.")}
+                      ? t("signalQuality.maximumSynthesisDetail")
+                      : t("signalQuality.partialDataDetail")}
                   </p>
                 </div>
               </div>
@@ -5014,11 +5834,11 @@ export function ListingOptimizer({
                 lastGeneratedLabelFormatter,
               )}
               isRtl={isRtl}
-              editedTitle={editedTitle}
+              editedTitle={editedTitle ?? ""}
               setEditedTitle={setEditedTitle}
-              editedShort={editedShort}
+              editedShort={editedShort ?? ""}
               setEditedShort={setEditedShort}
-              editedLong={editedLong}
+              editedLong={editedLong ?? ""}
               setEditedLong={setEditedLong}
               clampedListing={clampedListing}
               onCopyAllBlocks={() =>
@@ -5036,7 +5856,10 @@ export function ListingOptimizer({
                 )
               }
               onCopyCtasList={() =>
-                void copyText("CTAs", result.ctaSuggestions.join("\n"))
+                void copyText(
+                  "CTAs",
+                  formatInstallCtasForCopy(result.ctaSuggestions),
+                )
               }
               onCopyTitle={() =>
                 guardModularCopy(() => void copyText("title", clampedListing.title))
@@ -5101,7 +5924,12 @@ export function ListingOptimizer({
               modularState={modularGeneration.state}
               modularLoading={modularPanelLoading}
               modularDraftReady={modularDraftReady}
-              isPublicationReady={Boolean(listingGenerationId)}
+              synthesizingSignals={modularGeneration.synthesizingSignals}
+              modularFinalizeReady={
+                modularGeneration.isPipelineReady &&
+                modularGeneration.isDraftFullyPersisted
+              }
+              isPublicationReady={listingExportUnlocked}
               onRegenerateModularBlock={handleModularBlockRegenerate}
               onSelectModularShortVariation={(index, variation) => {
                 modularGeneration.selectShortVariation(index);
@@ -5139,11 +5967,17 @@ export function ListingOptimizer({
                 .split(/[,;\n]+/)
                 .map((s) => s.trim())
                 .filter(Boolean)}
-              isPublicationReady={Boolean(listingGenerationId)}
+              isPublicationReady={listingExportUnlocked}
               copyListingBlocked={modularCopyBlocked}
+              onUnlockExport={() => void runFinalizeListing()}
+              unlockExportCreditCost={AI_CREDIT_COSTS.listing_generation}
               onModularDraftCopyBlocked={notifyModularCopyBlocked}
               listingHealth={modularGeneration.generationWarnings}
               lockedKeywords={lockedKeywordList}
+              modularDiscoveryBlocker={modularGeneration.discoveryBlocker}
+              onDismissModularDiscoveryBlocker={modularGeneration.clearDiscoveryBlocker}
+              modularPhaseChainStep={modularGeneration.phaseChainStep}
+              modularIsHydrating={modularGeneration.isHydrating}
             />
             ) : null}
 

@@ -1,0 +1,7 @@
+export const LISTING_GENERATION_TIMEOUT_MS = 120_000;
+
+/** @deprecated Use LISTING_GENERATION_TIMEOUT_MS */
+export const SIGNAL_ENHANCEMENT_TIMEOUT_MS = LISTING_GENERATION_TIMEOUT_MS;
+
+export const LISTING_GENERATION_TIMEOUT_MESSAGE =
+  "Service Temporarily Unavailable - Please try again";

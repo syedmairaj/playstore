@@ -26,7 +26,7 @@ import {
 import type { CreditsLedgerEntry } from "@/components/settings/settings-types";
 import { normalizePlan, PLAN_META, type PlanId } from "@/lib/plan-limits";
 import { cn } from "@/lib/utils";
-import { CreditDashboard } from "@/components/settings/credit-dashboard";
+import { CreditDashboard, PhaseBreakdownChart } from "@/components/settings/credit-dashboard";
 
 type TimeHorizon = "7days" | "30days" | "thisMonth" | "lastMonth";
 
@@ -225,6 +225,8 @@ export function BillingTab({
        * consumed below for the plan row and the keywords tracker.
        */}
       <CreditDashboard workspaceId={workspaceId} />
+
+      <PhaseBreakdownChart workspaceId={workspaceId} />
 
       {/* ── Keywords usage tracker ────────────────────────────────────────── */}
       <Card className="border-white/[0.08] bg-zinc-950/60 shadow-none">

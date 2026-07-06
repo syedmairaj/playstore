@@ -40,6 +40,7 @@ export type ModularListingBlockId =
 export type ModularBlockSnapshotKey = ModularListingBlockId | `short-${number}`;
 
 export type ModularListingGenerationStep =
+  | "pipeline"
   | "full"
   | "title"
   | "short"
@@ -47,18 +48,31 @@ export type ModularListingGenerationStep =
   | "hook"
   | "features"
   | "closing"
-  | "finalize";
+  | "finalize"
+  /**
+   * Post-pipeline step: generate 6–8 screenshot captions from the long
+   * description tone.  Does not bill credits; triggered after pipeline
+   * completes or on demand via the ModularListingPanel caption button.
+   */
+  | "captions";
 
 export type ModularListingState = {
   title: { value: string; locked: boolean };
   shortDescription: { variations: ShortVariationItem[]; selectedIndex: number };
   longDescription: { hook: string; features: string; closing: string };
+  /**
+   * Screenshot captions generated from the long description tone.
+   * Populated by the `captions` generation step.  Persisted into
+   * `listing_versions.screenshot_captions` when a version is promoted.
+   */
+  screenshotCaptions?: import("@/lib/listing/listing-version.types").ScreenshotCaption[];
 };
 
 export const EMPTY_MODULAR_LISTING_STATE: ModularListingState = {
   title: { value: "", locked: false },
   shortDescription: { variations: [], selectedIndex: 0 },
   longDescription: { hook: "", features: "", closing: "" },
+  screenshotCaptions: [],
 };
 
 export type ModularTitleStepData = {

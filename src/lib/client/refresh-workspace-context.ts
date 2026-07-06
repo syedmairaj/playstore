@@ -26,7 +26,7 @@ export async function refreshWorkspaceContext(
   if (options.appId?.trim()) {
     tasks.push(
       fetch(
-        `/api/workspaces/${workspaceId}/keywords/signals?appId=${encodeURIComponent(options.appId.trim())}&locale=${vaultLocale}`,
+        `/api/workspaces/${workspaceId}/staging-vault/keyword-signals?appId=${encodeURIComponent(options.appId.trim())}&locale=${vaultLocale}`,
         { credentials: "same-origin" },
       ).catch(() => null),
     );
@@ -34,7 +34,7 @@ export async function refreshWorkspaceContext(
 
   const usagePromise = fetch(
     `/api/workspaces/${workspaceId}/billing/usage-summary`,
-    { credentials: "same-origin" },
+    { credentials: "same-origin", cache: "no-store" },
   )
     .then((res) => (res.ok ? res.json() : null))
     .catch(() => null);

@@ -4,6 +4,10 @@ import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { checkFinishReason, extractText } from "@/lib/ai/extract-model-text";
 import { robustParseJson } from "@/lib/utils/json-repair";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import {
+  resolveTokensFromGeminiResponse,
+  type ModularGeminiCallResult,
+} from "@/lib/gemini/gemini-token-usage";
 import type { ListingOptimizerInput } from "@/lib/types/listing";
 import {
   buildModularFinalizeExtrasMessages,
@@ -53,11 +57,12 @@ async function callModularJson<T>(
   validate: (value: T) => z.SafeParseReturnType<T, T>,
   stepLabel: string,
   postValidate?: (value: T) => void,
-): Promise<T> {
+): Promise<ModularGeminiCallResult<T>> {
   const model = getGenerativeModel();
   model.systemInstruction = messages.system;
 
   let lastZodError: z.ZodError | undefined;
+  let totalTokens = 0;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const userText =
@@ -75,6 +80,8 @@ async function callModularJson<T>(
         topP: 0.95,
       },
     });
+
+    totalTokens += resolveTokensFromGeminiResponse(result);
 
     const finishReason = checkFinishReason(result);
     const text = extractText(result);
@@ -101,7 +108,7 @@ async function callModularJson<T>(
     if (validated.success) {
       try {
         postValidate?.(validated.data);
-        return validated.data;
+        return { data: validated.data, tokensUsed: totalTokens };
       } catch (postError) {
         if (postError instanceof z.ZodError) {
           lastZodError = postError;
@@ -178,6 +185,7 @@ export type ModularShortRawResult = {
   rawText: string;
   parsed: unknown | null;
   finishReason?: string;
+  tokensUsed: number;
 };
 
 /** Single Gemini call for short phase — parsing delegated to orchestrator defensive loop. */
@@ -208,6 +216,7 @@ export async function invokeModularShortGeneration(
     rawText: rawText ?? "",
     parsed,
     finishReason: finishReason.finishReason,
+    tokensUsed: resolveTokensFromGeminiResponse(result),
   };
 }
 
@@ -401,7 +410,7 @@ export async function generateListingLongFeaturesWithGemini(
   context: { title: string; shortDescription: string },
   lockedKeywords: string[],
   options?: ModularLongPromptOptions,
-): Promise<string> {
+): Promise<{ featuresText: string; tokensUsed: number }> {
   const reduced = options?.reducedComplexity === true;
   const messages = buildModularLongFeaturesOnlyMessages(
     input,
@@ -413,6 +422,7 @@ export async function generateListingLongFeaturesWithGemini(
   model.systemInstruction = messages.system;
 
   let lastZodError: z.ZodError | undefined;
+  let totalTokens = 0;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const retryHint =
@@ -430,6 +440,8 @@ export async function generateListingLongFeaturesWithGemini(
       },
     });
 
+    totalTokens += resolveTokensFromGeminiResponse(result);
+
     const finishReason = checkFinishReason(result);
     const text = extractText(result);
     if (!text?.trim()) continue;
@@ -446,7 +458,7 @@ export async function generateListingLongFeaturesWithGemini(
 
     const featuresText = modularLongFeaturesSectionsToText(validated.data);
     if (!featuresText.trim()) continue;
-    return featuresText;
+    return { featuresText, tokensUsed: totalTokens };
   }
 
   throw new InvalidModelOutputError("Modular long features array failed validation", {
@@ -461,7 +473,7 @@ export async function generateListingLongHookClosingWithGemini(
   featuresBody: string,
   lockedKeywords: string[],
   options?: ModularLongPromptOptions,
-): Promise<{ hook: string; closing: string }> {
+): Promise<ModularGeminiCallResult<{ hook: string; closing: string }>> {
   const messages = buildModularLongHookClosingMessages(
     input,
     context,
@@ -470,7 +482,7 @@ export async function generateListingLongHookClosingWithGemini(
     options,
   );
 
-  const data = await callModularJson(
+  return callModularJson(
     messages,
     LONG_HOOK_CLOSING_SCHEMA,
     (parsed) => {
@@ -486,8 +498,6 @@ export async function generateListingLongHookClosingWithGemini(
         .safeParse(value),
     "long-hook-closing",
   );
-
-  return data;
 }
 
 const LONG_RESPONSE_SCHEMA = {
@@ -506,11 +516,11 @@ const LONG_RESPONSE_SCHEMA = {
 export async function generateListingTitleWithGemini(
   input: ListingOptimizerInput,
   lockedKeywords: string[],
-): Promise<ModularTitleStepData> {
+): Promise<ModularGeminiCallResult<ModularTitleStepData>> {
   const fallbackLocked =
     lockedKeywords.length > 0 ? lockedKeywords : input.targetKeywords;
   const messages = buildModularTitleMessages(input, fallbackLocked);
-  const data = await callModularJson(
+  const { data, tokensUsed } = await callModularJson(
     messages,
     TITLE_RESPONSE_SCHEMA,
     (parsed) => normalizeModularTitleParsed(parsed, fallbackLocked),
@@ -518,8 +528,11 @@ export async function generateListingTitleWithGemini(
     "title",
   );
   return {
-    title: data.title.slice(0, 30),
-    lockedKeywords: data.lockedKeywords,
+    data: {
+      title: data.title.slice(0, 30),
+      lockedKeywords: data.lockedKeywords,
+    },
+    tokensUsed,
   };
 }
 
@@ -543,7 +556,7 @@ export async function generateListingLongWithGemini(
   block?: LongBlockId,
   existing?: Partial<ModularLongStepData>,
   lockedKeywords?: string[],
-): Promise<ModularLongStepData> {
+): Promise<ModularGeminiCallResult<ModularLongStepData>> {
   const locked =
     lockedKeywords && lockedKeywords.length > 0
       ? lockedKeywords
@@ -551,11 +564,14 @@ export async function generateListingLongWithGemini(
   const messages = buildModularLongMessages(input, context, block, locked);
 
   if (!block) {
-    const raw = await runGranularModularLongGeneration(input, context, locked);
-    return safeAssemble(raw, { targetArabic: input.targetArabic ?? false }).data;
+    const granular = await runGranularModularLongGeneration(input, context, locked);
+    return {
+      data: safeAssemble(granular.data, { targetArabic: input.targetArabic ?? false }).data,
+      tokensUsed: granular.tokensUsed,
+    };
   }
 
-  const data = await callModularJson(
+  const { data, tokensUsed } = await callModularJson(
     messages,
     LONG_RESPONSE_SCHEMA,
     (parsed) => normalizeModularLongParsed(parsed),
@@ -571,13 +587,16 @@ export async function generateListingLongWithGemini(
     if (!merged[block]?.trim()) {
       throw new InvalidModelOutputError(`Modular long block "${block}" was empty`, {});
     }
-    return merged;
+    return { data: merged, tokensUsed };
   }
 
   return {
-    hook: data.hook,
-    features: data.features,
-    closing: data.closing,
+    data: {
+      hook: data.hook,
+      features: data.features,
+      closing: data.closing,
+    },
+    tokensUsed,
   };
 }
 
@@ -603,7 +622,7 @@ const EXTRAS_RESPONSE_SCHEMA = {
 export async function generateListingFinalizeExtrasWithGemini(
   input: ListingOptimizerInput,
   copy: { title: string; shortDescription: string; fullDescription: string },
-): Promise<Partial<ListingGenerationOutput>> {
+): Promise<ModularGeminiCallResult<Partial<ListingGenerationOutput>>> {
   const messages = buildModularFinalizeExtrasMessages(input, copy);
   const model = getGenerativeModel();
   model.systemInstruction = messages.system;
@@ -619,28 +638,35 @@ export async function generateListingFinalizeExtrasWithGemini(
     },
   });
 
+  const tokensUsed = resolveTokensFromGeminiResponse(result);
   const text = extractText(result);
-  if (!text?.trim()) return {};
+  if (!text?.trim()) return { data: {}, tokensUsed };
 
   const parsed = robustParseJson(text);
-  if (parsed === null) return {};
+  if (parsed === null) return { data: {}, tokensUsed };
   const asoTry = tryParseListingAsoBundle(parsed);
   if (asoTry.ok) {
     return {
-      keywordSuggestions: Array.isArray((parsed as { keywordSuggestions?: unknown }).keywordSuggestions)
-        ? ((parsed as { keywordSuggestions: string[] }).keywordSuggestions ?? []).slice(0, 30)
-        : input.targetKeywords.slice(0, 20),
-      ctaSuggestions: Array.isArray((parsed as { ctaSuggestions?: unknown }).ctaSuggestions)
-        ? ((parsed as { ctaSuggestions: string[] }).ctaSuggestions ?? []).slice(0, 10)
-        : [],
-      asoScore: asoTry.value.asoScore,
-      scoreBreakdown: asoTry.value.scoreBreakdown,
-      improvementTips: asoTry.value.improvementTips,
+      data: {
+        keywordSuggestions: Array.isArray((parsed as { keywordSuggestions?: unknown }).keywordSuggestions)
+          ? ((parsed as { keywordSuggestions: string[] }).keywordSuggestions ?? []).slice(0, 30)
+          : input.targetKeywords.slice(0, 20),
+        ctaSuggestions: Array.isArray((parsed as { ctaSuggestions?: unknown }).ctaSuggestions)
+          ? ((parsed as { ctaSuggestions: string[] }).ctaSuggestions ?? []).slice(0, 10)
+          : [],
+        asoScore: asoTry.value.asoScore,
+        scoreBreakdown: asoTry.value.scoreBreakdown,
+        improvementTips: asoTry.value.improvementTips,
+      },
+      tokensUsed,
     };
   }
 
   return {
-    keywordSuggestions: input.targetKeywords.slice(0, 20),
-    ctaSuggestions: [],
+    data: {
+      keywordSuggestions: input.targetKeywords.slice(0, 20),
+      ctaSuggestions: [],
+    },
+    tokensUsed,
   };
 }

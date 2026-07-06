@@ -8,9 +8,9 @@ import type { ListingAssetTarget } from "@/lib/keywords/discovery-listing-asset"
 import { Layers, Sparkles } from "lucide-react";
 
 type AsoSandboxPanelProps = {
-  title: string;
-  shortDescription: string;
-  longDescription: string;
+  title?: string | null;
+  shortDescription?: string | null;
+  longDescription?: string | null;
   keywordSignals: KeywordSignal[];
   isRtl?: boolean;
   loading?: boolean;
@@ -23,19 +23,23 @@ const ASSET_FIELDS: ListingAssetTarget[] = [
   "keywords",
 ];
 
+function asListingText(value: string | null | undefined): string {
+  return typeof value === "string" ? value : "";
+}
+
 function draftForAsset(
   asset: ListingAssetTarget,
-  title: string,
-  shortDescription: string,
-  longDescription: string,
+  title: string | null | undefined,
+  shortDescription: string | null | undefined,
+  longDescription: string | null | undefined,
 ): string {
   switch (asset) {
     case "title":
-      return title;
+      return asListingText(title);
     case "short_description":
-      return shortDescription;
+      return asListingText(shortDescription);
     case "full_description":
-      return longDescription;
+      return asListingText(longDescription);
     case "keywords":
       return "";
     default:

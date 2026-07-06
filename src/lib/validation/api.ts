@@ -98,6 +98,7 @@ export const patchWorkspaceSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
   onboarding_state: z.any().optional(),
   plan: z.enum(["free", "pro", "growth"]).optional(),
+  monthly_credit_cap: z.number().int().min(1).max(1_000_000).nullable().optional(),
 });
 
 /**

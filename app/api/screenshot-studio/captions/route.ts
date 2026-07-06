@@ -103,7 +103,12 @@ export async function POST(request: NextRequest) {
   let listingTitle: string | undefined;
   let features: string | undefined;
   try {
-    const hydration = await loadLatestListingHydrationForApp(supabase, workspaceId, appId);
+    const hydration = await loadLatestListingHydrationForApp(
+      supabase,
+      workspaceId,
+      appId,
+      user.id,
+    );
     if (hydration) {
       listingTitle = hydration.output?.title ?? undefined;
       // Convert features textarea to clean bullet list

@@ -1,6 +1,20 @@
 import type { ListingScoreBreakdown } from "@/lib/validation/listing-output";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import { parsePersistedListingOutput } from "@/lib/validation/listing-output";
+import { listingOutputForPublicationState } from "@/lib/listing/listing-export-unlock";
+
+export type CachedGenerationQueueSnapshotItem = {
+  id: string;
+  reviewId: string;
+  reviewText: string;
+  userName: string;
+  score: number;
+  sentimentTag: string;
+  appId: string | null;
+  packageName: string | null;
+  isUtilized: boolean;
+  createdAt: string;
+};
 
 export function listingOptimizerGeneratedCacheKey(appId: string): string {
   return `playstore_last_generated_${appId.trim()}`;
@@ -88,6 +102,12 @@ export type FinalListingCache = {
   ctaSuggestions: string[];
   generatedAt: string;
   generationId?: string;
+  /** When false, cache is preview-only and must not restore paid ASO / export unlock. */
+  publicationUnlocked?: boolean;
+  /** Full generation payload (keywords, CTAs, screenshots, A/B, strategy, variants). */
+  output?: ListingGenerationOutput;
+  /** Queue snapshot for strategy summary pills after refresh. */
+  generationQueueSnapshot?: CachedGenerationQueueSnapshotItem[];
 };
 
 export function finalListingCacheKey(appId: string): string {
@@ -120,20 +140,49 @@ function parseScoreBreakdown(value: unknown): ListingScoreBreakdown | undefined 
   return { title, shortDescription, longDescription, persuasiveness };
 }
 
+function parseGenerationQueueSnapshot(
+  value: unknown,
+): CachedGenerationQueueSnapshotItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: CachedGenerationQueueSnapshotItem[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r.id !== "string" || typeof r.sentimentTag !== "string") continue;
+    items.push({
+      id: r.id,
+      reviewId: typeof r.reviewId === "string" ? r.reviewId : "",
+      reviewText: typeof r.reviewText === "string" ? r.reviewText : "",
+      userName: typeof r.userName === "string" ? r.userName : "",
+      score: typeof r.score === "number" ? r.score : 0,
+      sentimentTag: r.sentimentTag,
+      appId: typeof r.appId === "string" ? r.appId : null,
+      packageName: typeof r.packageName === "string" ? r.packageName : null,
+      isUtilized: r.isUtilized === true,
+      createdAt: typeof r.createdAt === "string" ? r.createdAt : "",
+    });
+  }
+  return items.length > 0 ? items : undefined;
+}
+
 function parseFinalListingCacheRaw(
   parsed: Record<string, unknown>,
 ): FinalListingCache | null {
-  const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
+  const fullOutput = parsePersistedListingOutput(parsed.output);
+  const title =
+    typeof parsed.title === "string"
+      ? parsed.title.trim()
+      : fullOutput?.title?.trim() ?? "";
   const shortDescription =
     typeof parsed.shortDescription === "string"
       ? parsed.shortDescription
-      : "";
+      : fullOutput?.shortDescription ?? "";
   const longDescription =
     typeof parsed.longDescription === "string"
       ? parsed.longDescription
       : typeof parsed.fullDescription === "string"
         ? parsed.fullDescription
-        : "";
+        : fullOutput?.fullDescription ?? "";
   const generatedAt =
     typeof parsed.generatedAt === "string" && parsed.generatedAt.trim()
       ? parsed.generatedAt.trim()
@@ -142,7 +191,7 @@ function parseFinalListingCacheRaw(
         : typeof parsed.savedAt === "string" && parsed.savedAt.trim()
           ? parsed.savedAt.trim()
           : "";
-  if (!title || !generatedAt) return null;
+  if ((!title && !fullOutput?.title?.trim()) || !generatedAt) return null;
 
   const asoScore =
     typeof parsed.asoScore === "number" && Number.isFinite(parsed.asoScore)
@@ -150,31 +199,56 @@ function parseFinalListingCacheRaw(
       : null;
 
   return {
-    title,
+    title: title || fullOutput?.title || "",
     shortDescription,
     longDescription,
     asoScore,
     scoreBreakdown: parseScoreBreakdown(parsed.scoreBreakdown),
     improvementTips: parseStringArray(parsed.improvementTips),
-    keywordSuggestions: parseStringArray(parsed.keywordSuggestions),
-    ctaSuggestions: parseStringArray(parsed.ctaSuggestions),
+    keywordSuggestions:
+      parseStringArray(parsed.keywordSuggestions).length > 0
+        ? parseStringArray(parsed.keywordSuggestions)
+        : (fullOutput?.keywordSuggestions ?? []),
+    ctaSuggestions:
+      parseStringArray(parsed.ctaSuggestions).length > 0
+        ? parseStringArray(parsed.ctaSuggestions)
+        : (fullOutput?.ctaSuggestions ?? []),
     generatedAt,
     generationId:
       typeof parsed.generationId === "string" && parsed.generationId.trim()
         ? parsed.generationId.trim()
         : undefined,
+    publicationUnlocked:
+      typeof parsed.publicationUnlocked === "boolean"
+        ? parsed.publicationUnlocked
+        : undefined,
+    ...(fullOutput ? { output: fullOutput } : {}),
+    generationQueueSnapshot: parseGenerationQueueSnapshot(
+      parsed.generationQueueSnapshot,
+    ),
   };
 }
 
 export function finalListingCacheToOutput(
   cache: FinalListingCache,
 ): ListingGenerationOutput {
-  return {
+  const unlocked = isFinalListingCachePublicationUnlocked(cache);
+  if (cache.output) {
+    const parsed = parsePersistedListingOutput(cache.output);
+    if (parsed) {
+      return listingOutputForPublicationState(parsed, unlocked);
+    }
+  }
+  const base: ListingGenerationOutput = {
     title: cache.title,
     shortDescription: cache.shortDescription,
     fullDescription: cache.longDescription,
     keywordSuggestions: cache.keywordSuggestions,
     ctaSuggestions: cache.ctaSuggestions,
+  };
+  if (!unlocked) return base;
+  return {
+    ...base,
     ...(typeof cache.asoScore === "number" ? { asoScore: cache.asoScore } : {}),
     ...(cache.scoreBreakdown ? { scoreBreakdown: cache.scoreBreakdown } : {}),
     ...(cache.improvementTips?.length
@@ -183,26 +257,76 @@ export function finalListingCacheToOutput(
   };
 }
 
+/** Preview-only cache must not overwrite a newer paid unlock row in localStorage. */
+export function shouldWritePreviewFinalListingCache(
+  appId: string,
+  publicationUnlocked: boolean,
+): boolean {
+  if (publicationUnlocked) return true;
+  const existing = readFinalListingCache(appId);
+  if (!existing) return true;
+  return !isFinalListingCachePublicationUnlocked(existing);
+}
+
+export function isFinalListingCachePublicationUnlocked(
+  cache: FinalListingCache,
+): boolean {
+  return cache.publicationUnlocked === true;
+}
+
+export function readFinalListingCacheSavedAtMs(appId: string): number {
+  const cache = readFinalListingCache(appId);
+  if (!cache) return 0;
+  const ts = Date.parse(cache.generatedAt);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+/** True when server hydration output is older than local paid unlock cache. */
+export function shouldPreferFinalListingCacheOverHydration(
+  appId: string,
+  hydrationCreatedAt: string,
+): boolean {
+  const hydTs = Date.parse(hydrationCreatedAt);
+  if (!Number.isFinite(hydTs)) return false;
+  const cache = readFinalListingCache(appId);
+  if (!cache || !isFinalListingCachePublicationUnlocked(cache)) return false;
+  const cacheTs = Date.parse(cache.generatedAt);
+  return Number.isFinite(cacheTs) && cacheTs > hydTs;
+}
+
 export function listingOutputToFinalListingCache(
   output: ListingGenerationOutput,
   generatedAt: string,
   generationId?: string,
+  options?: {
+    publicationUnlocked?: boolean;
+    generationQueueSnapshot?: CachedGenerationQueueSnapshotItem[];
+  },
 ): FinalListingCache {
+  const publicationUnlocked = options?.publicationUnlocked ?? true;
   return {
     title: output.title || "",
     shortDescription: output.shortDescription || "",
     longDescription: output.fullDescription || "",
-    asoScore: typeof output.asoScore === "number" ? output.asoScore : null,
-    ...(output.scoreBreakdown
+    asoScore:
+      publicationUnlocked && typeof output.asoScore === "number"
+        ? output.asoScore
+        : null,
+    ...(publicationUnlocked && output.scoreBreakdown
       ? { scoreBreakdown: output.scoreBreakdown }
       : {}),
-    ...(output.improvementTips?.length
+    ...(publicationUnlocked && output.improvementTips?.length
       ? { improvementTips: output.improvementTips }
       : {}),
     keywordSuggestions: output.keywordSuggestions ?? [],
     ctaSuggestions: output.ctaSuggestions ?? [],
     generatedAt,
     ...(generationId ? { generationId } : {}),
+    publicationUnlocked,
+    output,
+    ...(options?.generationQueueSnapshot?.length
+      ? { generationQueueSnapshot: options.generationQueueSnapshot }
+      : {}),
   };
 }
 

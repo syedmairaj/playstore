@@ -8,6 +8,7 @@ import { SignOutButton } from "@/components/app/SignOutButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { updateBudgetCap } from "@/lib/client/update-budget-cap";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -217,6 +218,8 @@ export function IntegrationsTab({
   canAdmin,
   prefs,
   onPrefsChange,
+  monthlyCreditCap,
+  onMonthlyCreditCapChange,
   displayName,
   onDisplayNameChange,
   busy,
@@ -235,6 +238,8 @@ export function IntegrationsTab({
     weeklySummary: boolean;
     alertThreshold: number;
   }) => void;
+  monthlyCreditCap: number | null;
+  onMonthlyCreditCapChange: (cap: number | null) => void;
   displayName: string;
   onDisplayNameChange: (name: string) => void;
   busy: boolean;
@@ -242,6 +247,24 @@ export function IntegrationsTab({
   onSaveProfile: () => void;
 }) {
   const t = useTranslations("settings");
+  const [capSaving, setCapSaving] = useState(false);
+  const [capMessage, setCapMessage] = useState<string | null>(null);
+  const [capError, setCapError] = useState(false);
+
+  async function handleSaveCreditCap() {
+    if (!canAdmin) return;
+    setCapSaving(true);
+    setCapMessage(null);
+    setCapError(false);
+    const result = await updateBudgetCap(workspaceId, monthlyCreditCap);
+    setCapSaving(false);
+    if (result.ok) {
+      setCapMessage(t("integrations.monthlyCreditCapSaved"));
+    } else {
+      setCapError(true);
+      setCapMessage(result.message);
+    }
+  }
 
   return (
     <div className="space-y-10">
@@ -294,6 +317,53 @@ export function IntegrationsTab({
               />
             </div>
             <p className="mt-2 text-xs text-zinc-500">{t("integrations.alertThresholdHint")}</p>
+          </div>
+          <div className="rounded-xl border border-white/[0.08] bg-zinc-950/40 px-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label htmlFor="monthly-credit-cap" className="text-start text-sm text-zinc-200">
+                {t("integrations.monthlyCreditCap")}
+              </label>
+              <Input
+                id="monthly-credit-cap"
+                type="number"
+                min={1}
+                max={1000000}
+                placeholder="—"
+                disabled={!canAdmin}
+                className="w-28 border-white/[0.1] bg-zinc-950/80 text-zinc-100"
+                value={monthlyCreditCap ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  if (!raw) {
+                    onMonthlyCreditCapChange(null);
+                    return;
+                  }
+                  const parsed = Number.parseInt(raw, 10);
+                  onMonthlyCreditCapChange(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+                }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">{t("integrations.monthlyCreditCapHint")}</p>
+            {canAdmin ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={capSaving || busy}
+                onClick={() => void handleSaveCreditCap()}
+                className="mt-3 border-white/[0.12] text-zinc-200 hover:bg-white/[0.06]"
+              >
+                {capSaving ? t("integrations.monthlyCreditCapSaving") : t("integrations.monthlyCreditCapSave")}
+              </Button>
+            ) : null}
+            {capMessage ? (
+              <p
+                className={`mt-2 text-xs ${capError ? "text-red-400" : "text-emerald-400"}`}
+                role="status"
+              >
+                {capMessage}
+              </p>
+            ) : null}
           </div>
         </div>
         <Button

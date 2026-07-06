@@ -2,6 +2,7 @@ import "server-only";
 import { SchemaType } from "@/lib/ai/schema-types";
 import { getGenerativeModel } from "@/lib/ai/modelGateway";
 import { InvalidModelOutputError } from "@/lib/gemini/invalid-model-output-error";
+import type { ScreenshotCaption } from "@/lib/listing/listing-version.types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -227,4 +228,211 @@ export async function generateScreenshotCaptions(
   }) as [CaptionVariation, CaptionVariation, CaptionVariation];
 
   return { variations };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Listing-pipeline captions (new: step "captions" in modular pipeline)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Unlike the visual screenshot generator above (which produces EN+AR overlay
+// copy for 3 slides), this generates 6–8 short Google Play screenshot
+// captions derived from the long description tone.  These are stored in
+// listing_versions.screenshot_captions and shown in the DeploymentView.
+//
+
+export type ListingCaptionsBrandKit = {
+  /** Primary hex color, e.g. "#1A73E8" — used in uiFocus descriptions */
+  primaryColor?: string | null;
+  /** Secondary palette, e.g. "#FF4081, #212121" */
+  colorPalette?: string | null;
+  /** Visual style descriptor, e.g. "Modern", "Minimal", "Bold" */
+  style?: string | null;
+  /** Free-text tone / brand voice guidelines */
+  toneGuidelines?: string | null;
+};
+
+export type ListingCaptionsInput = {
+  appName: string;
+  category: string;
+  /** Assembled long description (full text or just the features block). */
+  longDescription: string;
+  locale: "en" | "ar";
+  /** Optional: locked keywords to surface in captions. */
+  lockedKeywords?: string[];
+  /**
+   * Brand Kit — when provided, the caption uiFocus descriptions will reference
+   * the brand color palette and visual style so the output can guide Runware
+   * (or any image-generation API) for screenshot backgrounds.
+   */
+  brandKit?: ListingCaptionsBrandKit;
+};
+
+export type ListingCaptionsResult = {
+  captions: ScreenshotCaption[];
+};
+
+/**
+ * Exported so tests can assert the schema shape directly.
+ *
+ * "uiFocus" is in `required` so Gemini's structured-output enforcement
+ * guarantees every caption item carries the screenshot background description.
+ */
+export const LISTING_CAPTIONS_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    captions: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          order:    { type: SchemaType.INTEGER },
+          caption:  { type: SchemaType.STRING },
+          theme:    { type: SchemaType.STRING },
+          // uiFocus drives Runware screenshot background generation
+          uiFocus:  { type: SchemaType.STRING },
+        },
+        required: ["order", "caption", "theme", "uiFocus"],
+      },
+    },
+  },
+  required: ["captions"],
+};
+
+function buildListingCaptionsPrompt(input: ListingCaptionsInput): string {
+  const { appName, category, longDescription, locale, lockedKeywords, brandKit } = input;
+  const isAr = locale === "ar";
+
+  const keywordLine =
+    lockedKeywords && lockedKeywords.length > 0
+      ? `Key ASO keywords to surface (use naturally): ${lockedKeywords.slice(0, 5).join(", ")}`
+      : "";
+
+  const toneInstruction = isAr
+    ? "Write in natural Modern Standard Arabic (MSA). Mirror the emotional tone of the description. Do NOT transliterate — use full Arabic script."
+    : "Write in English that matches the tone and voice of the long description below.";
+
+  // Brand Kit context for asset-bound captions (uiFocus drives Runware screenshot backgrounds)
+  const brandKitLines: string[] = [];
+  if (brandKit) {
+    if (brandKit.style) brandKitLines.push(`Visual style: ${brandKit.style}`);
+    if (brandKit.primaryColor) brandKitLines.push(`Primary brand color: ${brandKit.primaryColor}`);
+    if (brandKit.colorPalette) brandKitLines.push(`Color palette: ${brandKit.colorPalette}`);
+    if (brandKit.toneGuidelines) brandKitLines.push(`Brand tone: ${brandKit.toneGuidelines}`);
+  }
+
+  const brandKitBlock =
+    brandKitLines.length > 0
+      ? `\nBRAND KIT (apply to uiFocus descriptions — these guide screenshot background generation)\n-----------\n${brandKitLines.join("\n")}`
+      : "";
+
+  return `You are a Google Play Store ASO expert.
+
+Generate exactly 7 screenshot captions for the Play Store listing carousel.
+Each caption appears below one screenshot image and drives install conversions.
+
+APP CONTEXT
+-----------
+App name: "${appName}"
+Category: ${category}
+${keywordLine}${brandKitBlock}
+
+LONG DESCRIPTION (tone reference):
+${longDescription.slice(0, 800)}
+
+CAPTION STRUCTURE (one caption per screenshot):
+1. Hook (theme: "hook")      — Opening value proposition. Why should someone care?
+2. Feature (theme: "feature") — Core functionality. What does the app actually do?
+3. Feature (theme: "feature") — Second key capability.
+4. Feature (theme: "feature") — Third key capability.
+5. Benefit (theme: "benefit") — How the user's life improves. Outcome-focused.
+6. Benefit (theme: "benefit") — Another tangible benefit or result.
+7. CTA (theme: "cta")        — Closing call-to-action. Motivational.
+
+RULES
+-----
+- Each caption: max 70 characters. Short, punchy, no filler.
+- Match the tone and voice of the long description above.
+- ${toneInstruction}
+- No emojis.
+- No generic filler like "Download now" or "Available today".
+- theme must be one of: "hook", "feature", "benefit", "cta".${brandKitLines.length > 0 ? "\n- uiFocus: describe the screenshot background using the Brand Kit palette and style above (e.g. \"minimal dark dashboard with #1A73E8 accent\")." : ""}
+
+Return JSON with exactly 7 items:
+{ "captions": [{ "order": 1, "caption": "...", "theme": "hook", "uiFocus": "..." }, ...] }
+
+Every item MUST include "uiFocus": a short description (max 200 chars) of the screenshot background, grounded in the Brand Kit palette and style (e.g. "minimal dark dashboard with #1A73E8 accent stripe and habit-streak chart visible").`;
+}
+
+function parseListingCaption(
+  raw: unknown,
+  fallbackOrder: number,
+): ScreenshotCaption {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const themeRaw = typeof r.theme === "string" ? r.theme : "feature";
+  const theme = (["hook", "feature", "benefit", "cta"] as const).includes(
+    themeRaw as "hook" | "feature" | "benefit" | "cta",
+  )
+    ? (themeRaw as "hook" | "feature" | "benefit" | "cta")
+    : "feature";
+
+  const uiFocusRaw = typeof r.uiFocus === "string" ? r.uiFocus.trim().slice(0, 300) : null;
+
+  return {
+    order: typeof r.order === "number" ? r.order : fallbackOrder,
+    caption:
+      typeof r.caption === "string"
+        ? r.caption.trim().slice(0, 70)
+        : "",
+    theme,
+    ...(uiFocusRaw ? { uiFocus: uiFocusRaw } : {}),
+  };
+}
+
+/**
+ * Generate 7 screenshot captions for a Play Store listing.
+ * Derives tone from the long description — tightly linked to the modular
+ * pipeline's `long` step output.
+ *
+ * Used by the `captions` generation step in the modular orchestrator.
+ */
+export async function generateListingPipelineCaptions(
+  input: ListingCaptionsInput,
+): Promise<ListingCaptionsResult> {
+  // Pass the schema so Gemini uses structured output — this is what enforces
+  // `uiFocus` being present on every caption item.
+  // maxOutputTokens: 1200 — 7 captions × ~150 tokens (caption + uiFocus) + JSON overhead.
+  // Default gateway value of 300 would truncate the response.
+  const model = getGenerativeModel({
+    responseMimeType: "application/json",
+    responseSchema: LISTING_CAPTIONS_SCHEMA as Record<string, unknown>,
+    maxOutputTokens: 1200,
+  });
+  const prompt = buildListingCaptionsPrompt(input);
+
+  const result = await model.generateContent(prompt);
+  const text = (result.text ?? "").trim();
+
+  let parsed: unknown;
+  try {
+    const clean = text.startsWith("```")
+      ? text
+          .replace(/^```[a-zA-Z]*\n?/, "")
+          .replace(/\n?```\s*$/, "")
+          .trim()
+      : text;
+    parsed = JSON.parse(clean);
+  } catch {
+    throw new InvalidModelOutputError(
+      `Listing captions: JSON parse failed. Raw: ${text.slice(0, 300)}`,
+    );
+  }
+
+  const root = (parsed ?? {}) as Record<string, unknown>;
+  const rawCaptions = Array.isArray(root.captions) ? root.captions : [];
+
+  const captions: ScreenshotCaption[] = rawCaptions
+    .slice(0, 8)
+    .map((item: unknown, idx: number) => parseListingCaption(item, idx + 1));
+
+  return { captions };
 }

@@ -66,7 +66,7 @@ describe("Retry Engine", () => {
 
   describe("retryWithBackoff", () => {
     it("succeeds on first attempt if function succeeds", async () => {
-      const fn = jest.fn().mockResolvedValue("success");
+      const fn = vi.fn().mockResolvedValue("success");
 
       const result = await retryWithBackoff(fn, {
         maxRetries: 3,
@@ -81,7 +81,7 @@ describe("Retry Engine", () => {
     });
 
     it("retries failed attempts and eventually succeeds", async () => {
-      const fn = jest
+      const fn = vi
         .fn()
         .mockRejectedValueOnce(new Error("First fail"))
         .mockRejectedValueOnce(new Error("Second fail"))
@@ -101,7 +101,7 @@ describe("Retry Engine", () => {
     });
 
     it("stops retrying after maxRetries exhausted", async () => {
-      const fn = jest.fn().mockRejectedValue(new Error("Always fails"));
+      const fn = vi.fn().mockRejectedValue(new Error("Always fails"));
 
       const result = await retryWithBackoff(fn, {
         maxRetries: 2,
@@ -118,7 +118,7 @@ describe("Retry Engine", () => {
 
     it("respects isRetryable classifier and stops on non-retryable error", async () => {
       const error = new Error("Permanent error");
-      const fn = jest.fn().mockRejectedValue(error);
+      const fn = vi.fn().mockRejectedValue(error);
 
       const result = await retryWithBackoff(fn, {
         maxRetries: 3,
@@ -133,7 +133,7 @@ describe("Retry Engine", () => {
     });
 
     it("applies timeout to each attempt", async () => {
-      const fn = jest
+      const fn = vi
         .fn()
         .mockImplementation(
           () =>
@@ -158,7 +158,7 @@ describe("Retry Engine", () => {
     });
 
     it("tracks total duration including retries", async () => {
-      const fn = jest
+      const fn = vi
         .fn()
         .mockRejectedValueOnce(new Error("Fail 1"))
         .mockResolvedValueOnce("success");
@@ -178,7 +178,7 @@ describe("Retry Engine", () => {
 
     it("returns correct error information on final failure", async () => {
       const testError = new Error("Test error message");
-      const fn = jest.fn().mockRejectedValue(testError);
+      const fn = vi.fn().mockRejectedValue(testError);
 
       const result = await retryWithBackoff(fn, {
         maxRetries: 1,
@@ -197,7 +197,7 @@ describe("Retry Engine", () => {
   describe("realistic scenario: transient then success", () => {
     it("recovers from transient Runware-like errors", async () => {
       let attemptCount = 0;
-      const fn = jest.fn().mockImplementation(() => {
+      const fn = vi.fn().mockImplementation(() => {
         attemptCount++;
         if (attemptCount === 1) {
           const error = new Error("Connection reset");

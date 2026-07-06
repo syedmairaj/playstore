@@ -15,6 +15,7 @@ import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { addSignalToVault } from "@/lib/staging-vault/staging-vault-service";
 import { StagingVaultSchemaError } from "@/lib/staging-vault/staging-vault-schema";
 import { addToOptimizationQueue } from "@/lib/optimization-queue";
+import { scheduleSignalCompression } from "@/lib/listing/signal-compressor";
 import { mapStagingPayloadToQueueInputs } from "@/lib/optimization-queue/map-staging-to-queue";
 import { enrichStagingVaultMetadata } from "@/lib/staging-vault/staging-vault-metadata";
 
@@ -157,6 +158,12 @@ export async function POST(request: Request, context: Ctx) {
         userId: user.id,
       });
       queueItems = queueResult.items;
+      scheduleSignalCompression({
+        supabase,
+        workspaceId,
+        locale,
+        appId: body.sourceAppId,
+      });
     }
 
     const vaultLocale = String(body.language).startsWith("ar") ? "ar" : "en";

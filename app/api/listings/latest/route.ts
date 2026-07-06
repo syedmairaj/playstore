@@ -67,6 +67,7 @@ export async function GET(request: NextRequest) {
     supabase,
     workspaceId,
     appId,
+    user.id,
   );
 
   return NextResponse.json({

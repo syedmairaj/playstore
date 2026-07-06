@@ -6,22 +6,11 @@ import { DashboardNavbar } from "@/components/app/dashboard-navbar";
 import { DashboardSidebar } from "@/components/app/dashboard-sidebar";
 import { WorkspaceAppProviders } from "@/components/app/workspace-app-providers";
 import { WorkspaceQueryPrefetch } from "@/components/app/workspace-query-prefetch";
+import { useWorkspaceCredits } from "@/contexts/WorkspaceCreditsContext";
 import type { NavItem } from "@/components/dashboard/WorkspaceSidebarNav";
 import { cn } from "@/lib/utils";
 
-export function DashboardShell({
-  children,
-  workspaceId,
-  workspaceName,
-  workspacePlan,
-  workspaces,
-  creditsRemaining,
-  creditsAllocation,
-  hubLabel,
-  navItems,
-  navAriaLabel,
-  userEmail,
-}: {
+type DashboardShellProps = {
   children: React.ReactNode;
   workspaceId: string;
   workspaceName: string;
@@ -34,9 +23,33 @@ export function DashboardShell({
   navItems: NavItem[];
   navAriaLabel: string;
   userEmail: string | null;
-}) {
+};
+
+export function DashboardShell(props: DashboardShellProps) {
+  return (
+    <WorkspaceAppProviders initialCreditsBalance={props.creditsRemaining}>
+      <DashboardShellInner {...props} />
+    </WorkspaceAppProviders>
+  );
+}
+
+function DashboardShellInner({
+  children,
+  workspaceId,
+  workspaceName,
+  workspacePlan,
+  workspaces,
+  creditsRemaining,
+  creditsAllocation,
+  hubLabel,
+  navItems,
+  navAriaLabel,
+  userEmail,
+}: DashboardShellProps) {
   const t = useTranslations("dashboard.shell");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const workspaceCredits = useWorkspaceCredits();
+  const navCreditsRemaining = workspaceCredits?.balance ?? creditsRemaining;
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -48,7 +61,7 @@ export function DashboardShell({
   }, [mobileNavOpen]);
 
   return (
-    <WorkspaceAppProviders>
+    <>
       <WorkspaceQueryPrefetch workspaceId={workspaceId} />
       <div className="flex h-full min-h-0 w-full overflow-x-hidden bg-[#090c11] text-zinc-100 antialiased">
         {mobileNavOpen ? (
@@ -82,7 +95,7 @@ export function DashboardShell({
             workspaceName={workspaceName}
             workspacePlan={workspacePlan}
             workspaces={workspaces}
-            creditsRemaining={creditsRemaining}
+            creditsRemaining={navCreditsRemaining}
             creditsAllocation={creditsAllocation}
             hubLabel={hubLabel}
             userEmail={userEmail}
@@ -95,6 +108,6 @@ export function DashboardShell({
           </main>
         </div>
       </div>
-    </WorkspaceAppProviders>
+    </>
   );
 }

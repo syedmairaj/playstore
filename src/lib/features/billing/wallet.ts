@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { maybeCreateCreditBudgetAlert } from "@/lib/features/billing/evaluate-credit-budget-alert";
 
 /**
  * Wallet RPCs (`consume_workspace_ai_credits` / `refund_workspace_ai_credits`) debit under
@@ -88,7 +89,15 @@ export async function consumeWorkspaceAiCredits(
   if (error) {
     return { ok: false, code: "rpc_error", remaining: undefined, required: undefined };
   }
-  return parseConsumePayload(data);
+  const result = parseConsumePayload(data);
+  if (result.ok) {
+    void maybeCreateCreditBudgetAlert({
+      workspaceId: params.workspaceId,
+      creditsRemaining: result.balanceAfter,
+      supabase,
+    });
+  }
+  return result;
 }
 
 /**

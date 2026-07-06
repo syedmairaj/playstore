@@ -34,22 +34,26 @@ export function recoverPartialJson(truncatedJson: string): string | null {
     return null;
   }
 
-  // Determine if we're dealing with an object or array
-  const startsWithObject = trimmed[0] === "{";
-  const startsWithArray = trimmed[0] === "[";
-
-  if (!startsWithObject && !startsWithArray) {
-    // Not JSON
+  if (trimmed[0] !== "{" && trimmed[0] !== "[") {
     return null;
   }
 
-  const targetClosing = startsWithObject ? "}" : "]";
-  let braceDepth = 0;
-  let bracketDepth = 0;
+  // Single forward pass: track open container stack and string state.
+  // Also track whether the currently-open string is a key or a value so we can
+  // decide the right recovery strategy when the input is truncated mid-string.
+  const stack: Array<"{" | "["> = [];
   let inString = false;
   let escapeNext = false;
+  // lastStructuralChar: the most recent non-whitespace structural character
+  // outside any string. Used to distinguish key-strings (after '{' or ',')
+  // from value-strings (after ':').
+  let lastStructuralChar = "";
+  // Position of the last safe structural break (last ',' or opening '{' / '['
+  // at the outermost object level) — used to truncate a dangling key.
+  let lastSafeBreak = 0; // start of first container
+  // Track the index just after the last time the root container was closed.
+  let lastRootCloseEnd = -1;
 
-  // Scan forward to track nesting depth
   for (let i = 0; i < trimmed.length; i++) {
     const char = trimmed[i];
 
@@ -64,59 +68,79 @@ export function recoverPartialJson(truncatedJson: string): string | null {
     }
 
     if (char === '"') {
+      if (!inString) {
+        // Record where this new string starts so we can truncate back to it.
+        // "Safe break" is the position of the last delimiter before this string.
+        // We'll use lastSafeBreak to strip the dangling key if needed.
+      }
       inString = !inString;
       continue;
     }
 
-    if (!inString) {
-      if (char === "{") braceDepth++;
-      else if (char === "}") braceDepth--;
-      else if (char === "[") bracketDepth++;
-      else if (char === "]") bracketDepth--;
-    }
-  }
+    if (inString) continue;
 
-  // Scan backward to find the last valid closing delimiter
-  let closingIndex = -1;
-  inString = false;
-  escapeNext = false;
-
-  for (let i = trimmed.length - 1; i >= 0; i--) {
-    const char = trimmed[i];
-
-    // Scan backward: need to track strings carefully
-    // Count escapes: if we're at position i with \, the char at i is escaped if
-    // we have an odd number of backslashes before it
-    let numBackslashes = 0;
-    for (let j = i - 1; j >= 0 && trimmed[j] === "\\"; j--) {
-      numBackslashes++;
-    }
-    const isEscaped = numBackslashes % 2 === 1;
-
-    if (char === '"' && !isEscaped) {
-      inString = !inString;
-      continue;
-    }
-
-    if (!inString) {
-      if (startsWithObject && char === "}") {
-        closingIndex = i;
-        break;
+    if (char === "{" || char === "[") {
+      stack.push(char as "{" | "[");
+      lastStructuralChar = char;
+      lastSafeBreak = i + 1;
+    } else if (char === "}") {
+      if (stack.length > 0 && stack[stack.length - 1] === "{") {
+        stack.pop();
+        if (stack.length === 0) lastRootCloseEnd = i + 1;
+        lastStructuralChar = "}";
       }
-      if (startsWithArray && char === "]") {
-        closingIndex = i;
-        break;
+    } else if (char === "]") {
+      if (stack.length > 0 && stack[stack.length - 1] === "[") {
+        stack.pop();
+        if (stack.length === 0) lastRootCloseEnd = i + 1;
+        lastStructuralChar = "]";
       }
+    } else if (char === ":") {
+      lastStructuralChar = ":";
+    } else if (char === ",") {
+      lastStructuralChar = ",";
+      lastSafeBreak = i; // position of the comma itself — we can cut here
     }
   }
 
-  if (closingIndex === -1) {
-    // No closing brace/bracket found
-    return null;
+  // Already valid (balanced) JSON — return only up to the root close.
+  if (stack.length === 0) {
+    return lastRootCloseEnd > 0 ? trimmed.substring(0, lastRootCloseEnd) : null;
   }
 
-  // Return the substring including the closing delimiter
-  return trimmed.substring(0, closingIndex + 1);
+  if (inString) {
+    // Truncated inside a string.  Determine if it is a VALUE string (after ':')
+    // or a KEY string (after '{' or ',').
+    // Inside an array every string is a value, so check the innermost container too.
+    const innermostIsArray =
+      stack.length > 0 && stack[stack.length - 1] === "[";
+    const isValueString = lastStructuralChar === ":" || innermostIsArray;
+
+    if (isValueString) {
+      // Close the value string then close all open containers.
+      let suffix = '"';
+      for (let i = stack.length - 1; i >= 0; i--) {
+        suffix += stack[i] === "{" ? "}" : "]";
+      }
+      return trimmed + suffix;
+    } else {
+      // We are mid-key — drop the incomplete key (back to the last safe break)
+      // and close the open containers.
+      const base = trimmed.substring(0, lastSafeBreak);
+      let suffix = "";
+      for (let i = stack.length - 1; i >= 0; i--) {
+        suffix += stack[i] === "{" ? "}" : "]";
+      }
+      return base + suffix;
+    }
+  }
+
+  // Not inside a string but containers are still open — close them.
+  let suffix = "";
+  for (let i = stack.length - 1; i >= 0; i--) {
+    suffix += stack[i] === "{" ? "}" : "]";
+  }
+  return trimmed + suffix;
 }
 
 /**
@@ -126,7 +150,18 @@ export function recoverPartialJson(truncatedJson: string): string | null {
  * @returns Parsed object, or null if both parse and recovery fail
  */
 export function parseJsonWithRecovery<T = unknown>(jsonText: string): T | null {
-  return robustParseJson(jsonText) as T | null;
+  const direct = robustParseJson(jsonText) as T | null;
+  if (direct !== null) return direct;
+
+  // robustParseJson truncates at the last quote when the string is open, which
+  // loses the partial value.  Try the structural forward-scan recovery instead.
+  const recovered = recoverPartialJson(jsonText);
+  if (!recovered) return null;
+  try {
+    return JSON.parse(recovered) as T;
+  } catch {
+    return null;
+  }
 }
 
 /**

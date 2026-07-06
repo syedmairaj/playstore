@@ -22,7 +22,7 @@ import {
   type ShortVariationType,
 } from "@/lib/listing/modular-short-variations";
 import { MODULAR_TRIAL_REGENERATIONS_LIMIT } from "@/lib/features/billing/modular-regenerate-billing";
-import { assembleModularFullDescription } from "@/lib/listing/assemble-modular-listing";
+import { assembleModularFullDescription, mergeModularDisplayState } from "@/lib/listing/assemble-modular-listing";
 import { computeModularAsoStrengthScore } from "@/lib/listing/modular-aso-strength";
 import type { ModularLoadingState } from "@/hooks/useModularGeneration";
 import { orchestrationToModularState } from "@/lib/listing/orchestration-to-modular-state";
@@ -41,6 +41,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { ListingGenerationWarningsPayload } from "@/lib/listing/listing-generation-warnings";
 import type { ListingHealthFixActionId } from "@/lib/listing/listing-health-fix-actions";
+import { IntelCurationBanner } from "@/components/listing/optimizer/intel-curation-banner";
+import type { PipelineDiscoveryBlocker } from "@/lib/client/pipeline-preflight";
 
 type Props = {
   orchestration?: OrchestrationProtocol;
@@ -71,7 +73,20 @@ type Props = {
   onMagicGenerateLong?: () => void;
   onFinalize?: () => void;
   finalizeBusy?: boolean;
+  /** True when title, short, and long are generated and persisted to workspace_listing_drafts. */
+  finalizeReady?: boolean;
   onDraftCopyBlocked?: () => void;
+  /** workspaceId — required for the IntelCurationBanner deep-link */
+  workspaceId?: string;
+  /** Non-null when an intel module is blocking generation (423 guard). */
+  discoveryBlocker?: PipelineDiscoveryBlocker | null;
+  /** Called when the user dismisses the curation banner. */
+  onDismissDiscoveryBlocker?: () => void;
+  /**
+   * During auto-chain fallback, the current phase being run so the UI can
+   * show "Generating Title…" / "Generating Short Description…" etc.
+   */
+  phaseChainStep?: "title" | "short" | "long" | "retrying" | null;
 };
 
 const SHORT_TYPE_LABEL_KEY: Record<
@@ -115,11 +130,16 @@ export function ModularListingPanel({
   onListingHealthFix,
   onRegenerateBlock,
   onSelectShortVariation,
+  workspaceId,
+  discoveryBlocker,
+  onDismissDiscoveryBlocker,
+  phaseChainStep,
   onTitleChange,
   onLongDescriptionChange,
   onMagicGenerateLong,
   onFinalize,
   finalizeBusy = false,
+  finalizeReady = false,
   onDraftCopyBlocked,
 }: Props) {
   const t = useTranslations("optimizer.results.modular");
@@ -131,7 +151,11 @@ export function ModularListingPanel({
         shortDescription: shortDescription ?? undefined,
         longDescription: longDescription ?? undefined,
       })
-    : state;
+    : mergeModularDisplayState(state, {
+        title,
+        shortDescription,
+        longDescription,
+      });
 
   const assembledLong = useMemo(() => {
     const fromState = assembleModularFullDescription(displayState.longDescription);
@@ -175,6 +199,18 @@ export function ModularListingPanel({
 
   const showDraftMask = !isPublicationReady && (isDraft || Boolean(displayState.title.value.trim()));
 
+  const tChain = useTranslations("optimizer.results.modular.phaseChain");
+
+  const phaseChainLabel: string | null = phaseChainStep
+    ? phaseChainStep === "title"
+      ? tChain("runningTitle")
+      : phaseChainStep === "short"
+        ? tChain("runningShort")
+        : phaseChainStep === "long"
+          ? tChain("runningLong")
+          : tChain("retrying")
+    : null;
+
   return (
     <div
       className={cn(
@@ -183,6 +219,24 @@ export function ModularListingPanel({
       )}
       dir={isRtl ? "rtl" : "ltr"}
     >
+      {/* Intel curation blocking banner — shown when any module has uncurated DISCOVERY signals */}
+      {discoveryBlocker && workspaceId && (
+        <IntelCurationBanner
+          workspaceId={workspaceId}
+          blocker={discoveryBlocker}
+          onDismiss={onDismissDiscoveryBlocker}
+          className="mb-1"
+        />
+      )}
+
+      {/* Phase chain progress label — shown during auto-chain fallback */}
+      {phaseChainLabel && (
+        <div className="flex items-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/[0.06] px-3 py-2 text-xs text-sky-300/80">
+          <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-sky-400" aria-hidden />
+          {phaseChainLabel}
+        </div>
+      )}
+
       <ListingHealthIndicator
         warnings={listingHealth}
         longText={assembledLong}
@@ -397,6 +451,7 @@ export function ModularListingPanel({
           draftMasked={showDraftMask && hasLongContent}
           finalizeCreditCost={finalizeCreditCost}
           finalizeBusy={finalizeBusy}
+          finalizeReady={finalizeReady}
           onCopyBlocked={onDraftCopyBlocked}
           onFinalize={isDraft ? onFinalize : undefined}
           onChange={(next) => onLongDescriptionChange?.(next)}
@@ -417,7 +472,7 @@ export function ModularListingPanel({
       {isDraft && onFinalize && !hasLongContent ? (
         <button
           type="button"
-          disabled={finalizeBusy}
+          disabled={finalizeBusy || !finalizeReady}
           onClick={onFinalize}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >

@@ -15,19 +15,17 @@ import type { AsoListingInput } from "./aso-report-card-types";
  * Keywords to strip from prompts (hard-clamp verification)
  * Prevents Gemini from generating off-topic content
  */
+// Prompt-injection attack vectors — deliberately narrow to avoid false positives
+// on legitimate technical terms ("null", "error", "invalid") that appear in
+// JSON schema descriptions within the template itself.
 const DANGEROUS_KEYWORDS = [
-  "ignore",
-  "override",
   "jailbreak",
   "bypass",
-  "secret",
-  "hidden",
   "disregard",
-  "forget",
-  "invalid",
-  "error",
-  "null",
-  "undefined",
+  "ignore previous",
+  "forget previous",
+  "new instructions",
+  "system prompt",
 ];
 
 /**
@@ -85,7 +83,7 @@ SCORING REQUIREMENTS:
    - Evaluate clarity, sentence structure, ease of understanding
    - Consider grade level appropriate for ${marketContext}
    - Assess whether title and description flow naturally
-   - For RTL languages: Verify right-to-left reading flow is natural
+   ${isRTL ? "- For RTL languages: Verify right-to-left reading flow is natural" : "- Verify reading flow is natural and sentences connect smoothly"}
 
 2. Keyword Density Score (1-100):
    - Analyze how well target keywords are incorporated
@@ -104,7 +102,7 @@ ACTIONABLE TIPS REQUIREMENTS:
 - Each tip must have: priority (1-3), category, action, rationale, example, effort
 - Prioritize by impact on ranking and user conversion
 - Ensure tips are context-aware for ${marketContext}
-- For RTL markets: Include any market-specific considerations
+${isRTL ? "- For RTL markets: Include any market-specific considerations" : ""}
 
 RESPONSE FORMAT (Valid JSON only):
 \`\`\`json

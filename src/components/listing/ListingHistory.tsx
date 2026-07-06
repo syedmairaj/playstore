@@ -99,6 +99,10 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     // ── Metric entry form ───────────────────────────────────────────────────
     enterMetrics: "Enter This Week's Metrics",
     enterMetricsHint: "Play Console → Acquire users → Store listing analytics",
+    enterMetricsTooltip:
+      "Log this week's Play Console numbers so Growth Tracking can compare before vs after your listing change.",
+    enterMetricsGuide:
+      "Open Google Play Console → your app → Acquire users → Store listing analytics. Copy Conversion rate and Store visitors (optional: category rank, search visibility). Paste them here, then Save. Wait 7–14 days after each listing unlock before comparing weeks.",
     conversionRate: "Conversion Rate (%)",
     storeVisitors: "Store Visitors",
     categoryRank: "Category Rank",
@@ -176,6 +180,10 @@ const STRINGS: Record<Lang, Record<string, string>> = {
 
     // ── Metric entry form ───────────────────────────────────────────────────
     enterMetrics: "أدخل مقاييس هذا الأسبوع",
+    enterMetricsTooltip:
+      "سجّل أرقام Play Console لهذا الأسبوع لمقارنة ما قبل وما بعد تحديث القائمة.",
+    enterMetricsGuide:
+      "افتح Google Play Console → تطبيقك → اكتساب المستخدمين → تحليلات قائمة المتجر. انسخ معدل التحويل وزوار صفحة المتجر (اختياري: مرتبة الفئة، مؤشر الظهور). الصقها هنا ثم احفظ. انتظر 7–14 يوماً بعد كل فتح كامل قبل المقارنة.",
     // Uses exact Arabic Play Console navigation path
     enterMetricsHint: "Play Console ← اكتساب المستخدمين ← تحليلات قائمة المتجر",
     // Exact Arabic Play Console field labels:
@@ -628,13 +636,26 @@ function MetricEntryForm({
       <button
         type="button"
         onClick={() => setOpen((p) => !p)}
+        title={t.enterMetricsTooltip}
+        aria-describedby="metric-entry-guide"
         className={cn(
-          "flex w-full items-center gap-2.5 px-5 py-4 text-sm font-semibold text-zinc-200 transition-colors hover:bg-white/[0.03]",
+          "group flex w-full items-center gap-2.5 px-5 py-4 text-sm font-semibold text-zinc-200 transition-colors hover:bg-white/[0.03]",
           isRtl && "flex-row-reverse",
         )}
       >
         <Plus className="size-4 shrink-0 text-emerald-400" aria-hidden />
-        {savedOk ? t.saved : t.enterMetrics}
+        <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+          <span className="flex w-full items-center gap-2">
+            {savedOk ? t.saved : t.enterMetrics}
+            <Info
+              className="size-3.5 shrink-0 text-zinc-500 opacity-70 transition group-hover:text-emerald-400/80 group-hover:opacity-100"
+              aria-hidden
+            />
+          </span>
+          <span className="text-[10px] font-normal text-zinc-500 group-hover:text-zinc-400">
+            {t.enterMetricsTooltip}
+          </span>
+        </span>
         <ChevronDown
           className={cn("ms-auto size-4 shrink-0 text-zinc-500 transition-transform", open && "rotate-180")}
           aria-hidden
@@ -652,6 +673,9 @@ function MetricEntryForm({
             className="overflow-hidden"
           >
             <div className="space-y-4 border-t border-zinc-800/60 px-5 pb-5 pt-4">
+              <p id="metric-entry-guide" className="text-[11px] leading-relaxed text-zinc-400">
+                {t.enterMetricsGuide}
+              </p>
               <p className="text-[11px] leading-relaxed text-zinc-500">{t.enterMetricsHint}</p>
 
               <div className="grid gap-3 sm:grid-cols-2">

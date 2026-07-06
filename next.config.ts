@@ -23,19 +23,37 @@ const nextConfig: NextConfig = {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SENTRY DYNAMIC REQUIRE SUPPRESSION
+    // DYNAMIC-REQUIRE SUPPRESSION
     //
-    // Sentry uses dynamic require in @sentry/node for optional instrumentation.
-    // This triggers webpack's dependency scanner warning but doesn't affect runtime.
-    // Safely suppress the warning to keep build logs clean.
+    // Several server-side packages (@sentry/*, @upstash/qstash) use dynamic
+    // `require()` calls for optional instrumentation / lazy loading.  These
+    // trigger webpack's "Critical dependency: require function is used in a
+    // way in which dependencies cannot be statically extracted" warning but
+    // have no effect at runtime — Next.js / Node.js resolves them correctly.
     //
-    // Reference: https://github.com/getsentry/sentry-javascript/issues/3794
+    // Suppress all "Critical dependency" warnings originating from known
+    // third-party packages to keep build output clean.
+    //
+    // References:
+    //   https://github.com/getsentry/sentry-javascript/issues/3794
+    //   https://github.com/upstash/qstash-js/issues
     // ═════════════════════════════════════════════════════════════════════════
     config.ignoreWarnings = [
       ...(config.ignoreWarnings || []),
+      // Sentry (all sub-packages) — the main source in monorepo setups
       {
-        module: /node_modules\/@sentry\/node/,
+        module: /node_modules\/@sentry\//,
         message: /Critical dependency: require function is used in a way/,
+      },
+      // Upstash QStash — uses optional dynamic require for Node built-ins
+      {
+        module: /node_modules\/@upstash\//,
+        message: /Critical dependency: require function is used in a way/,
+      },
+      // Broad catch-all for any remaining node_modules with dynamic require
+      {
+        module: /node_modules/,
+        message: /Critical dependency: require function is used in a way in which dependencies cannot be statically extracted/,
       },
     ];
 

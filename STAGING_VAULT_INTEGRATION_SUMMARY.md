@@ -1,8 +1,8 @@
 # Staging Vault Integration Summary
 
-**Document Version:** 4.0  
-**Last Updated:** June 16, 2026  
-**Scope:** Growth Hub Staged-State Architecture + Optimization Queue + Modular Listing Pipeline  
+**Document Version:** 5.0  
+**Last Updated:** June 22, 2026  
+**Scope:** Growth Hub Staged-State Architecture + Optimization Queue + Modular Listing Pipeline + Async Context Gateway  
 **Audience:** Senior developers, architects, future maintainers  
 
 ---
@@ -13,15 +13,19 @@ The **Staging Vault** is the architectural foundation of Growth Hub. It implemen
 
 As of June 12, 2026, the vault hosts the **Optimization Queue** — the single source of truth for AI Listing Optimizer Active Context and listing synthesis.
 
-As of June 16, 2026 (Session 4), the **Listing Optimizer** also runs a **Modular Listing Pipeline** (phased title → short → long → finalize) with workspace-scoped trial regenerates, weighted credit ledger metadata, browser draft auto-save, and strict Zod validation on AI output — especially typed short-description variations.
+As of June 16, 2026 (Session 4), the **Listing Optimizer** runs a **Modular Listing Pipeline** (phased title → short → long → finalize) with workspace-scoped trial regenerates, weighted credit ledger metadata, and strict Zod validation on AI output.
+
+As of June 22, 2026 (Session 5), listing generation is **async via Upstash QStash** (producer validates + enqueues; worker runs Gemini orchestration). A **Context Gateway** stamps `workspace_keywords.queue_hash` and compiles step-scoped signals before generation. Draft state persists in **`workspace_listing_drafts`** (DB) plus browser `localStorage` recovery. Granular billing telemetry (`listing_generation_costs`) and Settings billing UI (phase breakdown, ranking impact, monthly credit cap) ship alongside.
 
 **Core Value:** Enables unlimited feature scaling without cross-feature data corruption while maintaining backwards compatibility across all client versions.
 
 **Key facts for new sessions:**
 - **Research → Curate → Synthesize** — discovery modules do not auto-feed the AI; users explicitly queue signals first
 - **Active Context reads only `features.optimization_queue`** — not raw `competitor_spy` / `keyword_tracker` namespaces
-- **Modular pipeline injects queue synthesis** via `buildModularAppContextBlock` / Orchestration Protocol — same curated signals as monolithic generate
-- **Regenerate billing is post-success** — `consume_modular_listing_regenerate` runs only after orchestrator + Zod validation succeed
+- **Context Gateway** stamps staged `workspace_keywords` with `queue_hash` before generation — zero staged keywords → `400 KEYWORD_CONTEXT_REQUIRED`
+- **Modular pipeline is async** — `POST /api/listings/generate` returns `202` + `jobId`; worker runs orchestration; client polls `GET /api/listings/status`
+- **Phase guard on producer** — `checkModularPhaseOrder()` returns `WAITING_FOR_PHASES` (202) when prerequisites not persisted; worker uses `assertModularPhaseOrder()`
+- **Regenerate billing is post-success** — credits/trial slots consumed only after worker + Zod validation succeed
 - **VaultCore** (`src/lib/staging-vault/vault-core.ts`) is the centralized write gateway with legacy + universal schema detection
 - Production DB uses **universal vault** (`state_en`, `state_ar`, `app_id`) — legacy columns (`signal_type`, `metadata`, `content`) may be absent
 - **Do not** create btree indexes on `(state_en -> 'features')` — row size limit ~2704 bytes; use GIN on full `state_en`/`state_ar` instead
@@ -460,7 +464,7 @@ const features = state.features;
 | Locale isolation | `state_en` and `state_ar` never cross-written |
 | No credit logic client-side | All billing via `consume_workspace_ai_credits` or `consume_modular_listing_regenerate` RPC (server) |
 | Regenerate debits after success | Failed Zod validation on AI output must not consume trial slots or credits |
-| Draft state is client-only | `useDraftPersistence` (localStorage) — not written to vault until finalize persists listing |
+| Draft state | `useDraftPersistence` (localStorage) **and** `workspace_listing_drafts` (DB per `queue_hash`) — vault features namespace unchanged until finalize |
 
 ---
 
@@ -553,7 +557,7 @@ dispatchStagingVaultChanged({ workspaceId, locale, appId }); // cross-tab sync
 
 ---
 
-## Modular Listing Pipeline (Session 4 — June 16, 2026)
+## Modular Listing Pipeline (Session 4–5 — June 16–22, 2026)
 
 ### Relationship to vault & queue
 
@@ -562,20 +566,36 @@ The modular pipeline **does not** write intermediate title/short/long blocks to 
 | Stage | Vault / queue touchpoint |
 |-------|--------------------------|
 | **Active Context** | Queue items → `buildSynthesisFromOptimizationQueue()` → injected in `buildModularAppContextBlock()` |
+| **Context Gateway** | `stampAndCompileListingContext()` stamps `workspace_keywords.queue_hash` + compiles step-scoped signals (not vault JSONB) |
 | **Stale guard** | `validateActiveContextQueueHash` — 409 if queue changed since session started |
 | **Finalize** | Persists full listing via existing listing save path (not vault features namespace) |
-| **Draft recovery** | `useDraftPersistence` — browser `localStorage` only; key `listing-modular-draft:{workspaceId}:modular-listing` |
+| **Draft recovery** | `workspace_listing_drafts` (DB, keyed by `queue_hash`) + `useDraftPersistence` (browser `localStorage`) |
+
+### Async execution (Session 5)
+
+The modular pipeline no longer runs entirely in one HTTP request:
+
+```
+POST /api/listings/generate  → 202 { jobId }  (producer: validate, phase read-check, enqueue)
+POST /api/listings/worker    → QStash consumer (execute orchestrator + Gemini phases)
+GET  /api/listings/status    → poll jobId until completed | failed
+```
+
+- **Redis lock** on `(workspaceId, queueHash)` prevents duplicate in-flight pipelines.
+- **`isDraft: true`** remains synchronous on the producer (instant preview, no queue).
+- **`WAITING_FOR_PHASES`** — producer returns 202 when finalize/regenerate requested before prerequisite phases are persisted in `workspace_listing_drafts`.
 
 ### Phase orchestration
 
 ```
-Phase 1 (title)     → POST generate generationStep=title      → free
-Phase 2 (short)     → POST generate generationStep=short      → free (typed variations schema)
-Phase 3 (long)      → POST generate long|hook|features|closing → free first gen; regen billed
-Confirm (finalize)  → POST generate generationStep=finalize    → 5 credits (listing_generation)
+Phase 1 (title)     → generationStep=title      → free (worker)
+Phase 2 (short)     → generationStep=short      → free (typed variations schema)
+Phase 3 (long)      → generationStep=long|…     → free first gen; regen billed post-success
+Pipeline (all)      → generationStep=pipeline   → 5 credits post-success
+Confirm (finalize)  → generationStep=finalize   → 5 credits post-success
 ```
 
-**Regenerate:** `isRegenerate: true` → `consume_modular_listing_regenerate` **after** successful orchestration.
+**Regenerate:** `isRegenerate: true` → `consume_modular_listing_regenerate` **after** successful worker run.
 
 ### Trial-to-Paid regenerate billing
 
@@ -620,19 +640,79 @@ Helper: `buildCreditLedgerMeta('text' | 'media', extra)` in `src/lib/features/bi
 | Phased API calls (smaller prompts per step) | ✅ Implemented |
 | JSON mode + `responseSchema` per step | ✅ Implemented |
 | Single-attempt short generation (no retry loop) | ✅ Implemented |
-| Post-success billing only | ✅ Implemented |
+| Post-success billing only | ✅ Implemented (worker debits after validation) |
+| Async QStash worker | ✅ Implemented — producer 202 + status polling |
 | Streaming partial responses to client | 🔜 Planned — target for 20s+ perceived latency |
 
 **Key implementation files:**
 ```
+app/api/listings/generate/route.ts          — QStash producer
+app/api/listings/worker/route.ts            — QStash consumer
+app/api/listings/status/route.ts            — job polling
 src/hooks/useModularGeneration.ts
 src/hooks/useDraftPersistence.ts
+src/lib/listing/context-gateway.ts
+src/lib/listing/sync-queue-hash.ts
+src/lib/listing/listing-generation-executor.ts
 src/lib/gemini/generate-listing-modular.ts
 src/lib/listing/listing-generation-orchestrator.ts
 src/lib/features/billing/modular-regenerate-billing.ts
-app/api/listings/generate/route.ts
+src/lib/client/poll-listing-generation-status.ts
 src/components/listing/optimizer/modular-listing-panel.tsx
 ```
+
+---
+
+## Context Gateway & Keyword Stamping (Session 5 — June 22, 2026)
+
+The Context Gateway bridges the **Optimization Queue** (vault JSONB) and **Keyword Tracker** (relational `workspace_keywords`) without writing intermediate listing text to the vault.
+
+### Components
+
+| File | Function |
+|------|----------|
+| `src/lib/listing/sync-queue-hash.ts` | `syncQueueHash()` — stamps `queue_hash` on staged keyword rows for workspace + app (+ optional locale) |
+| `src/lib/listing/context-gateway.ts` | `stampAndCompileListingContext()` — atomic stamp + `compileContextForStep()` |
+| `src/lib/listing/modular-step-signals.ts` | Step-scoped signal selection (top 5 keywords; +2 competitor for long/full) |
+
+### Gate
+
+Zero staged keywords after compile → `400 KEYWORD_CONTEXT_REQUIRED` with message: *"ASO optimization requires staged keyword signals. Please add keywords to your Tracker first."*
+
+### Database
+
+```sql
+-- workspace_keywords (existing table, new column usage)
+queue_hash TEXT NULL   -- 64-char hex, set by syncQueueHash
+-- Index: workspace_keywords_queue_hash_idx (migration 20260622150000)
+```
+
+```sql
+-- workspace_listing_drafts (migration 20260621130000 + 20260622180000)
+UNIQUE (workspace_id, queue_hash)
+job_id UUID
+generation_status TEXT  -- pending | processing | completed | failed
+generation_error TEXT
+current_phase TEXT
+generation_payload JSONB
+generation_result JSONB
+vault_locale TEXT       -- en | ar
+```
+
+Draft rows are the **job store** for async generation — one row per active queue hash per workspace.
+
+---
+
+## Billing Observability (Session 5)
+
+| Surface | Backend |
+|---------|---------|
+| Phase breakdown chart (Settings) | `GET /api/billing/usage-breakdown` → `listing_generation_costs` |
+| Ranking impact chip | `GET /api/workspaces/:id/keywords/ranking-impact` |
+| Monthly credit cap | `workspaces.monthly_credit_cap` + `credit_budget_warning` at 80% |
+| Credit dashboard donut/trend | `GET /api/workspaces/:id/billing/usage-summary` |
+
+Migration: `20260622160000_add_listing_generation_costs.sql`, `20260622170000_workspace_monthly_credit_cap.sql`
 
 ---
 
@@ -646,7 +726,7 @@ src/components/listing/optimizer/modular-listing-panel.tsx
 
 ## Migration History
 
-44+ migrations — core vault migrations:
+48+ migrations — core vault + listing pipeline migrations:
 
 | Migration | Purpose |
 |-----------|---------|
@@ -654,6 +734,11 @@ src/components/listing/optimizer/modular-listing-panel.tsx
 | `20260610000000_universal_staged_state_architecture.sql` | Universal vault: `state_en`, `state_ar`, `app_id` |
 | `20260612100000_drop_vault_features_btree_indexes.sql` | **Required** — drops btree feature indexes that break large JSONB writes |
 | `20260618120000_workspace_trial_regenerations.sql` | `trial_regenerations_used` + `consume_modular_listing_regenerate` RPC |
+| `20260621130000_workspace_listing_drafts.sql` | Draft persistence keyed by `(workspace_id, queue_hash)` |
+| `20260622150000_add_queue_hash_index.sql` | B-tree index on `workspace_keywords.queue_hash` |
+| `20260622160000_add_listing_generation_costs.sql` | Per-phase token/credit telemetry |
+| `20260622170000_workspace_monthly_credit_cap.sql` | User-defined monthly budget cap |
+| `20260622180000_listing_generation_job_status.sql` | Async job columns on `workspace_listing_drafts` |
 
 The universal vault migration (`20260610000000`) was applied manually in some environments before being recorded. The old signal-log table was renamed to `workspace_signal_log` where conflicts occurred.
 
@@ -672,11 +757,15 @@ ORDER BY ordinal_position;
 
 ---
 
-## Summary Table (Updated June 12, 2026)
+## Summary Table (Updated June 22, 2026)
 
 | Aspect | Rule | Enforcement |
 |--------|------|-------------|
 | **Optimization Queue SSOT** | Only queued signals feed Active Context + Generate | `flattenQueueToActiveItems()`, `buildSynthesisFromOptimizationQueue()` |
+| **Context Gateway** | Staged keywords required; stamp before generate | `stampAndCompileListingContext()`, `syncQueueHash()` |
+| **Async generation** | Producer enqueues; worker executes | QStash + `workspace_listing_drafts.generation_status` |
+| **Phase guard (read)** | Missing prerequisites → 202 WAITING_FOR_PHASES | `checkModularPhaseOrder()` on producer |
+| **Queue-hash lock** | One in-flight pipeline per hash | Redis `SET NX` in `generation-queue-hash-lock.ts` |
 | **Vault writes** | All INSERT/UPDATE via VaultCore | `VaultCore.safeUpsert()` / `safeUpdate()` |
 | **Schema awareness** | Probe before legacy/universal paths | `hasLegacySignalColumns()`, `hasUniversalVaultColumns()` |
 | **Producer Isolation** | One feature, one boundary | `ProducerRegistry.verifyIsolation()` (stubs) |
@@ -685,7 +774,7 @@ ORDER BY ordinal_position;
 | **Index safety** | No btree on `features` JSONB subtree | GIN on full `state_en`/`state_ar` only |
 | **Curation before synthesis** | No auto-dump from discovery | `validateAndQueue()`, no localStorage keyword injection |
 | **Soft Delete** | Never hard-delete vault rows | `deleted_at` / `is_deleted` |
-| **Credits** | Server-side only, RPC atomic | `consume_workspace_ai_credits` |
+| **Credits** | Server-side only, RPC atomic | Post-success in worker; `consume_workspace_ai_credits` for sync routes |
 | **React Query** | Locale + appId in queue keys | Prevents EN/AR cache contamination |
 | **AI transport** | Vertex AI via modelGateway | `getGenerativeModel()` — not `GEMINI_API_KEY` REST for new routes |
 
@@ -701,11 +790,19 @@ ORDER BY ordinal_position;
 | Sentiment 500 after AI success | `competitors/sentiment/route.ts` — result shadowing + Vertex AI |
 | Queue empty after navigation | `validate-and-queue.ts` + `WorkspaceAppProviders` |
 
+## Session 5 Bug Reference
+
+| Symptom | Fix location |
+|---------|--------------|
+| `ModularPhaseOrderError` → 500 on generate | Producer uses `checkModularPhaseOrder()` + 202 `WAITING_FOR_PHASES`; worker uses `assertModularPhaseOrder()` |
+| Duplicate in-flight pipelines | Redis queue-hash lock on producer; released in worker `finally` |
+| Vercel timeout on full pipeline | QStash producer/worker split |
+
 ---
 
 **End of Document**
 
-**Version:** 3.0  
-**Last Updated:** June 12, 2026  
-**Scope:** Growth Hub Staging Vault + Optimization Queue  
+**Version:** 5.0  
+**Last Updated:** June 22, 2026  
+**Scope:** Growth Hub Staging Vault + Optimization Queue + Async Modular Pipeline  
 **Status:** Production Reference

@@ -4,6 +4,12 @@ import {
   parsePersistedListingOutput,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
+import { assembleModularFullDescription } from "@/lib/listing/assemble-modular-listing";
+import type { ModularListingState } from "@/lib/listing/modular-listing.types";
+import {
+  isListingPublicationUnlocked,
+  listingOutputForPublicationState,
+} from "@/lib/listing/listing-export-unlock";
 
 const TONE_STYLES = new Set<ToneStyle>([
   "professional",
@@ -21,6 +27,8 @@ export type ListingOptimizerHydrationPayload = {
   appFeatures: string;
   toneStyle: ToneStyle;
   output: ListingGenerationOutput | null;
+  /** True when credits were spent for publication-ready copy (not free instant draft). */
+  publicationUnlocked: boolean;
 };
 
 function parseToneStyle(raw: unknown): ToneStyle {
@@ -47,153 +55,366 @@ function parseOutput(raw: unknown): ListingGenerationOutput | null {
 type ListingGenerationHydrationRow = {
   id: string;
   created_at: string;
+  updated_at?: string;
   app_name?: unknown;
   category?: unknown;
   target_keywords?: unknown;
   app_features?: unknown;
   tone_style?: unknown;
   output_json?: unknown;
+  credits_ledger_id?: string | null;
+  prompt_version?: string | null;
 };
+
+function publicationUnlockedFromRow(row: {
+  credits_ledger_id?: string | null;
+  prompt_version?: string | null;
+}): boolean {
+  return isListingPublicationUnlocked({
+    creditsLedgerId: row.credits_ledger_id ?? null,
+    promptVersion: row.prompt_version ?? null,
+  });
+}
 
 export function listingGenerationRowToHydrationPayload(
   row: ListingGenerationHydrationRow,
 ): ListingOptimizerHydrationPayload {
+  const publicationUnlocked = publicationUnlockedFromRow(row);
+  const rawOutput = parseOutput(row.output_json);
   return {
     generationId: row.id as string,
-    createdAt: row.created_at as string,
+    createdAt: genUpdatedAt(row),
     appName: typeof row.app_name === "string" ? row.app_name : "",
     category: typeof row.category === "string" ? row.category : "",
     keywordsText: keywordsToDisplay(row.target_keywords),
     appFeatures: typeof row.app_features === "string" ? row.app_features : "",
     toneStyle: parseToneStyle(row.tone_style),
-    output: parseOutput(row.output_json),
+    output: rawOutput
+      ? listingOutputForPublicationState(rawOutput, publicationUnlocked)
+      : null,
+    publicationUnlocked,
   };
 }
 
-/** Latest row for one workspace app (for refresh + client refetch).
- *
- * Two-pass strategy: the most-recent row supplies inputs (app_name, category,
- * target_keywords, app_features, tone_style) so the form fields reflect the
- * latest user edits.  If that row has output_json = null (an inputs-only
- * autofill row), we run a second query to find the latest row that *does*
- * carry output_json and overlay its output onto the payload so the results
- * panel is never blanked by a newer inputs-only write.
- */
+/** Convert a `workspace_listing_drafts` modular_listing to a flat ListingGenerationOutput. */
+function draftModularToOutput(
+  modular: ModularListingState,
+): ListingGenerationOutput | null {
+  const title = modular.title?.value?.trim() ?? "";
+  const variations = modular.shortDescription?.variations ?? [];
+  const selectedIdx = modular.shortDescription?.selectedIndex ?? 0;
+  const shortText =
+    variations[selectedIdx]?.text?.trim() ??
+    variations[0]?.text?.trim() ??
+    "";
+  const fullDescription = assembleModularFullDescription(
+    modular.longDescription ?? { hook: "", features: "", closing: "" },
+  ).trim();
+
+  if (!title && !shortText && !fullDescription) return null;
+
+  return {
+    title,
+    shortDescription: shortText,
+    fullDescription,
+    keywordSuggestions: [],
+    ctaSuggestions: [],
+  };
+}
+
+type DraftRowMinimal = {
+  id: string;
+  updated_at: string;
+  app_id?: string | null;
+  app_name?: unknown;
+  modular_listing?: ModularListingState | null;
+};
+
+function genUpdatedAt(row: ListingGenerationHydrationRow): string {
+  return typeof row.updated_at === "string" && row.updated_at.trim()
+    ? row.updated_at.trim()
+    : (row.created_at as string);
+}
+
+function applyDraftOverlayIfPreferred(
+  payload: ListingOptimizerHydrationPayload,
+  genRow: ListingGenerationHydrationRow,
+  draftRow: DraftRowMinimal | null,
+): void {
+  if (!draftRow?.modular_listing) return;
+
+  // Full unlock persists paid copy to listing_generations and then updates the
+  // modular draft row (title/short/full). The draft row is often newer than the
+  // generation row — never replace a paid unlock with preview-only draft output.
+  if (publicationUnlockedFromRow(genRow)) return;
+
+  const draftOutput = draftModularToOutput(draftRow.modular_listing);
+  if (!draftOutput) return;
+
+  const genTs = genUpdatedAt(genRow);
+  const draftIsNewerOrEqual = draftRow.updated_at >= genTs;
+
+  const preferDraft =
+    draftIsNewerOrEqual ||
+    Boolean(
+      draftOutput.title.trim() ||
+        draftOutput.shortDescription.trim() ||
+        draftOutput.fullDescription.trim(),
+    );
+
+  if (!preferDraft) return;
+
+  payload.output = draftOutput;
+  payload.publicationUnlocked = false;
+  payload.createdAt = draftRow.updated_at;
+  payload.generationId = draftRow.id;
+  if (typeof draftRow.app_name === "string" && draftRow.app_name.trim()) {
+    payload.appName = draftRow.app_name.trim();
+  }
+}
+
+function sanitizeHydrationPayload(
+  payload: ListingOptimizerHydrationPayload,
+): void {
+  if (payload.output && !payload.publicationUnlocked) {
+    payload.output = listingOutputForPublicationState(
+      payload.output,
+      false,
+    );
+  }
+}
+
+async function fetchLatestDraftRowForApp(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  appId: string,
+): Promise<DraftRowMinimal | null> {
+  const { data } = await supabase
+    .from("workspace_listing_drafts")
+    .select("id, updated_at, app_id, app_name, modular_listing")
+    .eq("workspace_id", workspaceId)
+    .not("modular_listing", "is", null)
+    .or(`app_id.eq.${appId},app_id.is.null`)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return (data as DraftRowMinimal | null) ?? null;
+}
+
+async function fetchLatestDraftRowsByApp(
+  supabase: SupabaseClient,
+  workspaceId: string,
+): Promise<{
+  byAppId: Record<string, DraftRowMinimal>;
+  workspaceWideDraft: DraftRowMinimal | null;
+}> {
+  const { data } = await supabase
+    .from("workspace_listing_drafts")
+    .select("id, updated_at, app_id, app_name, modular_listing")
+    .eq("workspace_id", workspaceId)
+    .not("modular_listing", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(800);
+
+  const byAppId: Record<string, DraftRowMinimal> = {};
+  let workspaceWideDraft: DraftRowMinimal | null = null;
+  for (const row of data ?? []) {
+    const aid = row.app_id as string | null;
+    if (aid) {
+      if (!byAppId[aid]) {
+        byAppId[aid] = row as DraftRowMinimal;
+      }
+    } else if (!workspaceWideDraft) {
+      workspaceWideDraft = row as DraftRowMinimal;
+    }
+  }
+  return { byAppId, workspaceWideDraft };
+}
+
+/** Latest row for one workspace app (for refresh + client refetch). */
 export async function loadLatestListingHydrationForApp(
   supabase: SupabaseClient,
   workspaceId: string,
   appId: string,
+  userId?: string,
 ): Promise<ListingOptimizerHydrationPayload | null> {
-  const { data, error } = await supabase
+  let genQuery = supabase
     .from("listing_generations")
     .select(
-      "id, created_at, app_name, category, target_keywords, app_features, tone_style, output_json",
+      "id, created_at, updated_at, app_name, category, target_keywords, app_features, tone_style, output_json, credits_ledger_id, prompt_version",
     )
     .eq("workspace_id", workspaceId)
-    .eq("app_id", appId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .eq("app_id", appId);
 
-  if (error || !data?.id) {
-    return null;
+  if (userId?.trim()) {
+    genQuery = genQuery.eq("user_id", userId.trim());
   }
 
-  const payload = listingGenerationRowToHydrationPayload(
-    data as ListingGenerationHydrationRow,
-  );
+  const [genResult, draftResult] = await Promise.all([
+    genQuery.order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    fetchLatestDraftRowForApp(supabase, workspaceId, appId),
+  ]);
 
-  // If the most-recent row has no output (inputs-only autofill row), fetch the
-  // latest row that does carry output_json so the results panel keeps showing.
+  const { data, error } = genResult;
+  const draftRow = draftResult;
+
+  if (error || !data?.id) {
+    if (!draftRow?.modular_listing) return null;
+    const draftOutput = draftModularToOutput(draftRow.modular_listing);
+    if (!draftOutput) return null;
+    return {
+      generationId: draftRow.id,
+      createdAt: draftRow.updated_at,
+      appName: typeof draftRow.app_name === "string" ? draftRow.app_name : "",
+      category: "",
+      keywordsText: "",
+      appFeatures: "",
+      toneStyle: "professional",
+      output: draftOutput,
+      publicationUnlocked: false,
+    };
+  }
+
+  const genRow = data as ListingGenerationHydrationRow;
+  const payload = listingGenerationRowToHydrationPayload(genRow);
+
   if (payload.output === null) {
-    const { data: outputData } = await supabase
-      .from("listing_generations")
-      .select("id, created_at, output_json")
-      .eq("workspace_id", workspaceId)
-      .eq("app_id", appId)
-      .not("output_json", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    if (draftRow?.modular_listing) {
+      const draftOutput = draftModularToOutput(draftRow.modular_listing);
+      if (draftOutput) {
+        payload.output = draftOutput;
+        payload.publicationUnlocked = false;
+        payload.createdAt = draftRow.updated_at;
+        payload.generationId = draftRow.id;
+      }
+    } else {
+      let outputQuery = supabase
+        .from("listing_generations")
+        .select(
+          "id, created_at, updated_at, output_json, credits_ledger_id, prompt_version",
+        )
+        .eq("workspace_id", workspaceId)
+        .eq("app_id", appId)
+        .not("output_json", "is", null);
+      if (userId?.trim()) {
+        outputQuery = outputQuery.eq("user_id", userId.trim());
+      }
+      const { data: outputData } = await outputQuery
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    if (outputData?.output_json != null) {
-      payload.output = parseOutput(outputData.output_json);
+      if (outputData?.output_json != null) {
+        const fallbackUnlocked = publicationUnlockedFromRow(outputData);
+        const parsed = parseOutput(outputData.output_json);
+        payload.output = parsed
+          ? listingOutputForPublicationState(parsed, fallbackUnlocked)
+          : null;
+        payload.publicationUnlocked = fallbackUnlocked;
+      }
     }
   }
 
+  applyDraftOverlayIfPreferred(payload, genRow, draftRow);
+  sanitizeHydrationPayload(payload);
   return payload;
 }
 
-/** Latest listing_generations row per workspace app (non-null app_id), plus latest workspace-only row.
- *
- * Two-pass strategy within the fetched rows: the first-seen row per app_id
- * supplies form inputs (most-recent edit).  If that row has null output_json
- * (inputs-only autofill write), we continue scanning later rows for the first
- * one that carries a non-null output_json and overlay it — so the results
- * panel is never blanked by a newer inputs-only row.
- */
+/** Latest listing_generations row per workspace app (non-null app_id), plus latest workspace-only row. */
 export async function loadLatestListingHydrationMaps(
   supabase: SupabaseClient,
   workspaceId: string,
+  userId?: string,
 ): Promise<{
   byAppId: Record<string, ListingOptimizerHydrationPayload>;
   noApp: ListingOptimizerHydrationPayload | null;
 }> {
-  const { data, error } = await supabase
+  let genListQuery = supabase
     .from("listing_generations")
     .select(
-      "id, created_at, app_id, app_name, category, target_keywords, app_features, tone_style, output_json",
+      "id, created_at, updated_at, app_id, app_name, category, target_keywords, app_features, tone_style, output_json, credits_ledger_id, prompt_version",
     )
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false })
-    .limit(800);
+    .eq("workspace_id", workspaceId);
+
+  if (userId?.trim()) {
+    genListQuery = genListQuery.eq("user_id", userId.trim());
+  }
+
+  const [genResult, draftLookup] = await Promise.all([
+    genListQuery.order("updated_at", { ascending: false }).limit(800),
+    fetchLatestDraftRowsByApp(supabase, workspaceId),
+  ]);
+
+  const { data, error } = genResult;
+  const { byAppId: draftByAppId, workspaceWideDraft } = draftLookup;
 
   if (error || !data?.length) {
     return { byAppId: {}, noApp: null };
   }
 
   const byAppId: Record<string, ListingOptimizerHydrationPayload> = {};
-  // Track which app_ids still need an output resolved from an older row.
+  const genRowByAppId: Record<string, ListingGenerationHydrationRow> = {};
   const needsOutput = new Set<string>();
   let noApp: ListingOptimizerHydrationPayload | null = null;
   let noAppNeedsOutput = false;
+  let noAppGenRow: ListingGenerationHydrationRow | null = null;
 
   for (const row of data) {
     const aid = row.app_id as string | null;
-    const payload = listingGenerationRowToHydrationPayload(
-      row as ListingGenerationHydrationRow,
-    );
+    const genRow = row as ListingGenerationHydrationRow;
+    const payload = listingGenerationRowToHydrationPayload(genRow);
 
     if (aid) {
       if (!byAppId[aid]) {
-        // First (most-recent) row for this app_id — use it for inputs.
         byAppId[aid] = payload;
+        genRowByAppId[aid] = genRow;
         if (payload.output === null) needsOutput.add(aid);
       } else if (needsOutput.has(aid) && payload.output !== null) {
-        // Older row has output — overlay it onto the inputs-only payload.
-        byAppId[aid] = { ...byAppId[aid], output: payload.output };
+        const fallbackUnlocked = publicationUnlockedFromRow(genRow);
+        byAppId[aid] = {
+          ...byAppId[aid],
+          output: listingOutputForPublicationState(
+            payload.output,
+            fallbackUnlocked,
+          ),
+          publicationUnlocked: fallbackUnlocked,
+        };
         needsOutput.delete(aid);
       }
     } else {
       if (!noApp) {
         noApp = payload;
+        noAppGenRow = genRow;
         if (payload.output === null) noAppNeedsOutput = true;
       } else if (noAppNeedsOutput && payload.output !== null) {
-        // noApp is guaranteed non-null here (set in the `if (!noApp)` branch above),
-        // but TypeScript can't narrow a mutable `let` across branches. Assign via
-        // Object.assign into a typed local to avoid the spread narrowing bug.
+        const fallbackUnlocked = publicationUnlockedFromRow(genRow);
         const withOutput: ListingOptimizerHydrationPayload = Object.assign(
           {},
           noApp as ListingOptimizerHydrationPayload,
-          { output: payload.output },
+          {
+            output: listingOutputForPublicationState(
+              payload.output,
+              fallbackUnlocked,
+            ),
+            publicationUnlocked: fallbackUnlocked,
+          },
         );
         noApp = withOutput;
         noAppNeedsOutput = false;
       }
     }
 
-    // Early-exit once every app_id has a resolved output.
     if (needsOutput.size === 0 && !noAppNeedsOutput) break;
+  }
+
+  for (const [aid, payload] of Object.entries(byAppId)) {
+    const draftRow = draftByAppId[aid] ?? workspaceWideDraft;
+    const genRow = genRowByAppId[aid];
+    if (genRow) {
+      applyDraftOverlayIfPreferred(payload, genRow, draftRow);
+      sanitizeHydrationPayload(payload);
+    }
   }
 
   return { byAppId, noApp };

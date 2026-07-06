@@ -44,6 +44,10 @@ export interface PlayConsoleExportDialogProps {
   onCopyAllPlayConsole: () => void | Promise<void>;
   onDownloadTxt?: () => void;
   disabled?: boolean;
+  /** When true, manual copy / download / publish are gated until full AI unlock. */
+  exportLocked?: boolean;
+  unlockCreditCost?: number;
+  onUnlockExport?: () => void;
 
   // One-click publish — all optional; if absent the publish section is hidden
   workspaceId?: string;
@@ -71,6 +75,9 @@ export function PlayConsoleExportDialog({
   onCopyAllPlayConsole,
   onDownloadTxt,
   disabled,
+  exportLocked = false,
+  unlockCreditCost = 5,
+  onUnlockExport,
   workspaceId,
   appId,
   locale = "en",
@@ -152,8 +159,30 @@ export function PlayConsoleExportDialog({
 
         <div className="max-h-[min(70dvh,640px)] space-y-5 overflow-y-auto px-5 py-5 sm:space-y-6 sm:px-6">
 
+          {exportLocked ? (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+              <p className="text-sm font-semibold text-amber-100">
+                {t("exportLockedTitle")}
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-amber-100/85">
+                {t("exportLockedBody")}
+              </p>
+              {onUnlockExport ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={onUnlockExport}
+                  className="mt-3 h-9 w-full bg-emerald-600 text-sm font-semibold text-white hover:bg-emerald-500"
+                >
+                  {t("exportUnlockCta", { credits: unlockCreditCost })}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* ── One-click publish section ───────────────────────────────── */}
-          {showPublishSection && (
+          {showPublishSection && !exportLocked && (
             <div className="rounded-xl border border-[#22C55E]/20 bg-[#22C55E]/5 p-4">
               <div className="mb-3 flex items-center gap-2">
                 <CloudUpload className="h-4 w-4 shrink-0 text-[#86efac]" />
@@ -303,7 +332,7 @@ export function PlayConsoleExportDialog({
             <ExportFieldBox
               label={t("fieldLabels.appNameTitle")}
               value={clamped.title}
-              disabled={disabled}
+              disabled={disabled || exportLocked}
               onCopy={() => void onCopy("appNameTitle", clamped.title)}
               copyLabel={t("copyBlock")}
               valueClassName="max-h-40 font-mono text-[13px] leading-normal text-white/90"
@@ -311,7 +340,7 @@ export function PlayConsoleExportDialog({
             <ExportFieldBox
               label={t("fieldLabels.shortDescription")}
               value={clamped.shortDescription}
-              disabled={disabled}
+              disabled={disabled || exportLocked}
               onCopy={() => void onCopy("shortDescription", clamped.shortDescription)}
               copyLabel={t("copyBlock")}
               valueClassName="max-h-48 font-mono text-[13px] leading-normal text-white/90"
@@ -319,7 +348,7 @@ export function PlayConsoleExportDialog({
             <ExportFieldBox
               label={t("fieldLabels.fullDescription")}
               value={clamped.fullDescription}
-              disabled={disabled}
+              disabled={disabled || exportLocked}
               onCopy={() => void onCopy("fullDescription", clamped.fullDescription)}
               copyLabel={t("copyBlock")}
               valueClassName="max-h-[min(44vh,24rem)] min-h-[9rem] font-sans text-[13px] leading-relaxed text-white/90"
@@ -332,11 +361,13 @@ export function PlayConsoleExportDialog({
           <Button
             type="button"
             size="lg"
-            disabled={disabled}
+            disabled={disabled || exportLocked}
             className="h-12 w-full bg-[#22C55E] text-base font-semibold text-white shadow-[0_8px_28px_-6px_rgba(34,197,94,0.45)] hover:bg-[#16a34a] disabled:opacity-45"
-            onClick={() => void onCopyAllPlayConsole()}
+            onClick={() => (exportLocked ? onUnlockExport?.() : void onCopyAllPlayConsole())}
           >
-            {t("copyAllPlayConsole")}
+            {exportLocked
+              ? t("exportUnlockCta", { credits: unlockCreditCost })
+              : t("copyAllPlayConsole")}
           </Button>
 
           {onDownloadTxt ? (
@@ -345,7 +376,7 @@ export function PlayConsoleExportDialog({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={disabled}
+                disabled={disabled || exportLocked}
                 className="h-8 w-full shrink-0 border-white/18 bg-transparent text-xs font-medium text-white/75 hover:bg-white/10 hover:text-white sm:w-auto"
                 onClick={onDownloadTxt}
               >

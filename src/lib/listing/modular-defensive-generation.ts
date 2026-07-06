@@ -71,11 +71,17 @@ export async function runDefensiveModularShortGeneration(
   input: ListingOptimizerInput,
   contextTitle: string,
   lockedKeywords: string[],
-): Promise<{ data: ModularShortStepData; warnings: ListingGenerationWarning[] }> {
+): Promise<{
+  data: ModularShortStepData;
+  warnings: ListingGenerationWarning[];
+  tokensUsed: number;
+}> {
   const messages = buildModularShortMessages(input, contextTitle, lockedKeywords);
   const warnings: ListingGenerationWarning[] = [];
+  let totalTokens = 0;
 
   let raw = await invokeModularShortGeneration(messages);
+  totalTokens += raw.tokensUsed;
   let outcome = validateAndRepairShortOutput(raw.parsed, input, contextTitle);
 
   if (!outcome.ok) {
@@ -85,6 +91,7 @@ export async function runDefensiveModularShortGeneration(
         outcome.parseFailed,
       );
       raw = await invokeModularShortGeneration(messages, correctionSuffix);
+      totalTokens += raw.tokensUsed;
       outcome = validateAndRepairShortOutput(raw.parsed, input, contextTitle);
       if (outcome.ok) break;
     }
@@ -103,5 +110,5 @@ export async function runDefensiveModularShortGeneration(
     });
   }
 
-  return { data: outcome.data, warnings };
+  return { data: outcome.data, warnings, tokensUsed: totalTokens };
 }

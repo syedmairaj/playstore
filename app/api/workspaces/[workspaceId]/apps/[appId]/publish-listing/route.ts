@@ -4,6 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import { getConnectedAccount } from "@/lib/play-store/google-play-oauth";
 import { publishListingToPlayStore } from "@/lib/play-store/publish-listing-to-play-store";
+import {
+  fetchListingPublicationUnlockState,
+} from "@/lib/db/listing-generations";
+import { isListingPublicationUnlocked } from "@/lib/listing/listing-export-unlock";
 
 const bodySchema = z.object({
   locale: z.string().min(2).max(10).default("en"),
@@ -101,6 +105,31 @@ export async function POST(request: NextRequest, context: Ctx) {
       );
     }
     throw e;
+  }
+
+  const unlockState = await fetchListingPublicationUnlockState(supabase, {
+    workspaceId,
+    userId: user.id,
+    appId,
+  });
+  if (
+    !unlockState ||
+    !isListingPublicationUnlocked({
+      creditsLedgerId: unlockState.creditsLedgerId,
+      promptVersion: unlockState.promptVersion,
+    })
+  ) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "publication_locked",
+          message:
+            "This listing is still a free preview. Run Full AI Generation (Finalize) to unlock export and Play Console publish.",
+        },
+      },
+      { status: 402 },
+    );
   }
 
   const result = await publishListingToPlayStore({

@@ -35,6 +35,7 @@ export function SettingsTabs(props: {
   keywordCount: number;
   creditsRemaining: number;
   creditsAllocation: number;
+  monthlyCreditCap: number | null;
   ledgerEntries: CreditsLedgerEntry[];
 }) {
   const router = useRouter();
@@ -56,6 +57,9 @@ export function SettingsTabs(props: {
     weeklySummary: Boolean(props.profile.notification_preferences?.weeklySummary ?? false),
     alertThreshold: Number(props.profile.notification_preferences?.alertThreshold ?? 3),
   });
+  const [monthlyCreditCap, setMonthlyCreditCap] = useState<number | null>(
+    props.monthlyCreditCap,
+  );
 
   const plan = useMemo(() => normalizePlan(props.workspace.plan), [props.workspace.plan]);
   const planMeta = PLAN_META[plan];
@@ -321,6 +325,8 @@ export function SettingsTabs(props: {
               canAdmin={canAdmin}
               prefs={prefs}
               onPrefsChange={setPrefs}
+              monthlyCreditCap={monthlyCreditCap}
+              onMonthlyCreditCapChange={setMonthlyCreditCap}
               displayName={displayName}
               onDisplayNameChange={setDisplayName}
               busy={busy}

@@ -18,7 +18,8 @@ export type ListingGenerationWarningCode =
   | "long_description_below_target"
   | "long_description_short"
   | "long_expansion_skipped"
-  | "long_assembly_adjusted";
+  | "long_assembly_adjusted"
+  | "context_gap";
 
 export type ListingGenerationWarning = {
   code: ListingGenerationWarningCode;
@@ -56,6 +57,7 @@ const WARNING_SCORE_PENALTY: Record<ListingGenerationWarningCode, number> = {
   long_description_short: 12,
   long_expansion_skipped: 6,
   long_assembly_adjusted: 4,
+  context_gap: 14,
 };
 
 export function healthLabelFromScore(score: number): ListingGenerationHealthLabel {

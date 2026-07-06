@@ -21,6 +21,8 @@ import {
   releaseGenerationLock,
 } from "@/lib/server/generation-idempotency-lock";
 
+export const maxDuration = 300;
+
 const ROUTE = "POST /api/listings/optimizer-autofill";
 const LOCK_ACTION = "listing_optimizer_autofill";
 

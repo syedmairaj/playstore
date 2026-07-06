@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { isGrammaticallyCompleteShortText } from "@/lib/listing/modular-output-validation";
 
+import { normalizeShortVariationText } from "@/lib/listing/modular-output-validation";
+
 /** Canonical order for Phase 2 short-description variants. */
 export const SHORT_VARIATION_TYPES = ["growth", "conversion", "utility"] as const;
 
@@ -69,7 +71,7 @@ const TYPE_BY_ORCHESTRATION_ID: Record<string, ShortVariationType> = {
 };
 
 export function shortVariationText(item: ShortVariationItem): string {
-  return item.text.trim().slice(0, 80);
+  return normalizeShortVariationText(item.text);
 }
 
 export function defaultShortVariationType(index: number): ShortVariationType {
@@ -82,14 +84,17 @@ export function coerceShortVariationsInput(val: unknown): ShortVariationItem[] {
   return val.map((item, index) => {
     const fallbackType = defaultShortVariationType(index);
     if (typeof item === "string") {
-      return { type: fallbackType, text: item.trim().slice(0, 80) };
+      return { type: fallbackType, text: normalizeShortVariationText(item) };
     }
     if (item && typeof item === "object") {
       const row = item as Record<string, unknown>;
       const parsedType = shortVariationTypeSchema.safeParse(row.type);
       return {
         type: parsedType.success ? parsedType.data : fallbackType,
-        text: typeof row.text === "string" ? row.text.trim().slice(0, 80) : "",
+        text:
+          typeof row.text === "string"
+            ? normalizeShortVariationText(row.text)
+            : "",
       };
     }
     return { type: fallbackType, text: "" };
@@ -103,7 +108,7 @@ export function orderShortVariations(items: ShortVariationItem[]): ShortVariatio
     if (item.text.trim()) {
       byType.set(item.type, {
         type: item.type,
-        text: item.text.trim().slice(0, 80),
+        text: normalizeShortVariationText(item.text),
       });
     }
   }
@@ -121,6 +126,40 @@ export function shortVariationTypeFromOrchestrationId(
   const direct = shortVariationTypeSchema.safeParse(variationId);
   if (direct.success) return direct.data;
   return TYPE_BY_ORCHESTRATION_ID[variationId] ?? defaultShortVariationType(index);
+}
+
+/** Build Phase 2 variations from a full unlock response (no extra API round-trip). */
+export function shortVariationsFromFullOutput(output: {
+  title?: string;
+  shortDescription?: string;
+  orchestration?: {
+    modules: {
+      conversion: {
+        shortVariations: Array<{ variationId: string; shortDescription: string }>;
+      };
+    };
+  };
+}): ShortVariationItem[] {
+  const orch =
+    output.orchestration?.modules?.conversion?.shortVariations;
+  if (orch && orch.length > 0) {
+    const fromOrch = orderShortVariations(
+      orch.map((v, i) => ({
+        type: shortVariationTypeFromOrchestrationId(v.variationId ?? "", i),
+        text: normalizeShortVariationText(v.shortDescription ?? ""),
+      })),
+    );
+    if (fromOrch.some((v) => v.text.trim())) {
+      return fromOrch;
+    }
+  }
+
+  const single = normalizeShortVariationText(output.shortDescription ?? "");
+  if (!single) return [];
+
+  return orderShortVariations(
+    SHORT_VARIATION_TYPES.map((type) => ({ type, text: single })),
+  );
 }
 
 export function zodErrorToFieldErrors(

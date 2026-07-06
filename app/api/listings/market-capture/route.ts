@@ -20,6 +20,8 @@ import { marketCaptureBodySchema } from "@/lib/validation/market-capture-body";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import type { OptimizationQueueItem } from "@/lib/optimization-queue/optimization-queue.types";
 
+export const maxDuration = 300;
+
 const ROUTE = "POST /api/listings/market-capture";
 const CREDIT_KEY = "listing_generation" as const;
 

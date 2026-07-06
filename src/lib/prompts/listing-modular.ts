@@ -152,12 +152,15 @@ export function buildModularLongMessages(
     ? ""
     : "STYLE: Write a punchy, 2-sentence hook. Provide a detailed features list. End with a high-conversion closing — the system assembles the final Play listing.";
 
+  const signalDirectives = buildSignalDrivenLongBlock(input);
+
   const system = [
     "You are a Google Play long-description architect.",
     languageLine(targetArabic),
     MODULAR_JSON_API_CRITICAL_RULES,
     MODULAR_LONG_STYLISTIC_RULES,
     MODULAR_PAIN_POINT_SOLUTION_TEMPLATE,
+    signalDirectives,
     "JSON schema (TypeScript interface) — property order is mandatory:",
     MODULAR_LONG_JSON_INTERFACE,
     "Return JSON only. Property order: features (array) → hook (string) → closing (string).",
@@ -169,7 +172,9 @@ export function buildModularLongMessages(
     "Stay semantically consistent with the anchor title and short description.",
     'FORBIDDEN: generic placeholders ("Discover more", "Download now") without app-specific proof.',
     "When generating all blocks, each of hook/features/closing MUST contain substantive copy.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const user = [
     buildModularAppContextBlock(input, { compact: options?.compactContext }),
@@ -196,6 +201,79 @@ export type ModularLongPromptOptions = {
   compactContext?: boolean;
   reducedComplexity?: boolean;
 };
+
+/**
+ * Builds a signal-driven directive block for the long description system prompt.
+ * Only emitted when `input.signalContext` carries non-empty signals.
+ *
+ * EN/AR: labels are in English — the model handles locale via `languageLine`.
+ */
+function buildSignalDrivenLongBlock(input: ListingOptimizerInput): string {
+  const sc = input.signalContext;
+  if (!sc) return "";
+
+  const lines: string[] = [];
+
+  const marketGaps = sc.marketIntel.gaps.filter(Boolean);
+  const reviewPains = sc.reviews.topPainPoints.filter(Boolean);
+  const competitorWeaknesses = sc.competitorSignals.weaknesses.filter(Boolean);
+  const opportunityKws = sc.keywordTracker.opportunityKeywords.filter(Boolean);
+  const brandStyle = sc.brandKit.style;
+  const brandTone = sc.brandKit.toneGuidelines;
+  const brandColor = sc.brandKit.primaryColor;
+
+  const hasAnySignal =
+    marketGaps.length > 0 ||
+    reviewPains.length > 0 ||
+    competitorWeaknesses.length > 0 ||
+    opportunityKws.length > 0 ||
+    brandStyle ||
+    brandTone;
+
+  if (!hasAnySignal) return "";
+
+  lines.push("══════════════ SIGNAL-DRIVEN DIRECTIVES (MANDATORY) ══════════════");
+
+  if (marketGaps.length > 0) {
+    lines.push(
+      `[MARKET GAPS] Identify and address these gaps in the features block: ${marketGaps.join("; ")}`,
+    );
+  }
+
+  if (brandStyle || brandTone) {
+    const brandParts = [brandStyle && `style: ${brandStyle}`, brandTone && `tone: ${brandTone}`]
+      .filter(Boolean)
+      .join(", ");
+    lines.push(
+      `[BRAND KIT] Apply these brand guidelines throughout — rewrite using the defined voice: ${brandParts}`,
+    );
+    if (brandColor) {
+      lines.push(`[BRAND COLOR] Reference "${brandColor}" as the brand accent in uiFocus descriptions.`);
+    }
+  }
+
+  if (reviewPains.length > 0) {
+    lines.push(
+      `[REVIEW PAIN POINTS] Resolve these user complaints in the hook block: ${reviewPains.join("; ")}`,
+    );
+  }
+
+  if (competitorWeaknesses.length > 0) {
+    lines.push(
+      `[COMPETITOR DIFFERENTIATION] Position against these weaknesses in the closing block: ${competitorWeaknesses.join("; ")}`,
+    );
+  }
+
+  if (opportunityKws.length > 0) {
+    lines.push(
+      `[KEYWORD OPPORTUNITIES] Surface these naturally across all blocks: ${opportunityKws.join(", ")}`,
+    );
+  }
+
+  lines.push("══════════════════════════════════════════════════════════════════");
+
+  return lines.join("\n");
+}
 
 function longSharedUserBlock(
   input: ListingOptimizerInput,
@@ -250,12 +328,15 @@ export function buildModularLongFeaturesOnlyMessages(
     ? "Provide a shorter detailed features list — fewer sections, crisp bullets."
     : "Provide a detailed features list with emoji section labels and substantive bullets.";
 
+  const signalDirectivesFeatures = buildSignalDrivenLongBlock(input);
+
   const system = [
     "You are a Google Play long-description features architect.",
     languageLine(targetArabic),
     MODULAR_JSON_API_CRITICAL_RULES,
     MODULAR_LONG_STYLISTIC_RULES,
     ...(reduced ? [MODULAR_LONG_REDUCED_COMPLEXITY_RULES] : []),
+    signalDirectivesFeatures,
     "JSON schema (TypeScript interface):",
     MODULAR_LONG_FEATURES_ONLY_INTERFACE,
     "Return JSON only with a single `features` array key.",
@@ -263,7 +344,9 @@ export function buildModularLongFeaturesOnlyMessages(
     "Prioritize complete JSON structure over verbose prose — never truncate mid-array.",
     "Synthesize every section from APP CONTEXT — no generic filler.",
     "Stay semantically consistent with the anchor title and short description.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const user = longSharedUserBlock(input, context, locked, options);
   return { system, user };
@@ -284,11 +367,14 @@ export function buildModularLongHookClosingMessages(
       : input.targetKeywords.slice(0, 20);
   const reduced = options?.reducedComplexity === true;
 
+  const signalDirectivesHookClosing = buildSignalDrivenLongBlock(input);
+
   const system = [
     "You are a Google Play long-description opener/closer architect.",
     languageLine(targetArabic),
     MODULAR_JSON_API_CRITICAL_RULES,
     MODULAR_LONG_STYLISTIC_RULES,
+    signalDirectivesHookClosing,
     "JSON schema (TypeScript interface):",
     MODULAR_LONG_HOOK_CLOSING_INTERFACE,
     "Return JSON only with `hook` and `closing` string keys.",
@@ -297,7 +383,9 @@ export function buildModularLongHookClosingMessages(
       : "hook: punchy 2-sentence opening addressing #1 pain point. closing: high-conversion CTA with a concrete benefit.",
     "Do NOT rewrite the features body — only write hook and closing that frame it.",
     'FORBIDDEN: generic placeholders ("Discover more", "Download now") without app-specific proof.',
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const user = [
     longSharedUserBlock(input, context, locked, options),

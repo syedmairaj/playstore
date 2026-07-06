@@ -91,6 +91,40 @@ export function buildModularAppContextBlock(
     if (market) lines.push(`Market signals: ${market}`);
   }
 
+  if (input.synthesisQueueHash?.trim()) {
+    lines.push(
+      "",
+      "══════════════ QUEUE HASH SYNTHESIS (MANDATORY) ══════════════",
+      `Active Context queue hash: ${input.synthesisQueueHash.trim()}`,
+      "You MUST ground title, short, and long copy in the Keyword Tracker + Active Context signals that produced this hash.",
+      "Do NOT emit empty strings or generic placeholder copy when signals are present.",
+      "If staged signals are insufficient for a section, still produce best-effort copy from tracked keywords and app context — never return blank fields.",
+    );
+  }
+
+  const tracked = input.trackedKeywordSignals ?? [];
+  if (tracked.length > 0) {
+    lines.push(
+      "",
+      `Keyword Tracker signals (${tracked.length}): ${tracked
+        .slice(0, signalCap)
+        .map((s) => `${s.keyword} (${s.confidence}%)`)
+        .join(", ")}`,
+    );
+  }
+
+  // Brand Kit — injected by the executor from DB; optional enrichment.
+  if (input.signalContext?.brandKit) {
+    const bk = input.signalContext.brandKit;
+    const bkParts: string[] = [];
+    if (bk.style) bkParts.push(`style: ${bk.style}`);
+    if (bk.toneGuidelines && bk.toneGuidelines !== bk.style) bkParts.push(`tone: ${bk.toneGuidelines}`);
+    if (bk.primaryColor) bkParts.push(`primary color: ${bk.primaryColor}`);
+    if (bkParts.length > 0) {
+      lines.push("", `Brand Kit (apply to all copy): ${bkParts.join(" | ")}`);
+    }
+  }
+
   return lines.filter(Boolean).join("\n");
 }
 

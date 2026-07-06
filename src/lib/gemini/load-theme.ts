@@ -41,7 +41,7 @@ function loadSchemasJSON(): SchemasJSON {
   }
 
   try {
-    const schemaPath = join(process.cwd(), "lib/gemini/schemas.json");
+    const schemaPath = join(process.cwd(), "src/lib/gemini/schemas.json");
     const content = readFileSync(schemaPath, "utf-8");
     cachedSchemasJSON = JSON.parse(content) as SchemasJSON;
     return cachedSchemasJSON;

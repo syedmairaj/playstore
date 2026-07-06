@@ -64,7 +64,11 @@ describe("categorize-market-intel", () => {
       [{ appId: "com.fitpro", title: "FitPro", rank: 2 }],
     );
 
-    expect(report.growthKeywords[0].term).toBe("step counter");
+    // CVR-weighted formula (0.55) means workout planner (80 CVR) outscores
+    // step counter (55 CVR) despite lower search volume (70 vs 90).
+    // workout planner: 70*0.45 + 80*0.55 = 75.5
+    // step counter:    90*0.45 + 55*0.55 = 70.75
+    expect(report.growthKeywords[0].term).toBe("workout planner");
     expect(report.competitorThreats[0].chartRank).toBe(2);
     expect(report.uxSentimentInsights[0].insightKind).toBe("sentiment_theme");
   });

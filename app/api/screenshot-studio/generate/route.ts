@@ -331,7 +331,12 @@ async function runBackground(opts: {
     try {
       const { createClient: createServerClient } = await import("@/lib/supabase/server");
       const supabase = await createServerClient();
-      const hydration = await loadLatestListingHydrationForApp(supabase, workspaceId, appId);
+      const hydration = await loadLatestListingHydrationForApp(
+        supabase,
+        workspaceId,
+        appId,
+        userId,
+      );
       if (hydration?.output?.title) {
         listingTitle     = hydration.output.title;
         listingShortDesc = hydration.output.shortDescription ?? undefined;

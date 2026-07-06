@@ -74,7 +74,33 @@ export function queueItemFingerprint(item: OptimizationQueueItem): QueueHashFing
 }
 
 /**
- * Items included in Active Context queue hash — mirrors `readOptimizationQueue`.
+ * Items included in the Active Context queue hash — mirrors the filter applied
+ * by `readOptimizationQueue` on the server so client and server hashes are
+ * always computed over the same item set.
+ *
+ * ## Three-module consistency guarantee
+ *
+ * All three intel modules contribute to the hash and any change to their items
+ * will cause a new hash:
+ *
+ * - **Competitor Spy** (`source: "competitor_spy"`) — competitor_strength /
+ *   competitor_keyword / competitor_weakness items. All types are included.
+ *   Lifecycle-status transitions (DISCOVERY → AUDIT → ACTIVE) are captured via
+ *   `queueItemFingerprint.status`, so promoting a Spy signal changes the hash.
+ *
+ * - **Review Insights** (`source: "review_analysis"`) — review_pain_point items
+ *   that have been explicitly staged (adopted, backlog-linked, or manually moved
+ *   to active context) are included. Auto-derived review_pain_point items that
+ *   the user has not yet curated (`review_derived: true` without explicit staging)
+ *   are intentionally excluded via `isReviewDerivedQueueItem` — they are
+ *   suggestions in DISCOVERY state, not curated signals.
+ *
+ * - **Market Intel** (`source: "market_intel"`) — market_keyword items. All are
+ *   included; lifecycle-status transitions change the hash.
+ *
+ * The DISCOVERY lifecycle status is included in each item's fingerprint, so
+ * promoting any item (DISCOVERY → AUDIT / ACTIVE) invalidates the hash and
+ * forces the client to re-hash before generating.
  */
 export function filterItemsForActiveContextQueueHash(
   items: OptimizationQueueItem[],

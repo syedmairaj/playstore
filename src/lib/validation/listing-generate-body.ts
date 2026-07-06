@@ -25,4 +25,11 @@ export const listingGenerateBodySchema = listingOptimizerRequestSchema.extend({
    * When false, server strips activeContext / tracker signals regardless of payload.
    */
   includeOptimizerContext: z.boolean().optional().default(false),
+  /**
+   * Instant Draft — lightweight Core ASO template, no Redis / vault / credits.
+   * Used for <3s UI preview on Listing Optimizer load.
+   */
+  isDraft: z.boolean().optional().default(false),
+  /** Fast-Draft — title/keywords only; signal enhancement is optional and non-blocking. */
+  fastDraft: z.boolean().optional().default(false),
 });

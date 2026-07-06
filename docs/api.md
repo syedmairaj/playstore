@@ -318,21 +318,112 @@ Optional **`meta.asoScorePartial`** (boolean, when `true`) means listing copy wa
 
 Optional **`data.orchestration`** (v16+) — discrete three-phase modules (`anchor`, `conversion`, `expansion`) for independent UI display and per-module regenerate; root `title` / `shortDescription` / `fullDescription` are synced from the active modules server-side. Schema: `lib/listing/orchestration-protocol.schema.ts`.
 
-**Modular generation (`generationStep`)** — Request body may include `generationStep`: `title` | `short` | `long` | `hook` | `features` | `closing` | `finalize` | `full` (default `full`). Modular steps return `{ ok, generationStep, modularData, meta: { creditsCharged: 0 } }` without debiting credits. `finalize` requires `modularListing` state and debits `listing_generation` credits; response matches the standard `{ ok, data, meta }` shape. **Pre-flight:** after Zod validation and workspace handshake, the handler validates **`queueHash`** against the active Keyword Tracker vault **before** rate limits, idempotency locks, or credits. **Pre-Generation Guard:** when `includeOptimizerContext` is true (default for modular client), **`trackedKeywordSignals`** must be non-empty after `applyOptimizerContextGate`; otherwise **400** `missing_keyword_context` with message *"Missing Keyword Context. Please visit the Keyword Tracker to select target keywords."* — no Gemini call. Structured preflight log: `listing_generate_preflight` JSON with signal count + keywords. Context Audit applies to every step.
+**Modular generation (`generationStep`)** — Request body may include `generationStep`: `pipeline` | `title` | `short` | `long` | `hook` | `features` | `closing` | `finalize` | `full` (default `full`). **`pipeline`** is the **required entry** for initial modular generation — it runs a serialized worker orchestration (`title` → `short` → `long`) via **Upstash QStash** (not inline in the producer route). Individual `title` / `short` / `long` steps are only accepted when `isRegenerate: true`. **Step-scoped context (token-optimized):** `title` and `short` compile **top 5 keywords** only; `long` / `full` / `finalize` compile **top 5 keywords + 2 competitor (market) signals**. **`modular_phase_order_conflict` (409)** when downstream steps arrive before prior phases are persisted in `workspace_listing_drafts`. **`modular_pipeline_required` (409)** when the client attempts out-of-order step calls without `pipeline` or `isRegenerate`. **`generation_in_progress` (429)** when a Redis lock is held for the same `(workspaceId, queueHash)`.
+
+**Async queue (QStash)** — Non-draft `POST /api/listings/generate` requests are **producers**: validate auth/credits, acquire the `(workspaceId, queueHash)` Redis lock, upsert `workspace_listing_drafts` with `generation_status: pending`, publish to **`POST /api/listings/worker`**, and return **`202 Accepted`** with `{ ok, accepted: true, jobId, status, queueHash, workspaceId }`. The browser client polls **`GET /api/listings/status?jobId=`** until `completed` or `failed`. **`isDraft: true`** remains synchronous on the producer route. Env: `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY`, `QSTASH_CALLBACK_URL` (or `NEXT_PUBLIC_APP_URL` / `VERCEL_URL`). Local dev without QStash: set `INTERNAL_WORKER_SECRET` — the producer fire-and-forgets an unsigned worker POST.
+
+**Job lifecycle (`workspace_listing_drafts`)** — `generation_status`: `pending` → `processing` → `completed` | `failed`; `current_phase`: `title` | `short` | `long` | `full`; `generation_error` on failure; `generation_payload` / `generation_result` jsonb. Worker releases the Redis queue lock in `finally` so retries are allowed after failure.
+
+**Context gate (ASO standard)** — Before AI generation (except `isDraft`), **`syncQueueHash`** + **`stampAndCompileListingContext`** atomically stamp `workspace_keywords.queue_hash` for the active app + optimization hash (EN/AR via `vaultLocale`), then **`compileContextForStep()`** loads staged signals. Logs `[Context Audit] Stamped keywords to queueHash:` and `[Context Audit] Signals found: N`. Hydrated keywords merge into `trackedKeywordSignals` before modular step signals. When no staged keywords exist, returns **400** with `{ "error": "KEYWORD_CONTEXT_REQUIRED", ... }`.
+
+**`includeOptimizerContext`** — Modular client always sends `true` with sanitized `activeContext` + `trackedKeywordSignals`. The LLM system prompt includes the request **`queueHash`** synthesis anchor (`synthesisQueueHash` on server input).
+
+**`meta.isSignalEnhanced`** — `true` when staged Keyword Tracker / Active Context signals were applied.
+
+**`meta.draftPersisted` / `meta.draftUpdatedAt`** — Set when the step successfully upserted `workspace_listing_drafts`. The Listing Optimizer gates **Finalize** until title, short, and long phases are generated **and** persisted.
+
+**Pre-flight:** after Zod validation and workspace handshake, the handler validates **`queueHash`** against the active Keyword Tracker vault **before** rate limits, idempotency locks, or credits — **except** for `isDraft` preview requests. Structured preflight log: `listing_generate_preflight` JSON with signal count + keywords. Sparse Review/Market/Competitor context with tracker keywords present yields warning **`context_gap`** and a reduced **`warnings.healthScore`** (Listing Health panel).
+
+**Client timeout** — modular browser clients POST the producer, then poll job status for up to **300s** (600s when `skipTimeout`). Legacy **120s** abort applies only to the initial POST handshake.
+
+**Platform duration** — `export const maxDuration = 60` on `POST /api/listings/generate` (producer). `POST /api/listings/worker` uses **`maxDuration = 300`** for Gemini orchestration.
 
 **Client retries** — browser clients (`modular-listing-generate-client`, `generate-optimized-listing`) use exponential backoff (3 attempts, 1s base) on **500/502/503/504** to reduce failures from latent LLM gateways.
 
+**Instant Draft (`isDraft: true`)** — Skips Redis, vault synthesis, and credit debit. Returns a deterministic **Core ASO Template** listing in &lt; 3s for UI preview on Listing Optimizer load. The UI calls this automatically when app identity fields are present.
+
+**Optimized pipeline (`USE_OPTIMIZED_PIPELINE=true`)** — Background `signal-compressor` writes a 5-point **Context Package** to Redis (`ctxpkg:v1:{workspaceId}:{locale}:{appId}`) when queue signals change. **Finalize** reads **only** this pre-computed key (never raw vault). Toggle env off to revert to legacy vault fetch. Manual recompress: `POST /api/workspaces/:workspaceId/context-package/recompress`.
+
 **Errors**
 
-- `400` — `validation_error`, invalid JSON (`bad_request`), **`missing_keyword_context`** when Keyword Tracker signals are empty (optimizer context enabled), or **`empty_synthesis_vault`** when the staging vault / queue hash has no synthesizable signals (keyword count zero).
+- `400` — `validation_error`, invalid JSON (`bad_request`), **`KEYWORD_CONTEXT_REQUIRED`** when Context Gateway finds zero staged keywords in `workspace_keywords`, **`missing_keyword_context`** when orchestrator preflight finds zero tracker signals.
 - `401` — `unauthorized` when session missing.
 - `402` — `insufficient_credits` when the workspace balance is below **`listing_generation`** cost (from pre-read and/or `consume_workspace_ai_credits`).
 - `403` — `forbidden` when `workspaceId` is not accessible.
-- `409` — **`vault_queue_hash_mismatch`** when client `queueHash` does not match server vault; refresh Keyword Tracker and retry. **`workspace_handshake_failed`** when body/header workspace ids disagree or membership is stale (`refreshWorkspace: true`).
-- `422` — `invalid_model_output` when Gemini JSON fails schema validation after server-side length clamping (rare); client may retry with stricter instructions.
-- `429` — `rate_limited` (per **user** per minute; see `RATE_LIMIT_MAX`).
+- `409` — **`vault_queue_hash_mismatch`** when client `queueHash` does not match server vault; refresh Keyword Tracker and retry. **`workspace_handshake_failed`** when body/header workspace ids disagree or membership is stale (`refreshWorkspace: true`). **`context_package_unavailable`** when optimized pipeline is on and Redis Context Package is missing at finalize. **`modular_phase_order_conflict`** when the **worker** execute path detects missing persisted phases after a write (internal consistency). **`modular_pipeline_required`** when individual modular steps are sent without `generationStep: pipeline` or `isRegenerate: true`. Downstream steps blocked while the worker is still running return **`202 WAITING_FOR_PHASES`** on the producer — not `409`.
+- `422` — `invalid_model_output` when Gemini JSON fails schema validation after server-side length clamping (rare); client may retry with stricter instructions. **`context_serialization_failed`** when optimizer context exceeds safe serialization limits.
+- `429` — `rate_limited` (per **user** per minute; see `RATE_LIMIT_MAX`). **`generation_in_progress`** when the same `(workspaceId, queueHash)` already has an in-flight generation (Redis lock, 300s TTL). **`duplicate_request`** when the workspace idempotency lock (4s) is held.
 - `500` — `generation_error` (e.g. model or parse failure).
-- `503` — `config` when Supabase or Gemini is not configured.
+- `202` — **`accepted`** async job enqueued (`jobId`, `status: pending`). **`WAITING_FOR_PHASES`** when prerequisite phases are not persisted yet — producer read check only; body `{ status: "pending", message: "Pipeline phases are still processing", code: "WAITING_FOR_PHASES", jobId?, missingPhases? }` (not a 500). Worker uses `executionMode: "execute"`; producer uses `executionMode: "read"` on the orchestrator before enqueue.
+- `503` — `config` when Supabase or Gemini is not configured; **`queue_publish_failed`** when QStash publish fails.
+
+### POST /api/listings/worker
+
+**Auth:** QStash signature (`upstash-signature`) or `X-Internal-Worker-Secret` (local dev).
+
+**Body:** `{ "jobId": "uuid" }`
+
+Runs `runListingGenerationWorkerJob` — loads `generation_payload`, sets `processing`, executes `runListingGenerationOrchestrator` (serialized `title` → `short` → `long` for `pipeline`; `full` / `finalize` as single phases), debits credits post-success, stores `generation_result`, releases Redis lock on completion or failure.
+
+**200:** `{ ok: true, jobId }` — **500** `{ ok: false, error: { code: "worker_failed", message } }` (job row already marked `failed`).
+
+### GET /api/listings/status
+
+**Auth:** Signed-in workspace member.
+
+**Query:** `jobId` (uuid, required)
+
+**200:**
+
+```json
+{
+  "ok": true,
+  "jobId": "uuid",
+  "workspaceId": "uuid",
+  "queueHash": "…",
+  "status": "processing",
+  "currentPhase": "short",
+  "phases": { "title": true, "short": false, "long": false, "full": false },
+  "error": null,
+  "result": null,
+  "draftUpdatedAt": "2026-06-22T12:00:00.000Z"
+}
+```
+
+When `status` is `completed`, `result` contains the same shape the synchronous route returned (`generationStep`, `modularData` / `data`, `meta`).
+
+### GET /api/listings/draft
+
+Rehydrate a modular listing draft from **`workspace_listing_drafts`** for the active optimization queue hash (EN/AR vault branches).
+
+**Query:** `workspaceId` (uuid, required), `queueHash` (64-char hex, required), `appId` (uuid, optional — scopes row lookup), `vaultLocale` (`en` | `ar`, optional — EN/AR vault branch)
+
+**200 response**
+
+```json
+{
+  "ok": true,
+  "draft": {
+    "id": "uuid-or-null",
+    "workspaceId": "uuid",
+    "appId": "uuid-or-null",
+    "vaultLocale": "en",
+    "queueHash": "…",
+    "modularState": { "title": {}, "shortDescription": {}, "longDescription": {} },
+    "editedTitle": "…",
+    "editedShort": "…",
+    "editedLong": "…",
+    "modularDraftReady": true,
+    "updatedAt": "2026-06-21T12:00:00.000Z",
+    "isEmpty": false,
+    "persistedPhases": { "title": true, "short": true, "long": false }
+  }
+}
+```
+
+When no row exists, `draft.isEmpty` is `true`, `id` and `updatedAt` are `null`, and `modularDraftReady` is `false` — the client always receives a defined object (never `null`). Server logs `[Persistence Audit] Draft rehydrated from DB for queueHash:` when a row is found. Client helper: `fetchDraftState(workspaceId, queueHash, { appId?, vaultLocale? })` in `lib/client/fetch-listing-draft-client.ts`.
+
+**Upsert-on-generate:** each successful modular `POST /api/listings/generate` step upserts `workspace_listing_drafts` on `(workspace_id, queue_hash)`, patching phase columns (`title`, `short_description`, `long_description`) and merging `modular_listing`. Writes refresh `updated_at` via DB trigger.
 
 ### POST /api/listings/optimizer-autofill
 
@@ -508,6 +599,52 @@ Per-country failures (timeout, non-2xx, JSON parse) are surfaced as `error` on t
 **Auth:** Site admin.
 
 **Body:** `{ "status": "active" | "flagged" | "suspended" }` — updates **`profiles.account_status`** (service role). **Suspended** users receive **403** on API routes and are redirected from `/app` (see `middleware.ts` + `lib/auth/profile-access.ts`).
+
+### GET /api/billing/usage-breakdown
+
+**Auth:** Signed-in workspace member.
+
+**Query:** `workspaceId` (uuid, required)
+
+**200:**
+
+```json
+{
+  "ok": true,
+  "workspaceId": "uuid",
+  "breakdown": [
+    { "phase": "title", "totalTokens": 1240, "totalCredits": 0 },
+    { "phase": "short", "totalTokens": 3180, "totalCredits": 0 },
+    { "phase": "long", "totalTokens": 8420, "totalCredits": 0 },
+    { "phase": "full", "totalTokens": 15200, "totalCredits": 5 }
+  ]
+}
+```
+
+Aggregates rows from **`listing_generation_costs`** (written after each modular Gemini phase). Phases with no rows are omitted. Token threshold warnings log at **200,000** tokens/phase (`listing_phase_token_threshold_exceeded`) without aborting generation.
+
+### GET /api/workspaces/:workspaceId/keywords/ranking-impact
+
+**Auth:** Signed-in workspace member.
+
+**200:**
+
+```json
+{
+  "ok": true,
+  "workspaceId": "uuid",
+  "averageImprovementPercent": 12.5,
+  "keywordCount": 4
+}
+```
+
+Average relative rank improvement (%) across tracked keywords with `recent_rank_gain` within the last 7 days (same window as the keyword tracker badge). Powers the **Ranking impact** metric on Billing & Credit Usage.
+
+### PATCH /api/workspaces/:workspaceId (monthly credit cap)
+
+**Body (optional field):** `{ "monthly_credit_cap": 200 }` or `{ "monthly_credit_cap": null }` to clear.
+
+Persists to **`workspaces.monthly_credit_cap`**. Evaluates the **80%** budget alert immediately after save. Credit debits also re-evaluate via `maybeCreateCreditBudgetAlert` (alert type `credit_budget_warning`, deduped per billing month).
 
 ## Response Rules
 - Use consistent JSON structure.

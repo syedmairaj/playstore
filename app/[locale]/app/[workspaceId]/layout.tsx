@@ -58,6 +58,13 @@ export default async function WorkspaceLayout({
     { href: `${appBase}/competitors`, label: t("competitorSpy"), show: flags.competitor_spy },
     { href: `${appBase}/reviews`, label: t("reviews"), show: flags.review_insights },
     { href: `${appBase}/market`, label: t("market"), show: flags.market_intelligence },
+    {
+      href: `${appBase}/performance-attribution`,
+      label: t("performance"),
+      // Gated with listing_optimizer — attribution is only meaningful once
+      // listing versions exist (generated via the optimizer pipeline).
+      show: flags.listing_optimizer,
+    },
     { href: `${appBase}/alerts`, label: t("alerts"), show: true },
     { href: `${appBase}/settings`, label: t("settings"), show: true },
   ];

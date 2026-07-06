@@ -25,7 +25,7 @@ export default async function WorkspaceSettingsPage({
   ] = await Promise.all([
     supabase
       .from("workspaces")
-      .select("id,name,plan,onboarding_state,ai_credits_remaining,ai_credits_monthly_allocation")
+      .select("id,name,plan,onboarding_state,ai_credits_remaining,ai_credits_monthly_allocation,monthly_credit_cap")
       .eq("id", workspaceId)
       .single(),
     supabase
@@ -90,6 +90,10 @@ export default async function WorkspaceSettingsPage({
       ? workspace.ai_credits_monthly_allocation
       : 0;
   const creditsAllocation = dbAllocation > 0 ? dbAllocation : planAiCredits(plan);
+  const monthlyCreditCap =
+    typeof workspace?.monthly_credit_cap === "number" && workspace.monthly_credit_cap > 0
+      ? workspace.monthly_credit_cap
+      : null;
 
   const ledgerEntries: CreditsLedgerEntry[] = (ledgerRows ?? []).map((row) => ({
     id: row.id as string,
@@ -135,6 +139,7 @@ export default async function WorkspaceSettingsPage({
       keywordCount={keywordCount ?? 0}
       creditsRemaining={creditsRemaining}
       creditsAllocation={creditsAllocation}
+      monthlyCreditCap={monthlyCreditCap}
       ledgerEntries={ledgerEntries}
     />
   );

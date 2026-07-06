@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, ChevronDown, Copy, Hash, Info, Layers, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Hash, Info, Layers, Loader2, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
@@ -27,8 +27,12 @@ import {
   charCountToneClass,
   listingCountTone,
 } from "@/components/listing/optimizer/listing-field-limits";
-import { OptimizerAsoScoreCard } from "@/components/listing/optimizer/optimizer-aso-score-card";
+import {
+  extractVisibilityRationale,
+  installCtaSuggestionsOnly,
+} from "@/lib/listing/cta-suggestions-utils";
 import { OptimizerListingSkeleton } from "@/components/listing/optimizer/optimizer-listing-skeleton";
+import { OptimizerAsoScoreCard } from "@/components/listing/optimizer/optimizer-aso-score-card";
 import { OptimizerResultList } from "@/components/listing/optimizer/optimizer-result-list";
 import { KeywordStrategyPanel } from "@/components/listing/optimizer/keyword-strategy-panel";
 import {
@@ -146,9 +150,14 @@ type Props = {
   onModularFinalize?: () => void;
   modularFinalizeBusy?: boolean;
   modularDraftReady?: boolean;
+  synthesizingSignals?: boolean;
+  modularFinalizeReady?: boolean;
   isPublicationReady?: boolean;
   copyListingBlocked?: boolean;
   onModularDraftCopyBlocked?: () => void;
+  /** Runs full AI finalize to unlock export when preview copy is gated. */
+  onUnlockExport?: () => void;
+  unlockExportCreditCost?: number;
   modularFinalizeCreditCost?: number;
   trialRegenerationsUsed?: number;
   longUiMode?: ModularLongUiMode;
@@ -159,6 +168,16 @@ type Props = {
   modularSeedKeywords?: string[];
   listingHealth?: ListingGenerationWarningsPayload | null;
   lockedKeywords?: string[];
+  /** Non-null when a 423 intel-module block is active. */
+  modularDiscoveryBlocker?: import("@/lib/client/pipeline-preflight").PipelineDiscoveryBlocker | null;
+  onDismissModularDiscoveryBlocker?: () => void;
+  /** Auto-chain phase label during WAITING_FOR_PHASES recovery. */
+  modularPhaseChainStep?: "title" | "short" | "long" | "retrying" | null;
+  /**
+   * While true the ModularListingPanel is replaced by a skeleton to prevent
+   * an empty-state flash before the first data reconciliation fires.
+   */
+  modularIsHydrating?: boolean;
 };
 
 export function OptimizerResultsPanel({
@@ -168,11 +187,11 @@ export function OptimizerResultsPanel({
   lastGeneratedAtIso,
   lastGeneratedLabel,
   isRtl,
-  editedTitle,
+  editedTitle = "",
   setEditedTitle,
-  editedShort,
+  editedShort = "",
   setEditedShort,
-  editedLong,
+  editedLong = "",
   setEditedLong,
   clampedListing,
   onCopyAllBlocks,
@@ -216,9 +235,13 @@ export function OptimizerResultsPanel({
   onModularFinalize,
   modularFinalizeBusy = false,
   modularDraftReady = false,
+  synthesizingSignals = false,
+  modularFinalizeReady = false,
   isPublicationReady = false,
   copyListingBlocked = false,
   onModularDraftCopyBlocked,
+  onUnlockExport,
+  unlockExportCreditCost = 5,
   modularFinalizeCreditCost = 5,
   trialRegenerationsUsed = 0,
   longUiMode = "choice",
@@ -229,6 +252,10 @@ export function OptimizerResultsPanel({
   modularSeedKeywords = [],
   listingHealth = null,
   lockedKeywords = [],
+  modularDiscoveryBlocker = null,
+  onDismissModularDiscoveryBlocker,
+  modularPhaseChainStep = null,
+  modularIsHydrating = false,
 }: Props) {
   const t = useTranslations("optimizer");
   const hasOrchestration = Boolean(result.orchestration);
@@ -296,6 +323,7 @@ export function OptimizerResultsPanel({
       </div>
 
       {typeof result.asoScore === "number" &&
+      isPublicationReady &&
       result.scoreBreakdown &&
       result.improvementTips &&
       result.improvementTips.length > 0 ? (
@@ -317,13 +345,52 @@ export function OptimizerResultsPanel({
 
         {showModularPanel && modularLoading && onRegenerateModularBlock ? (
         <>
-          {modularDraftReady && !listingGenerationId && !draftRestoredFromStorage ? (
+          {/* Hydration skeleton — shown for one render cycle before real data lands */}
+          {modularIsHydrating ? (
+            <OptimizerListingSkeleton isRtl={isRtl} />
+          ) : (
+          <>
+          {synthesizingSignals ? (
+            <p
+              role="status"
+              className="flex items-center gap-2 rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100/90"
+            >
+              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+              {t("form.processingWithEstimate")}
+            </p>
+          ) : null}
+          {modularDraftReady && !isPublicationReady && !draftRestoredFromStorage ? (
             <p
               role="status"
               className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90"
             >
               {t("form.modularDraftInProgress")}
             </p>
+          ) : null}
+          {!isPublicationReady && result ? (
+            <div
+              role="status"
+              className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-4 text-sm text-sky-100/95"
+            >
+              <p className="font-semibold text-sky-50">
+                {t("results.modular.draftMask.previewBannerTitle")}
+              </p>
+              <p className="mt-1.5 text-xs leading-relaxed text-sky-100/80">
+                {t("results.modular.draftMask.previewBannerBody")}
+              </p>
+              {onUnlockExport ? (
+                <button
+                  type="button"
+                  disabled={resultsBusy || modularFinalizeBusy}
+                  onClick={onUnlockExport}
+                  className="mt-3 inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  {t("results.modular.draftMask.unlockFullAiCta", {
+                    credits: unlockExportCreditCost,
+                  })}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         <ModularListingPanel
           orchestration={result.orchestration}
@@ -333,7 +400,7 @@ export function OptimizerResultsPanel({
           shortDescription={editedShort}
           longDescription={editedLong}
           isRtl={isRtl}
-          isDraft={modularDraftReady && !listingGenerationId}
+          isDraft={!isPublicationReady}
           isPublicationReady={isPublicationReady}
           finalizeCreditCost={modularFinalizeCreditCost}
           trialRegenerationsUsed={trialRegenerationsUsed}
@@ -353,8 +420,15 @@ export function OptimizerResultsPanel({
           onListingHealthFix={onListingHealthFix}
           onFinalize={onModularFinalize}
           finalizeBusy={modularFinalizeBusy}
+          finalizeReady={modularFinalizeReady}
           onDraftCopyBlocked={onModularDraftCopyBlocked}
+          workspaceId={workspaceId}
+          discoveryBlocker={modularDiscoveryBlocker}
+          onDismissDiscoveryBlocker={onDismissModularDiscoveryBlocker}
+          phaseChainStep={modularPhaseChainStep}
         />
+          </>
+          )}
         </>
       ) : null}
 
@@ -806,10 +880,7 @@ export function OptimizerResultsPanel({
       <div className="grid min-w-0 gap-7 sm:gap-8">
         {/* ── Visibility Rationale — extracted from ctaSuggestions[0] if present ── */}
         {(() => {
-          const firstCta = result.ctaSuggestions?.[0] ?? "";
-          const rationale = firstCta.startsWith("WHY THIS RANKS:")
-            ? firstCta.replace(/^WHY THIS RANKS:\s*/i, "").trim()
-            : null;
+          const rationale = extractVisibilityRationale(result.ctaSuggestions);
           if (!rationale) return null;
           return (
             <div className="rounded-2xl border border-emerald-500/20 bg-[#07120e]/80 px-5 py-4 ring-1 ring-emerald-500/10 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
@@ -830,6 +901,11 @@ export function OptimizerResultsPanel({
             isRtl={isRtl}
             busy={resultsBusy}
           />
+          <p className={cn("mt-2 text-[11px] leading-relaxed text-zinc-500", isRtl && "text-end")}>
+            {isRtl
+              ? "الأسلوب (Professional / Bold) يغيّر نبرة النص فقط. استراتيجية الكلمات تأتي من إشارات Keyword Tracker والسوق النشطة — وليس من الأسلوب."
+              : "Tone (Professional / Bold) changes voice only. Keyword strategy comes from your active Keyword Tracker and market signals — not from tone."}
+          </p>
         </div>
         {workspaceId &&
         selectedAppId.trim() &&
@@ -878,9 +954,7 @@ export function OptimizerResultsPanel({
         <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:180ms] motion-safe:[animation-fill-mode:both]">
           <OptimizerResultList
             title={t("results.ctaList")}
-            items={(result.ctaSuggestions ?? []).filter(
-              (cta, idx) => !(idx === 0 && /^WHY THIS RANKS:/i.test(cta)),
-            )}
+            items={installCtaSuggestionsOnly(result.ctaSuggestions)}
             copyLabel={t("results.copyAll")}
             onCopyAll={onCopyCtasList}
           />
@@ -1014,6 +1088,17 @@ export function OptimizerResultsPanel({
           >
             {t("results.copyAllPrimary")}
           </button>
+          ) : onUnlockExport ? (
+          <button
+            type="button"
+            disabled={resultsBusy}
+            className="inline-flex min-h-12 flex-1 items-center justify-center rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-[0_8px_28px_-8px_rgba(34,197,94,0.45)] transition hover:bg-emerald-500 disabled:opacity-45 sm:min-w-[12rem] sm:flex-none"
+            onClick={onUnlockExport}
+          >
+            {t("results.modular.draftMask.unlockFullAiCta", {
+              credits: unlockExportCreditCost,
+            })}
+          </button>
           ) : null}
           {canSaveToTracker ? (
             <button
@@ -1029,11 +1114,17 @@ export function OptimizerResultsPanel({
           ) : null}
           <button
             type="button"
-            disabled={resultsBusy}
+            disabled={resultsBusy || copyListingBlocked}
             className="inline-flex min-h-12 flex-1 items-center justify-center rounded-xl border border-zinc-600/80 bg-zinc-900/90 px-4 py-3 text-sm font-semibold text-white/92 transition hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-45 sm:flex-none"
-            onClick={() => onExportOpen()}
+            onClick={() =>
+              copyListingBlocked
+                ? onModularDraftCopyBlocked?.()
+                : onExportOpen()
+            }
           >
-            {t("results.floatingExport")}
+            {copyListingBlocked
+              ? t("results.modular.draftMask.exportLockedLabel")
+              : t("results.floatingExport")}
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
