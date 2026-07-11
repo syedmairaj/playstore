@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { AlertTriangle, Check, ChevronDown, Copy, Hash, Info, Layers, Loader2, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
@@ -35,6 +36,8 @@ import { OptimizerListingSkeleton } from "@/components/listing/optimizer/optimiz
 import { OptimizerAsoScoreCard } from "@/components/listing/optimizer/optimizer-aso-score-card";
 import { OptimizerResultList } from "@/components/listing/optimizer/optimizer-result-list";
 import { KeywordStrategyPanel } from "@/components/listing/optimizer/keyword-strategy-panel";
+import { ToneAbDeployPlanCard } from "@/components/listing/optimizer/tone-ab-deploy-plan-card";
+import { buildToneAbDeployPlan } from "@/lib/listing/tone-ab-deploy-plan";
 import {
   MetadataVariantToggle,
   StrategicRationaleCard,
@@ -120,6 +123,7 @@ type Props = {
   workspaceId: string | undefined;
   selectedAppId: string;
   listingGenerationId: string | undefined;
+  listingVersionId?: string;
   trackKwBusy: boolean;
   onTrackKeywords: () => void;
   logoGenTriggerDisabled: boolean;
@@ -131,6 +135,8 @@ type Props = {
   /** Snapshot of queuedImprovements at generation time — drives Optimization Factors pills. */
   generationQueueSnapshot?: ListingImprovementItem[];
   strategyMode?: import("@/lib/optimization-queue/resolve-strategy-mode").ActiveContextStrategyMode;
+  /** User-selected tone — drives tone-aware A/B deploy plan arms. */
+  toneStyle?: import("@/lib/types/listing").ToneStyle;
   metadataVariant?: "aggressive" | "growth";
   onMetadataVariantChange?: (variant: "aggressive" | "growth") => void;
   onRegenerateOrchestrationModule?: (
@@ -209,6 +215,7 @@ export function OptimizerResultsPanel({
   workspaceId,
   selectedAppId,
   listingGenerationId,
+  listingVersionId,
   trackKwBusy,
   onTrackKeywords,
   logoGenTriggerDisabled,
@@ -219,6 +226,7 @@ export function OptimizerResultsPanel({
   canSaveToTracker = false,
   generationQueueSnapshot = [],
   strategyMode = "defensive",
+  toneStyle = "professional",
   metadataVariant = "growth",
   onMetadataVariantChange,
   onRegenerateOrchestrationModule,
@@ -258,6 +266,25 @@ export function OptimizerResultsPanel({
   modularIsHydrating = false,
 }: Props) {
   const t = useTranslations("optimizer");
+  const toneAbPlan = useMemo(
+    () =>
+      buildToneAbDeployPlan({
+        keywordSuggestions: result.keywordSuggestions ?? [],
+        keywordIntelligence: result.keywordIntelligence,
+        hasListingVariants: Boolean(
+          result.listingVariants?.aggressive && result.listingVariants?.growth,
+        ),
+        selectedToneStyle: result.toneExperiment?.selectedTone ?? toneStyle,
+        alternativeToneStyle: result.toneExperiment?.alternativeTone,
+      }),
+    [
+      result.keywordSuggestions,
+      result.keywordIntelligence,
+      result.listingVariants,
+      result.toneExperiment,
+      toneStyle,
+    ],
+  );
   const hasOrchestration = Boolean(result.orchestration);
   const showModularPanel = hasOrchestration || modularDraftReady;
 
@@ -448,7 +475,25 @@ export function OptimizerResultsPanel({
           hasAggressive={Boolean(result.listingVariants.aggressive)}
           hasGrowth={Boolean(result.listingVariants.growth)}
           isRtl={isRtl}
+          toneAbMode={Boolean(toneAbPlan)}
+          armALabel={toneAbPlan?.arms[0].label}
+          armBLabel={toneAbPlan?.arms[1].label}
         />
+      ) : null}
+
+      {toneAbPlan && onMetadataVariantChange && !resultsBusy ? (
+        <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300">
+          <ToneAbDeployPlanCard
+            plan={toneAbPlan}
+            workspaceId={workspaceId}
+            selectedAppId={selectedAppId}
+            listingGenerationId={listingGenerationId}
+            listingVersionId={listingVersionId}
+            activeVariant={metadataVariant}
+            onSelectVariant={onMetadataVariantChange}
+            isRtl={isRtl}
+          />
+        </div>
       ) : null}
 
       {/* ── Strategy Summary card (v11) ────────────────────────────────────── */}
@@ -896,17 +941,22 @@ export function OptimizerResultsPanel({
         <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 motion-safe:[animation-delay:60ms] motion-safe:[animation-fill-mode:both]">
           <KeywordStrategyPanel
             keywords={result.keywordSuggestions ?? []}
+            keywordIntelligence={result.keywordIntelligence}
             copyLabel={t("results.copyAll")}
             onCopyAll={onCopyKeywordsList}
             isRtl={isRtl}
             busy={resultsBusy}
           />
           <p className={cn("mt-2 text-[11px] leading-relaxed text-zinc-500", isRtl && "text-end")}>
-            {isRtl
-              ? "الأسلوب (Professional / Bold) يغيّر نبرة النص فقط. استراتيجية الكلمات تأتي من إشارات Keyword Tracker والسوق النشطة — وليس من الأسلوب."
-              : "Tone (Professional / Bold) changes voice only. Keyword strategy comes from your active Keyword Tracker and market signals — not from tone."}
+            {toneAbPlan
+              ? t("results.toneAbExperiment.toneArmsHint", {
+                  armA: toneAbPlan.arms[0].label.replace(" · 50%", ""),
+                  armB: toneAbPlan.arms[1].label.replace(" · 50%", ""),
+                })
+              : t("results.toneAbExperiment.toneOnlyHint")}
           </p>
         </div>
+
         {workspaceId &&
         selectedAppId.trim() &&
         listingGenerationId &&

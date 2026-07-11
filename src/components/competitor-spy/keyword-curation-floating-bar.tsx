@@ -34,6 +34,7 @@ import {
   buildOptimizerActionUrl,
 } from "@/lib/client/competitor-spy-staging-flow";
 import { useOptimizationQueue } from "@/hooks/useOptimizationQueue";
+import { OPTIMIZER_CONTEXT_KEY } from "@/hooks/useOptimizerSync";
 import { useOptimizationQueueOnboarding } from "@/hooks/useOptimizationQueueOnboarding";
 import { OptimizationQueueOnboardingPopover } from "@/components/optimization-queue/optimization-queue-onboarding-popover";
 import { QueueStatusBadge } from "@/components/competitor-spy/queue-status-badge";
@@ -229,7 +230,7 @@ export function KeywordCurationFloatingBar({
       });
 
       queryClient.invalidateQueries({
-        queryKey: ["optimizer-context", workspaceId, vaultLocale],
+        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale, appId),
       });
       queryClient.invalidateQueries({
         queryKey: ["optimization-queue", workspaceId, vaultLocale, appId ?? ""],

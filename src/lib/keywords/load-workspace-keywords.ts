@@ -84,6 +84,8 @@ export type KeywordWithRanks = {
 type LoadOpts = {
   /** When set, only keywords for this app are returned. */
   appId?: string | null;
+  /** With `appId`, also include workspace-wide keywords (`app_id` IS NULL). */
+  includeWorkspaceWideKeywords?: boolean;
   /** Insert deterministic demo snapshots when a keyword has no rows (tests only; default false). */
   ensureDemoSnapshots?: boolean;
 };
@@ -389,7 +391,11 @@ export async function loadWorkspaceKeywords(
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false });
     if (options?.appId) {
-      q = q.eq("app_id", options.appId);
+      if (options.includeWorkspaceWideKeywords) {
+        q = q.or(`app_id.eq.${options.appId},app_id.is.null`);
+      } else {
+        q = q.eq("app_id", options.appId);
+      }
     }
     return q;
   }

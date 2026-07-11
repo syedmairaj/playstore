@@ -55,9 +55,15 @@ export function useActiveContextVaultEvents({
       void queryClient.invalidateQueries({
         queryKey: optimizationQueueQueryPrefix(workspaceId, locale),
       });
-      void queryClient.invalidateQueries({
-        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, locale),
-      });
+      if (detail.appId) {
+        void queryClient.invalidateQueries({
+          queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, locale, detail.appId),
+        });
+      } else {
+        void queryClient.invalidateQueries({
+          queryKey: ["optimizer-context", workspaceId, locale],
+        });
+      }
       onFallbackRefresh?.();
     };
 

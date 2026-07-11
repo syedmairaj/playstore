@@ -1,5 +1,9 @@
-import type { ActiveContextStrategyMode } from "@/lib/optimization-queue/resolve-strategy-mode";
-import type { PrioritizedStagedIssue } from "@/lib/optimization-queue/resolve-strategy-mode";
+import type { ToneStyle } from "@/lib/types/listing";
+import { buildListingVariantsTonePromptBlock } from "@/lib/listing/tone-ab-deploy-plan";
+import type {
+  ActiveContextStrategyMode,
+  PrioritizedStagedIssue,
+} from "@/lib/optimization-queue/resolve-strategy-mode";
 import type { TrackedKeywordSignalInput } from "@/lib/types/listing";
 
 export type StrategyModePromptContext = {
@@ -7,6 +11,8 @@ export type StrategyModePromptContext = {
   topStagedIssues: PrioritizedStagedIssue[];
   trackedKeywordSignals?: TrackedKeywordSignalInput[];
   targetArabic?: boolean;
+  /** User-selected tone — keys listingVariants A/B arms when present. */
+  selectedTone?: ToneStyle;
 };
 
 function modeLabels(locale: "en" | "ar", mode: ActiveContextStrategyMode) {
@@ -99,9 +105,11 @@ export function buildStrategyModePromptBlock(ctx: StrategyModePromptContext): st
       ? "3. roiPrediction — كيف يستهدف هذا المحاذاة نسب التأثير لتحسين التحويل والظهور."
       : "3. roiPrediction — how this alignment targets Impact % to improve conversion and store visibility.",
     "",
-    locale === "ar"
-      ? "أنشئ نسختين في listingVariants: aggressive (استحواذ سريع) و growth (تحويل مستدام). اجعل الحقول الجذرية title/shortDescription/fullDescription/whatsNew = نسخة growth."
-      : "Generate TWO versions in listingVariants: aggressive (high-velocity acquisition) and growth (sustainable conversion). Set root title/shortDescription/fullDescription/whatsNew = growth variant values.",
+    ctx.selectedTone
+      ? buildListingVariantsTonePromptBlock(ctx.selectedTone)
+      : locale === "ar"
+        ? "أنشئ نسختين في listingVariants: aggressive (استحواذ سريع) و growth (تحويل مستدام). اجعل الحقول الجذرية title/shortDescription/fullDescription/whatsNew = نسخة aggressive."
+        : "Generate TWO versions in listingVariants: aggressive (Variant A) and growth (Variant B). Set root title/shortDescription/fullDescription/whatsNew = aggressive variant values.",
   ]
     .filter(Boolean)
     .join("\n");

@@ -27,12 +27,14 @@ import {
   upsertVersionMetrics,
 } from "@/lib/db/listing-version-metrics";
 import { buildAttributionRows } from "@/lib/performance/signal-efficacy";
+import { getPlayMetricsIngestReadiness } from "@/lib/performance/play-metrics-ingest-readiness";
 import { syncVersionMetrics } from "@/lib/performance/play-store-metrics-service";
 import type {
   PerformanceAttributionResponse,
   PlayStoreDailyMetrics,
 } from "@/lib/performance/performance-attribution.types";
-import type { ListingVersion } from "@/lib/listing/listing-version.types";
+import { resolveToneAppliedForVersion } from "@/lib/listing/resolve-tone-applied";
+import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { ScreenshotCaption, LiveListingSnapshot } from "@/lib/listing/listing-version.types";
 
 export const dynamic = "force-dynamic";
@@ -91,6 +93,7 @@ export async function GET(request: Request, context: Ctx) {
       rows: [],
       totalVersions: 0,
       versionsWithMetrics: 0,
+      ingestReadiness: getPlayMetricsIngestReadiness(),
     };
     return NextResponse.json(response, {
       headers: { "Cache-Control": "no-store, no-cache" },
@@ -172,6 +175,42 @@ export async function GET(request: Request, context: Ctx) {
   // ── Build attribution rows (ascending order for delta computation) ───────
   const rows = buildAttributionRows(versions, snapshotsMap, performanceMap);
 
+  const generationIds = versions
+    .map((v) => v.sourceGenerationId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+  const toneByGenerationId = new Map<string, string>();
+  const outputByGenerationId = new Map<string, ListingGenerationOutput>();
+  if (generationIds.length > 0) {
+    const { data: generationRows } = await admin
+      .from("listing_generations")
+      .select("id, tone_style, output_json")
+      .in("id", generationIds);
+    for (const row of generationRows ?? []) {
+      const r = row as {
+        id: string;
+        tone_style: string | null;
+        output_json: unknown;
+      };
+      if (r.tone_style) toneByGenerationId.set(r.id, r.tone_style);
+      const parsed =
+        r.output_json && typeof r.output_json === "object"
+          ? (r.output_json as ListingGenerationOutput)
+          : null;
+      if (parsed) outputByGenerationId.set(r.id, parsed);
+    }
+  }
+
+  for (const row of rows) {
+    const genId = row.version.sourceGenerationId;
+    const fallbackTone = genId ? toneByGenerationId.get(genId) ?? null : null;
+    const output = genId ? outputByGenerationId.get(genId) : undefined;
+    const toneApplied = resolveToneAppliedForVersion(row.version, output, fallbackTone);
+    row.toneApplied = toneApplied;
+    row.toneStyle = toneApplied;
+    row.experimentId = output?.toneExperiment?.experimentId ?? null;
+  }
+
   // Reverse back to newest-first for the API consumer.
   rows.reverse();
 
@@ -182,6 +221,7 @@ export async function GET(request: Request, context: Ctx) {
     rows,
     totalVersions: versions.length,
     versionsWithMetrics,
+    ingestReadiness: getPlayMetricsIngestReadiness(),
   };
 
   return NextResponse.json(response, {

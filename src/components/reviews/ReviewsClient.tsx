@@ -6,6 +6,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
 import { Link } from "@/i18n/navigation";
+import { useWorkspaceApp } from "@/contexts/WorkspaceAppContext";
+import { readPersistedWorkspaceAppId } from "@/lib/client/workspace-app-sync";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -886,7 +888,21 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   const locale = useLocale();
   const isRtl = locale === "ar";
   const router = useRouter();
-  const primaryAppId = apps[0]?.id;
+  const { workspaceAppId } = useWorkspaceApp();
+  const primaryAppId = useMemo(() => {
+    if (workspaceAppId && apps.some((a) => a.id === workspaceAppId)) {
+      return workspaceAppId;
+    }
+    const persisted = readPersistedWorkspaceAppId(workspaceId);
+    if (persisted && apps.some((a) => a.id === persisted)) {
+      return persisted;
+    }
+    return apps[0]?.id;
+  }, [workspaceAppId, apps, workspaceId]);
+  const primaryApp = useMemo(
+    () => apps.find((a) => a.id === primaryAppId) ?? apps[0],
+    [apps, primaryAppId],
+  );
 
   const {
     activeTitles: activeContextTitles,
@@ -934,7 +950,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   // appended as &country=<cc> on every sync URL so the scraper returns reviews
   // native to the workspace's configured market rather than always defaulting
   // to the US store.
-  const countryCode = useMemo(() => primaryCountryCode(apps[0]), [apps]);
+  const countryCode = useMemo(() => primaryCountryCode(primaryApp), [primaryApp]);
 
   // ── Competitors list ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -981,7 +997,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   // AbortController handles cleanup so the fetch is cancelled on unmount without
   // blocking the finally block from writing langsBySource on the successful run.
   useEffect(() => {
-    const app = apps[0];
+    const app = primaryApp;
     const packageName =
       typeof app?.package_name === "string" && app.package_name.trim()
         ? app.package_name.trim()
@@ -1148,7 +1164,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     try {
       const result = await restoreStagedReviewClient(workspaceId, itemId, {
         locale: locale === "ar" ? "ar" : "en",
-        appId: apps[0]?.id,
+        appId: primaryAppId,
       });
       if (result.ok) {
         invalidateActiveContext();
@@ -1227,7 +1243,6 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
     return { avgRating, totalReviews: total, positivePct, trendPoints };
   }, [reviewsBySource, selectedAppFilter, loadingBySource]);
 
-  const primaryApp = apps[0];
   const primaryAppName = primaryApp?.name ?? undefined;
   const primaryPackageName = primaryApp?.package_name ?? null;
 
@@ -1320,7 +1335,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
   // package_name="" and returning a spurious cache-miss.
   const activePackageName: string =
     selectedAppFilter === "my-app"
-      ? (apps[0]?.package_name?.trim() ?? "")
+      ? (primaryApp?.package_name?.trim() ?? "")
       : selectedAppFilter;
 
   // Development-time isolation assertion: if the key is empty on the "my-app"
@@ -1834,7 +1849,7 @@ export function ReviewsClient({ workspaceId, apps, appsLoadError }: ReviewsClien
                           originalImpact != null && originalImpact !== displayImpact;
 
                         // ── Source label for competitor pill ──────────────────
-                        const ownPackage = apps[0]?.package_name?.trim() ?? "";
+                        const ownPackage = primaryApp?.package_name?.trim() ?? "";
                         const isOwnApp = ownPackage && item.packageName?.trim() === ownPackage;
                         const matchedCompetitor = competitorOptions.find(
                           (c) => c.packageId === item.packageName?.trim(),

@@ -1,8 +1,8 @@
 # Staging Vault Integration Summary
 
-**Document Version:** 5.0  
-**Last Updated:** June 22, 2026  
-**Scope:** Growth Hub Staged-State Architecture + Optimization Queue + Modular Listing Pipeline + Async Context Gateway  
+**Document Version:** 7.0  
+**Last Updated:** July 7, 2026  
+**Scope:** Growth Hub Staged-State Architecture + Optimization Queue + Modular Listing Pipeline + Async Context Gateway + B2B Performance Analyst + Attribution  
 **Audience:** Senior developers, architects, future maintainers  
 
 ---
@@ -17,6 +17,8 @@ As of June 16, 2026 (Session 4), the **Listing Optimizer** runs a **Modular List
 
 As of June 22, 2026 (Session 5), listing generation is **async via Upstash QStash** (producer validates + enqueues; worker runs Gemini orchestration). A **Context Gateway** stamps `workspace_keywords.queue_hash` and compiles step-scoped signals before generation. Draft state persists in **`workspace_listing_drafts`** (DB) plus browser `localStorage` recovery. Granular billing telemetry (`listing_generation_costs`) and Settings billing UI (phase breakdown, ranking impact, monthly credit cap) ship alongside.
 
+As of July 2026 (Sessions 6–7), synthesis output shifts to **Performance Analyst** mode: vault/tracker signals drive competitive gap copy, **ROI keyword intelligence** is computed server-side, **tone A/B deploy plans** automate Bold vs Professional experiments from gap-heavy strategies, and **sync Full AI** is hardened against client timeouts and Gemini `MAX_TOKENS` bloat.
+
 **Core Value:** Enables unlimited feature scaling without cross-feature data corruption while maintaining backwards compatibility across all client versions.
 
 **Key facts for new sessions:**
@@ -24,6 +26,10 @@ As of June 22, 2026 (Session 5), listing generation is **async via Upstash QStas
 - **Active Context reads only `features.optimization_queue`** — not raw `competitor_spy` / `keyword_tracker` namespaces
 - **Context Gateway** stamps staged `workspace_keywords` with `queue_hash` before generation — zero staged keywords → `400 KEYWORD_CONTEXT_REQUIRED`
 - **Modular pipeline is async** — `POST /api/listings/generate` returns `202` + `jobId`; worker runs orchestration; client polls `GET /api/listings/status`
+- **Sync full unlock** — can run synchronously on producer (no QStash) for paid unlock; budget **330s client timeout** + hydration recovery (`GET /api/listings/latest`)
+- **Performance Analyst** — Gemini system prompt includes competitive gap + ROI standards; `keywordIntelligence` enriched **after** model parse (not in model JSON)
+- **Tone A/B** — gap-heavy keyword strategy + `listingVariants` → automated Bold 50% / Professional 50% deploy guidance
+- **Attribution loop** — `listing_snapshots` + `listing_versions` + Performance Attribution table; tone from `listing_generations.tone_style`
 - **Phase guard on producer** — `checkModularPhaseOrder()` returns `WAITING_FOR_PHASES` (202) when prerequisites not persisted; worker uses `assertModularPhaseOrder()`
 - **Regenerate billing is post-success** — credits/trial slots consumed only after worker + Zod validation succeed
 - **VaultCore** (`src/lib/staging-vault/vault-core.ts`) is the centralized write gateway with legacy + universal schema detection
@@ -703,6 +709,116 @@ Draft rows are the **job store** for async generation — one row per active que
 
 ---
 
+## Performance Analyst & ROI Intelligence (Sessions 6–7 — July 2026)
+
+Vault and Keyword Tracker signals feed Gemini as **analyst inputs**, not raw copy seeds. The model closes the **conversion gap** against competitors; ROI metrics are **computed server-side** for multi-tenant consistency.
+
+### Signal → Analyst → Output pipeline
+
+```
+optimization_queue (vault) + workspace_keywords (tracker)
+  → buildSynthesisFromOptimizationQueue() + trackedKeywordSignals
+  → buildPerformanceAnalystSystemXml() + listing-optimizer-v16 system prompt
+  → Gemini JSON (core listing + keywordSuggestions + listingVariants + strategicRationale)
+  → enrichKeywordIntelligence()  ← merges tracker volume/difficulty + heuristics
+  → ListingGenerationOutput.keywordIntelligence (optional, persisted in output_json)
+  → KeywordStrategyPanel UI (Vol / Diff / Rel / Quick win)
+```
+
+### Design decisions
+
+| Topic | Rule |
+|-------|------|
+| **Analyst framing** | `buildPerformanceAnalystSystemXml()` in `prompt-builder.ts` — Role, Process (gap → metadata → ROI), RoiIntelligenceStandards |
+| **keywordIntelligence** | **Not** in Gemini `responseSchema` — avoids MAX_TOKENS; `enrich-keyword-intelligence.ts` builds rows from `keywordSuggestions` |
+| **Keyword categories** | Model prefixes: `[competitive]`, `[intent]`, `[gap]` — parsed by `keyword-strategy-parse.ts` |
+| **Quick wins** | Volume ≥1k + difficulty ≤30 → `isQuickWinKeyword()` badge |
+| **strategicRationale** | `strategicIntent`, `exploitationResolutionSummary`, `roiPrediction` — consultant-grade narrative (unchanged) |
+| **listingVariants** | `aggressive` (Bold arm) + `growth` (Professional arm); variant `fullDescription` ≤1500 chars in prompt |
+
+### Tone A/B deploy (vault gap signals → experiment)
+
+When gap keywords dominate the strategy (≥3 gap terms, ≥20% share, or ≥2 gap intel rows) **and** both `listingVariants` exist:
+
+| Arm | Traffic | Variant key | Hypothesis |
+|-----|---------|-------------|------------|
+| Bold | 50% | `listingVariants.aggressive` | Higher CTR from competitor-gap displacement |
+| Professional | 50% | `listingVariants.growth` | Trust control — better retention, lower spam risk |
+
+**UI:** `ToneAbDeployPlanCard` + `MetadataVariantToggle` labels (`Bold · 50%` / `Professional · 50%`).  
+**Monitor:** Performance Attribution — CVR Δ, CTR, tone badge, CPI guidance (UAC spend ÷ installers).
+
+### Key files (Session 6)
+
+```
+src/lib/gemini/prompt-builder.ts
+src/lib/prompts/listing-optimizer.ts
+src/lib/listing/enrich-keyword-intelligence.ts
+src/lib/listing/keyword-strategy-parse.ts
+src/lib/listing/tone-ab-deploy-plan.ts
+src/lib/validation/listing-output.ts
+src/components/listing/optimizer/keyword-strategy-panel.tsx
+src/components/listing/optimizer/tone-ab-deploy-plan-card.tsx
+```
+
+---
+
+## Sync Full Unlock & Timeout Recovery (Session 7 — July 2026)
+
+Paid **Full AI** unlock may execute synchronously on `POST /api/listings/generate` (all phases in one HTTP request). Long Gemini runs (~170s+) previously raced the **180s client abort**.
+
+### Fixes
+
+| Component | Behavior |
+|-----------|----------|
+| `LISTING_GENERATION_TIMEOUT_MS` | **330_000** (5.5 min) — `listing-fast-draft.ts` |
+| `createListingGenerationAbortSignal()` | Aborts fetch; `releaseListingGenerationAbort()` on response headers |
+| `tryRecoverListingAfterClientTimeout()` | On abort → `GET /api/listings/latest` → restore if saved within 4 min + `publicationUnlocked` |
+| Prompt slimming | No model `keywordIntelligence`; compact `listingVariants.fullDescription` |
+
+### MAX_TOKENS mitigation
+
+- **Cause:** Full listing JSON + dual variants + analyst fields exceeded 32,768 output tokens.
+- **Mitigation:** Server-only ROI enrichment; shorter variant descriptions; monitor `finishReason` in dev logs.
+
+### Listing Optimizer ↔ Attribution bridge (unchanged tables, enriched UX)
+
+| Table | Role in attribution |
+|-------|---------------------|
+| `listing_snapshots` | Immutable row per generate — `tone_style`, signals[], `strategy_summary` |
+| `listing_generations.output_json` | Full output including `keywordIntelligence`, `listingVariants` |
+| `listing_versions` | Promoted deployable snapshot — `source_generation_id` links to tone |
+| `listing_version_signal_snapshots` | Five-dimension `GenerationSignalContext` at job time |
+| `listing_version_metrics` / `listing_performance` | Play Store funnel for CVR/CTR deltas |
+
+**API:** `GET /api/workspaces/:id/performance-attribution` now joins `listing_generations.tone_style` for A/B tone comparison.
+
+---
+
+## Market Position & Uplift Opportunities (July 2026)
+
+### Differentiation vs copy-only ASO tools
+
+| Capability | Typical competitor | playstore.xyz |
+|------------|-------------------|---------------|
+| AI output | Generic listing copy | Performance Analyst + competitive gap synthesis |
+| Keywords | Flat suggestions | ROI intelligence (Vol / Diff / Rel / Quick win) |
+| Experiments | User guesses | Tone A/B deploy plan (Bold 50% / Professional 50%) |
+| Proof | None in-product | Attribution + Growth Tracking loop |
+| Workflow | Disconnected modules | Vault queue → single synthesis SSOT |
+
+### Top builds to win market
+
+1. **Real search volume API** — enterprise credibility for ROI panel  
+2. **Auto Play + Google Ads ingest** — CPI without manual spreadsheets  
+3. **Play Listing Experiments API** — deploy from `ToneAbDeployPlanCard` in one click  
+4. **Agency multi-workspace** — portfolio attribution for B2B agencies  
+5. **MENA Arabic parity** — full optimizer i18n for regional moat  
+
+Detail: [`IMPLEMENTATION_STATUS.md` §11](./IMPLEMENTATION_STATUS.md#11-market-uplift--features-to-differentiate-playstorexyz).
+
+---
+
 ## Billing Observability (Session 5)
 
 | Surface | Backend |
@@ -757,11 +873,15 @@ ORDER BY ordinal_position;
 
 ---
 
-## Summary Table (Updated June 22, 2026)
+## Summary Table (Updated July 7, 2026)
 
 | Aspect | Rule | Enforcement |
 |--------|------|-------------|
 | **Optimization Queue SSOT** | Only queued signals feed Active Context + Generate | `flattenQueueToActiveItems()`, `buildSynthesisFromOptimizationQueue()` |
+| **Performance Analyst** | Gap-first synthesis + ROI standards in system XML | `buildPerformanceAnalystSystemXml()`, listing-optimizer-v16 |
+| **keywordIntelligence** | Server enrichment only — not model JSON | `enrichKeywordIntelligence()` post-parse |
+| **Tone A/B deploy** | Gap-heavy strategy → Bold/Professional 50/50 plan | `buildToneAbDeployPlan()`, `ToneAbDeployPlanCard` |
+| **Sync timeout** | 330s client + hydration recovery | `generate-optimized-listing.ts`, `GET /api/listings/latest` |
 | **Context Gateway** | Staged keywords required; stamp before generate | `stampAndCompileListingContext()`, `syncQueueHash()` |
 | **Async generation** | Producer enqueues; worker executes | QStash + `workspace_listing_drafts.generation_status` |
 | **Phase guard (read)** | Missing prerequisites → 202 WAITING_FOR_PHASES | `checkModularPhaseOrder()` on producer |
@@ -774,9 +894,10 @@ ORDER BY ordinal_position;
 | **Index safety** | No btree on `features` JSONB subtree | GIN on full `state_en`/`state_ar` only |
 | **Curation before synthesis** | No auto-dump from discovery | `validateAndQueue()`, no localStorage keyword injection |
 | **Soft Delete** | Never hard-delete vault rows | `deleted_at` / `is_deleted` |
-| **Credits** | Server-side only, RPC atomic | Post-success in worker; `consume_workspace_ai_credits` for sync routes |
+| **Credits** | Server-side only, RPC atomic | Post-success in worker; user client for sync debit |
 | **React Query** | Locale + appId in queue keys | Prevents EN/AR cache contamination |
 | **AI transport** | Vertex AI via modelGateway | `getGenerativeModel()` — not `GEMINI_API_KEY` REST for new routes |
+| **Attribution tone** | Join generation tone on version rows | `performance-attribution/route.ts` |
 
 ---
 
@@ -798,11 +919,24 @@ ORDER BY ordinal_position;
 | Duplicate in-flight pipelines | Redis queue-hash lock on producer; released in worker `finally` |
 | Vercel timeout on full pipeline | QStash producer/worker split |
 
+## Session 6–7 Bug Reference
+
+| Symptom | Fix location |
+|---------|--------------|
+| `listing_generation_client_timeout` despite POST 200 | `LISTING_GENERATION_TIMEOUT_MS = 330_000`; `tryRecoverListingAfterClientTimeout()` |
+| `Service Temporarily Unavailable` toast | Same — user message from `listing-fast-draft.ts` |
+| `finishReason: MAX_TOKENS` at 32768 | Remove model `keywordIntelligence`; compact `listingVariants.fullDescription` |
+| Full AI 500 / credits not debited | Sync path uses user Supabase client for debit |
+| Regenerate infinite spinner | `SYNC_LISTING_STEPS` in orchestrator sync path |
+| 401 on `POST /api/listings/generate` | `resolveAuthenticatedUser()` + `getSupabaseAuthHeaders()` |
+| Performance Attribution empty after sync | Filter fix + `listing_versions` on sync persist |
+| Half-cooked title | `clamp-play-store-title.ts` word-boundary |
+
 ---
 
 **End of Document**
 
-**Version:** 5.0  
-**Last Updated:** June 22, 2026  
-**Scope:** Growth Hub Staging Vault + Optimization Queue + Async Modular Pipeline  
+**Version:** 7.1  
+**Last Updated:** July 7, 2026  
+**Scope:** Growth Hub Staging Vault + Optimization Queue + Async Modular Pipeline + B2B Performance Analyst  
 **Status:** Production Reference

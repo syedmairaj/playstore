@@ -10,6 +10,7 @@ import {
   isListingPublicationUnlocked,
   listingOutputForPublicationState,
 } from "@/lib/listing/listing-export-unlock";
+import { hasConfiguredDiscoveryInputs } from "@/lib/client/app-discovery-context";
 
 const TONE_STYLES = new Set<ToneStyle>([
   "professional",
@@ -29,6 +30,8 @@ export type ListingOptimizerHydrationPayload = {
   output: ListingGenerationOutput | null;
   /** True when credits were spent for publication-ready copy (not free instant draft). */
   publicationUnlocked: boolean;
+  /** Distinguishes auto instant-draft preview rows from user-configured discovery. */
+  promptVersion?: string | null;
 };
 
 function parseToneStyle(raw: unknown): ToneStyle {
@@ -93,6 +96,8 @@ export function listingGenerationRowToHydrationPayload(
       ? listingOutputForPublicationState(rawOutput, publicationUnlocked)
       : null,
     publicationUnlocked,
+    promptVersion:
+      typeof row.prompt_version === "string" ? row.prompt_version : null,
   };
 }
 
@@ -136,7 +141,7 @@ function genUpdatedAt(row: ListingGenerationHydrationRow): string {
     : (row.created_at as string);
 }
 
-function applyDraftOverlayIfPreferred(
+export function applyDraftOverlayIfPreferred(
   payload: ListingOptimizerHydrationPayload,
   genRow: ListingGenerationHydrationRow,
   draftRow: DraftRowMinimal | null,
@@ -182,6 +187,12 @@ function sanitizeHydrationPayload(
       false,
     );
   }
+  if (
+    !payload.publicationUnlocked &&
+    !hasConfiguredDiscoveryInputs(payload.keywordsText, payload.appFeatures)
+  ) {
+    payload.output = null;
+  }
 }
 
 async function fetchLatestDraftRowForApp(
@@ -193,8 +204,8 @@ async function fetchLatestDraftRowForApp(
     .from("workspace_listing_drafts")
     .select("id, updated_at, app_id, app_name, modular_listing")
     .eq("workspace_id", workspaceId)
+    .eq("app_id", appId)
     .not("modular_listing", "is", null)
-    .or(`app_id.eq.${appId},app_id.is.null`)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -271,7 +282,7 @@ export async function loadLatestListingHydrationForApp(
       keywordsText: "",
       appFeatures: "",
       toneStyle: "professional",
-      output: draftOutput,
+      output: null,
       publicationUnlocked: false,
     };
   }
@@ -409,12 +420,17 @@ export async function loadLatestListingHydrationMaps(
   }
 
   for (const [aid, payload] of Object.entries(byAppId)) {
-    const draftRow = draftByAppId[aid] ?? workspaceWideDraft;
+    const draftRow = draftByAppId[aid] ?? null;
     const genRow = genRowByAppId[aid];
     if (genRow) {
       applyDraftOverlayIfPreferred(payload, genRow, draftRow);
       sanitizeHydrationPayload(payload);
     }
+  }
+
+  if (noApp && noAppGenRow && workspaceWideDraft) {
+    applyDraftOverlayIfPreferred(noApp, noAppGenRow, workspaceWideDraft);
+    sanitizeHydrationPayload(noApp);
   }
 
   return { byAppId, noApp };

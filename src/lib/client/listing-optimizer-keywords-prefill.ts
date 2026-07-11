@@ -10,9 +10,18 @@ export const SEO_OPTIMIZER_INJECTED_KEYWORDS_STORAGE = "seo_optimizer_injected_k
 
 /**
  * Competitor Spy → Listing Optimizer bridge (localStorage): comma/newline-separated keyword string.
- * Read once on optimizer mount, merged into Target Keywords chips, then removed.
+ * Scoped per app — read once on optimizer mount for the active app, then removed.
  */
 export const PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE = "playstore_injected_keyword_context";
+
+export function injectedKeywordContextKey(appId: string): string {
+  return `playstore:injected:keywords:${appId.trim()}`;
+}
+
+type InjectedKeywordContextEnvelope = {
+  appId: string;
+  text: string;
+};
 
 /** Same-tab signal: Listing Optimizer should re-consume injection queues. */
 export const OPTIMIZER_KEYWORDS_INJECTED_EVENT = "playstore:optimizer-keywords-injected";
@@ -26,8 +35,22 @@ export const OPTIMIZER_KEYWORDS_INJECTED_EVENT = "playstore:optimizer-keywords-i
 export const PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE =
   "playstore_injected_competitor_vulnerabilities";
 
+export function injectedCompetitorVulnerabilitiesKey(appId: string): string {
+  return `playstore:injected:vulnerabilities:${appId.trim()}`;
+}
+
+type InjectedVulnerabilitiesEnvelope = {
+  appId: string;
+  terms: string[];
+};
+
 /** Restores wizard inputs on remount when no fresh keyword injection is queued. */
 export const LISTING_OPTIMIZER_SESSION_STORAGE = "playstore:optimizer:session";
+
+/** Per-app session keys — prevents cross-app discovery context leaks. */
+export function listingOptimizerSessionKey(appId: string): string {
+  return `playstore:optimizer:session:${appId.trim()}`;
+}
 
 export type ListingOptimizerSessionSnapshot = {
   appId: string;
@@ -40,44 +63,72 @@ export type ListingOptimizerSessionSnapshot = {
   previewIconUrl: string;
 };
 
-export function readListingOptimizerSession(): ListingOptimizerSessionSnapshot | null {
+export function readListingOptimizerSession(
+  appId?: string,
+): ListingOptimizerSessionSnapshot | null {
   if (typeof window === "undefined") return null;
+  const normalizedAppId = appId?.trim() ?? "";
   try {
-    const raw = sessionStorage.getItem(LISTING_OPTIMIZER_SESSION_STORAGE);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ListingOptimizerSessionSnapshot>;
-    const appId = String(parsed.appId ?? "").trim();
-    if (!appId) return null;
-    return {
-      appId,
-      keywords: String(parsed.keywords ?? ""),
-      appName: String(parsed.appName ?? ""),
-      category: String(parsed.category ?? ""),
-      features: String(parsed.features ?? ""),
-      toneStyle: String(parsed.toneStyle ?? "professional"),
-      previewShortDesc: String(parsed.previewShortDesc ?? ""),
-      previewIconUrl: String(parsed.previewIconUrl ?? ""),
-    };
+    if (normalizedAppId) {
+      const perAppRaw = sessionStorage.getItem(
+        listingOptimizerSessionKey(normalizedAppId),
+      );
+      if (perAppRaw) {
+        return parseListingOptimizerSession(perAppRaw, normalizedAppId);
+      }
+    }
+    const legacyRaw = sessionStorage.getItem(LISTING_OPTIMIZER_SESSION_STORAGE);
+    if (!legacyRaw) return null;
+    const legacy = parseListingOptimizerSession(legacyRaw);
+    if (!legacy) return null;
+    if (normalizedAppId && legacy.appId !== normalizedAppId) return null;
+    return legacy;
   } catch {
     return null;
   }
 }
 
+function parseListingOptimizerSession(
+  raw: string,
+  expectedAppId?: string,
+): ListingOptimizerSessionSnapshot | null {
+  const parsed = JSON.parse(raw) as Partial<ListingOptimizerSessionSnapshot>;
+  const appId = String(parsed.appId ?? "").trim();
+  if (!appId) return null;
+  if (expectedAppId && appId !== expectedAppId) return null;
+  return {
+    appId,
+    keywords: String(parsed.keywords ?? ""),
+    appName: String(parsed.appName ?? ""),
+    category: String(parsed.category ?? ""),
+    features: String(parsed.features ?? ""),
+    toneStyle: String(parsed.toneStyle ?? "professional"),
+    previewShortDesc: String(parsed.previewShortDesc ?? ""),
+    previewIconUrl: String(parsed.previewIconUrl ?? ""),
+  };
+}
+
 export function writeListingOptimizerSession(snapshot: ListingOptimizerSessionSnapshot): void {
   if (typeof window === "undefined") return;
+  const appId = snapshot.appId.trim();
+  if (!appId) return;
   try {
     sessionStorage.setItem(
-      LISTING_OPTIMIZER_SESSION_STORAGE,
+      listingOptimizerSessionKey(appId),
       JSON.stringify(snapshot),
     );
+    sessionStorage.removeItem(LISTING_OPTIMIZER_SESSION_STORAGE);
   } catch {
     /* quota / private mode */
   }
 }
 
-export function clearListingOptimizerSession(): void {
+export function clearListingOptimizerSession(appId?: string): void {
   if (typeof window === "undefined") return;
   try {
+    if (appId?.trim()) {
+      sessionStorage.removeItem(listingOptimizerSessionKey(appId.trim()));
+    }
     sessionStorage.removeItem(LISTING_OPTIMIZER_SESSION_STORAGE);
   } catch {
     /* */
@@ -125,12 +176,25 @@ function readInjectedOptimizerKeywordsRaw(): string[] {
   }
 }
 
-function readPlaystoreKeywordContextRaw(): string[] {
+function readPlaystoreKeywordContextRaw(appId?: string): string[] {
   if (typeof window === "undefined") return [];
+  const normalizedAppId = appId?.trim() ?? "";
   try {
-    const raw = localStorage.getItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE)?.trim();
-    if (!raw) return [];
-    return raw
+    if (normalizedAppId) {
+      const perAppRaw = localStorage.getItem(injectedKeywordContextKey(normalizedAppId));
+      if (perAppRaw) {
+        const parsed = JSON.parse(perAppRaw) as Partial<InjectedKeywordContextEnvelope>;
+        if (parsed.appId === normalizedAppId && typeof parsed.text === "string") {
+          return parsed.text
+            .split(/[,;\n]+/u)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        }
+      }
+    }
+    const legacyRaw = localStorage.getItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE)?.trim();
+    if (!legacyRaw) return [];
+    return legacyRaw
       .split(/[,;\n]+/u)
       .map((s) => s.trim())
       .filter(Boolean);
@@ -139,11 +203,18 @@ function readPlaystoreKeywordContextRaw(): string[] {
   }
 }
 
-function writePlaystoreKeywordContext(terms: string[]): void {
+function writePlaystoreKeywordContext(terms: string[], appId?: string): void {
   if (typeof window === "undefined") return;
   const merged = mergeOptimizerKeywordText("", terms);
   if (!merged) return;
+  const aid = appId?.trim();
   try {
+    if (aid) {
+      const envelope: InjectedKeywordContextEnvelope = { appId: aid, text: merged };
+      localStorage.setItem(injectedKeywordContextKey(aid), JSON.stringify(envelope));
+      localStorage.removeItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE);
+      return;
+    }
     localStorage.setItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE, merged);
   } catch {
     /* quota / private mode */
@@ -151,7 +222,10 @@ function writePlaystoreKeywordContext(terms: string[]): void {
 }
 
 /** Append unique keyword strings to session + localStorage injection queues. */
-export function appendInjectedOptimizerKeywords(keywords: string[]): void {
+export function appendInjectedOptimizerKeywords(
+  keywords: string[],
+  appId?: string,
+): void {
   if (typeof window === "undefined") return;
   const incoming = keywords.map((k) => k.trim()).filter(Boolean);
   if (!incoming.length) return;
@@ -172,7 +246,7 @@ export function appendInjectedOptimizerKeywords(keywords: string[]): void {
       ...readPlaystoreKeywordContextRaw(),
       ...incoming,
     ];
-    writePlaystoreKeywordContext(contextMerged);
+    writePlaystoreKeywordContext(contextMerged, appId);
   } catch {
     /* quota / private mode */
   }
@@ -190,21 +264,34 @@ export function consumeInjectedOptimizerKeywords(): string[] {
   return terms;
 }
 
-/** Whether a fresh Competitor Spy → Optimizer keyword context is queued (not consumed). */
-export function hasPlaystoreInjectedKeywordContext(): boolean {
+/** Whether a fresh Competitor Spy → Optimizer keyword context is queued for an app. */
+export function hasPlaystoreInjectedKeywordContext(appId?: string): boolean {
   if (typeof window === "undefined") return false;
   try {
+    const normalizedAppId = appId?.trim() ?? "";
+    if (normalizedAppId) {
+      const perAppRaw = localStorage.getItem(injectedKeywordContextKey(normalizedAppId));
+      if (perAppRaw) {
+        const parsed = JSON.parse(perAppRaw) as Partial<InjectedKeywordContextEnvelope>;
+        return parsed.appId === normalizedAppId && Boolean(parsed.text?.trim());
+      }
+      return false;
+    }
     return Boolean(localStorage.getItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE)?.trim());
   } catch {
     return false;
   }
 }
 
-/** Read and clear localStorage keyword context string. */
-export function consumePlaystoreKeywordContext(): string[] {
+/** Read and clear localStorage keyword context string for the active app. */
+export function consumePlaystoreKeywordContext(appId?: string): string[] {
   if (typeof window === "undefined") return [];
-  const terms = readPlaystoreKeywordContextRaw();
+  const normalizedAppId = appId?.trim() ?? "";
+  const terms = readPlaystoreKeywordContextRaw(normalizedAppId || undefined);
   try {
+    if (normalizedAppId) {
+      localStorage.removeItem(injectedKeywordContextKey(normalizedAppId));
+    }
     localStorage.removeItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE);
   } catch {
     /* */
@@ -213,12 +300,17 @@ export function consumePlaystoreKeywordContext(): string[] {
 }
 
 /** Clear stale injection queues before writing a fresh optimizer keyword context. */
-export function clearOptimizerKeywordInjectionQueues(): void {
+export function clearOptimizerKeywordInjectionQueues(appId?: string): void {
   if (typeof window === "undefined") return;
   try {
     sessionStorage.removeItem(SEO_OPTIMIZER_INJECTED_KEYWORDS_STORAGE);
     sessionStorage.removeItem(LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE);
     localStorage.removeItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE);
+    const aid = appId?.trim();
+    if (aid) {
+      localStorage.removeItem(injectedKeywordContextKey(aid));
+      localStorage.removeItem(injectedCompetitorVulnerabilitiesKey(aid));
+    }
     localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
   } catch {
     /* quota / private mode */
@@ -226,16 +318,20 @@ export function clearOptimizerKeywordInjectionQueues(): void {
 }
 
 /**
- * Competitor Spy → Listing Optimizer: replace Target Keywords on next mount.
+ * Competitor Spy → Listing Optimizer: replace Target Keywords on next mount for one app.
  * Clears legacy session queues so hydration does not double-merge.
  */
-export function setPlaystoreInjectedKeywordContext(text: string): void {
+export function setPlaystoreInjectedKeywordContext(text: string, appId: string): void {
   if (typeof window === "undefined") return;
   const trimmed = text.trim();
-  clearOptimizerKeywordInjectionQueues();
+  const aid = appId.trim();
+  if (!aid) return;
+  clearOptimizerKeywordInjectionQueues(aid);
   if (!trimmed) return;
   try {
-    localStorage.setItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE, trimmed);
+    const envelope: InjectedKeywordContextEnvelope = { appId: aid, text: trimmed };
+    localStorage.setItem(injectedKeywordContextKey(aid), JSON.stringify(envelope));
+    localStorage.removeItem(PLAYSTORE_INJECTED_KEYWORD_CONTEXT_STORAGE);
     window.dispatchEvent(new CustomEvent(OPTIMIZER_KEYWORDS_INJECTED_EVENT));
   } catch {
     /* quota / private mode */
@@ -243,8 +339,8 @@ export function setPlaystoreInjectedKeywordContext(text: string): void {
 }
 
 /** Merge all injection sources (localStorage context, session queue) once on optimizer mount. */
-export function consumeAllOptimizerKeywordInjections(): string[] {
-  const fromContext = consumePlaystoreKeywordContext();
+export function consumeAllOptimizerKeywordInjections(appId?: string): string[] {
+  const fromContext = consumePlaystoreKeywordContext(appId);
   const fromSession = consumeInjectedOptimizerKeywords();
   const parts: string[] = [];
   const seen = new Set<string>();
@@ -284,12 +380,15 @@ export function mergeOptimizerKeywordText(existing: string, additions: string[])
   return parts.join(", ").slice(0, 2000);
 }
 
-export function stashListingOptimizerKeywordsPrefill(text: string): void {
+export function stashListingOptimizerKeywordsPrefill(text: string, appId?: string): void {
   const v = text.trim();
   if (!v || typeof window === "undefined") return;
   try {
     sessionStorage.setItem(LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE, v);
-    writePlaystoreKeywordContext(v.split(/[,;\n]+/u).map((s) => s.trim()).filter(Boolean));
+    writePlaystoreKeywordContext(
+      v.split(/[,;\n]+/u).map((s) => s.trim()).filter(Boolean),
+      appId,
+    );
   } catch {
     /* quota / private mode */
   }
@@ -313,14 +412,28 @@ export function buildListingOptimizerNavigationHref(
 }
 
 /** Persist competitor pain-point phrases for inversion-angle generation. */
-export function setPlaystoreInjectedCompetitorVulnerabilities(terms: string[]): void {
+export function setPlaystoreInjectedCompetitorVulnerabilities(
+  terms: string[],
+  appId?: string,
+): void {
   if (typeof window === "undefined") return;
   const clean = terms.map((t) => t.trim()).filter(Boolean);
-  if (!clean.length) {
-    try { localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE); } catch { /* */ }
-    return;
-  }
+  const aid = appId?.trim();
   try {
+    if (!clean.length) {
+      if (aid) localStorage.removeItem(injectedCompetitorVulnerabilitiesKey(aid));
+      localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
+      return;
+    }
+    if (aid) {
+      const envelope: InjectedVulnerabilitiesEnvelope = { appId: aid, terms: clean };
+      localStorage.setItem(
+        injectedCompetitorVulnerabilitiesKey(aid),
+        JSON.stringify(envelope),
+      );
+      localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
+      return;
+    }
     localStorage.setItem(
       PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE,
       JSON.stringify(clean),
@@ -328,10 +441,25 @@ export function setPlaystoreInjectedCompetitorVulnerabilities(terms: string[]): 
   } catch { /* quota / private mode */ }
 }
 
-/** Read and clear the competitor vulnerabilities injection. Returns empty array if nothing stored. */
-export function consumePlaystoreCompetitorVulnerabilities(): string[] {
+/** Read and clear the competitor vulnerabilities injection for the active app. */
+export function consumePlaystoreCompetitorVulnerabilities(appId?: string): string[] {
   if (typeof window === "undefined") return [];
+  const normalizedAppId = appId?.trim() ?? "";
   try {
+    if (normalizedAppId) {
+      const perAppRaw = localStorage.getItem(
+        injectedCompetitorVulnerabilitiesKey(normalizedAppId),
+      );
+      localStorage.removeItem(injectedCompetitorVulnerabilitiesKey(normalizedAppId));
+      if (perAppRaw) {
+        const parsed = JSON.parse(perAppRaw) as Partial<InjectedVulnerabilitiesEnvelope>;
+        if (parsed.appId === normalizedAppId && Array.isArray(parsed.terms)) {
+          return parsed.terms.filter(
+            (x): x is string => typeof x === "string" && x.trim().length > 0,
+          );
+        }
+      }
+    }
     const raw = localStorage.getItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
     localStorage.removeItem(PLAYSTORE_INJECTED_COMPETITOR_VULNERABILITIES_STORAGE);
     if (!raw) return [];
@@ -356,10 +484,13 @@ export function navigateToListingOptimizer(
 ): boolean {
   const trimmed = keywordsText.trim();
   if (trimmed) {
-    setPlaystoreInjectedKeywordContext(trimmed);
+    const aid = appId?.trim();
+    if (aid) {
+      setPlaystoreInjectedKeywordContext(trimmed, aid);
+    }
   }
   if (competitorVulnerabilities?.length) {
-    setPlaystoreInjectedCompetitorVulnerabilities(competitorVulnerabilities);
+    setPlaystoreInjectedCompetitorVulnerabilities(competitorVulnerabilities, appId);
   }
   const pathname = listingOptimizerPathname(workspaceId);
   if (!pathname) return false;

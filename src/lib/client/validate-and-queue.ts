@@ -5,7 +5,11 @@ import type {
 } from "@/lib/optimization-queue";
 import { diffQueueInputs } from "@/lib/optimization-queue/queue-routing";
 import { addToOptimizationQueueClient } from "@/lib/client/optimization-queue-client";
-import { listingOptimizerPathname } from "@/lib/client/listing-optimizer-keywords-prefill";
+import {
+  listingOptimizerPathname,
+  mergeOptimizerKeywordText,
+  setPlaystoreInjectedKeywordContext,
+} from "@/lib/client/listing-optimizer-keywords-prefill";
 
 export type ValidateAndQueueSource =
   | "competitor_spy_gap"
@@ -76,6 +80,39 @@ type QueueClient = (
 
 type RouterPush = (href: string) => void;
 
+function discoveryKeywordsFromQueueItems(
+  items: AddOptimizationQueueInput[],
+): string {
+  const terms = items
+    .map((item) => item.content.trim())
+    .filter((content) => content.length > 0 && content.length <= 48);
+  return mergeOptimizerKeywordText("", terms);
+}
+
+function pushListingOptimizerNavigation(
+  args: {
+    workspaceId: string;
+    appId?: string;
+    items?: AddOptimizationQueueInput[];
+  },
+  router: RouterPush,
+): void {
+  const pathname = listingOptimizerPathname(args.workspaceId);
+  if (!pathname) return;
+
+  const keywordText = args.items?.length
+    ? discoveryKeywordsFromQueueItems(args.items)
+    : "";
+  if (keywordText && args.appId?.trim()) {
+    setPlaystoreInjectedKeywordContext(keywordText, args.appId.trim());
+  }
+
+  const href = args.appId?.trim()
+    ? `${pathname}?appId=${encodeURIComponent(args.appId.trim())}`
+    : pathname;
+  router.push(href);
+}
+
 /**
  * Validate, diff against existing queue (SSOT), persist only new items.
  * Skips the API entirely when every item is already queued.
@@ -110,6 +147,16 @@ export async function validateAndQueue(args: {
   }
 
   if (diff.allQueued) {
+    if (args.navigate && args.router) {
+      pushListingOptimizerNavigation(
+        {
+          workspaceId: args.workspaceId,
+          appId: args.appId,
+          items: validation.items,
+        },
+        args.router.push,
+      );
+    }
     return {
       ok: true,
       addedCount: 0,
@@ -148,14 +195,14 @@ export async function validateAndQueue(args: {
     }
 
     if (args.navigate && args.router) {
-      const pathname = listingOptimizerPathname(args.workspaceId);
-      if (pathname) {
-        const href =
-          args.appId?.trim()
-            ? `${pathname}?appId=${encodeURIComponent(args.appId.trim())}`
-            : pathname;
-        args.router.push(href);
-      }
+      pushListingOptimizerNavigation(
+        {
+          workspaceId: args.workspaceId,
+          appId: args.appId,
+          items: validation.items,
+        },
+        args.router.push,
+      );
     }
 
     return {

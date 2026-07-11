@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { z, ZodError } from "zod";
+import { z } from "zod";
 import {
   buildInsufficientAiCreditsPayload,
   readWorkspaceAiCreditsRemaining,
@@ -45,6 +45,43 @@ type LocalizeMarketFailure = {
 };
 
 type Ctx = { params: Promise<{ workspaceId: string }> };
+
+async function parsePostBody(
+  request: Request,
+): Promise<
+  | { ok: true; body: z.infer<typeof bodySchema> }
+  | { ok: false; status: number; message: string }
+> {
+  let raw: unknown;
+  try {
+    const text = await request.text();
+    if (!text.trim()) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Request body is required",
+      };
+    }
+    raw = JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      message: "Could not parse request body",
+    };
+  }
+
+  const parsed = bodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: 422,
+      message: parsed.error.errors[0]?.message ?? "Invalid request",
+    };
+  }
+
+  return { ok: true, body: parsed.data };
+}
 
 const bodySchema = z.object({
   appId: z.string().uuid().optional(),
@@ -202,6 +239,7 @@ async function verifyAppInWorkspace(
  * Query: `appId` (uuid, required).
  */
 export async function GET(request: Request, context: Ctx) {
+  try {
   const { workspaceId } = await context.params;
   const supabase = await createClient();
   const {
@@ -274,6 +312,19 @@ export async function GET(request: Request, context: Ctx) {
     .filter((m): m is LocalizedMarketRecord => m !== null);
 
   return NextResponse.json({ ok: true, markets });
+  } catch (err) {
+    console.error(`[${GET_ROUTE}] unhandled error:`, err);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "server_error",
+          message: "Could not load localized listings",
+        },
+      },
+      { status: 500 },
+    );
+  }
 }
 
 /**
@@ -282,6 +333,7 @@ export async function GET(request: Request, context: Ctx) {
  * Persists successful rows when `appId` is provided.
  */
 export async function POST(request: Request, context: Ctx) {
+  try {
   const { workspaceId } = await context.params;
   const supabase = await createClient();
   const {
@@ -308,23 +360,22 @@ export async function POST(request: Request, context: Ctx) {
     );
   }
 
-  let body: z.infer<typeof bodySchema>;
-  try {
-    body = bodySchema.parse(await request.json());
-  } catch (err) {
-    if (err instanceof ZodError) {
-      return NextResponse.json(
-        { ok: false, error: { code: "validation", message: err.errors[0]?.message ?? "Invalid request" } },
-        { status: 422 },
-      );
-    }
+  const parsedBody = await parsePostBody(request);
+  if (!parsedBody.ok) {
     return NextResponse.json(
-      { ok: false, error: { code: "bad_request", message: "Could not parse request body" } },
-      { status: 400 },
+      {
+        ok: false,
+        error: {
+          code: parsedBody.status === 422 ? "validation" : "bad_request",
+          message: parsedBody.message,
+        },
+      },
+      { status: parsedBody.status },
     );
   }
 
-  const { title, shortDescription, longDescription, keywords, markets, appId, isReGeneration } = body;
+  const { title, shortDescription, longDescription, keywords, markets, appId, isReGeneration } =
+    parsedBody.body;
 
   if (appId) {
     const appOk = await verifyAppInWorkspace(supabase, workspaceId, appId);
@@ -504,6 +555,19 @@ export async function POST(request: Request, context: Ctx) {
     creditsUsed: creditCost,
     persisted: Boolean(appId),
   });
+  } catch (err) {
+    console.error(`[${POST_ROUTE}] unhandled error:`, err);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "server_error",
+          message: "Listing localization failed unexpectedly",
+        },
+      },
+      { status: 500 },
+    );
+  }
 }
 
 /**

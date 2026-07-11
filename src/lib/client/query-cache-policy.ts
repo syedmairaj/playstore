@@ -41,6 +41,8 @@ export const QUERY_STALE = {
   userProfile: 60 * 1000,
   /** Signed URLs / vault asset listings. */
   staticAssets: 5 * 60 * 1000,
+  /** Market Intel wins + forecast — server cache TTL 6h. */
+  marketRankWins: 6 * 60 * 60 * 1000,
 } as const;
 
 export type QueryCacheTier =
@@ -49,7 +51,8 @@ export type QueryCacheTier =
   | "activeContext"
   | "reviewInsights"
   | "userProfile"
-  | "staticAssets";
+  | "staticAssets"
+  | "marketRankWins";
 
 const STALE_BY_TIER: Record<QueryCacheTier, number> = {
   workspaceMeta: QUERY_STALE.workspaceMeta,
@@ -58,6 +61,7 @@ const STALE_BY_TIER: Record<QueryCacheTier, number> = {
   reviewInsights: QUERY_STALE.reviewInsights,
   userProfile: QUERY_STALE.userProfile,
   staticAssets: QUERY_STALE.staticAssets,
+  marketRankWins: QUERY_STALE.marketRankWins,
 };
 
 const GC_BY_TIER: Record<QueryCacheTier, number> = {
@@ -67,6 +71,7 @@ const GC_BY_TIER: Record<QueryCacheTier, number> = {
   reviewInsights: QUERY_GC_TIME.default,
   userProfile: QUERY_GC_TIME.workspace,
   staticAssets: QUERY_GC_TIME.default,
+  marketRankWins: QUERY_GC_TIME.workspace,
 };
 
 export type QueryDefaultsOptions = {

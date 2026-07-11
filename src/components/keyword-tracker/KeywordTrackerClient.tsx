@@ -5,6 +5,8 @@ import { AlertTriangle, Check, Loader2, ScanLine, Sparkles, TrendingUp } from "l
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
+import { readPersistedWorkspaceAppId } from "@/lib/client/workspace-app-sync";
+import { useWorkspaceApp } from "@/contexts/WorkspaceAppContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { KeywordHistoryDialog } from "@/components/keyword-tracker/keyword-history-dialog";
@@ -110,13 +112,18 @@ export function KeywordTrackerClient({
   const tSerper = useTranslations("serperPreview");
   const tCountrySel = useTranslations("countrySelector");
   const router = useRouter();
+  const { workspaceAppId, setWorkspaceAppId } = useWorkspaceApp();
   const [isRefreshing, startTransition] = useTransition();
   const [mutationPending, setMutationPending] = useState(false);
   const [rows, setRows] = useState<KeywordWithRanks[]>(initialKeywords);
   const [term, setTerm] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [historyFor, setHistoryFor] = useState<KeywordWithRanks | null>(null);
-  const [filterAppId, setFilterAppId] = useState<string | "all">("all");
+  const [filterAppId, setFilterAppId] = useState<string | "all">(() => {
+    const persisted = readPersistedWorkspaceAppId(workspaceId);
+    if (persisted && apps.some((a) => a.id === persisted)) return persisted;
+    return "all";
+  });
   const [tableSearch, setTableSearch] = useState("");
   const [marketFilter, setMarketFilter] = useState<Set<SupportedCountryCode>>(
     () => new Set(),
@@ -124,7 +131,21 @@ export function KeywordTrackerClient({
   const [watchlistPage, setWatchlistPage] = useState(1);
   const [watchlistPageSize, setWatchlistPageSize] =
     useState<(typeof WATCHLIST_PAGE_SIZES)[number]>(25);
-  const [addTargetAppId, setAddTargetAppId] = useState<string>(() => apps[0]?.id ?? "");
+  const [addTargetAppId, setAddTargetAppId] = useState<string>(() => {
+    const persisted = readPersistedWorkspaceAppId(workspaceId);
+    if (persisted && apps.some((a) => a.id === persisted)) return persisted;
+    return apps[0]?.id ?? "";
+  });
+
+  useEffect(() => {
+    if (!workspaceAppId || workspaceAppId === addTargetAppId) return;
+    if (!apps.some((a) => a.id === workspaceAppId)) return;
+    setAddTargetAppId(workspaceAppId);
+    if (filterAppId !== "all") {
+      setFilterAppId(workspaceAppId);
+    }
+  }, [workspaceAppId, apps, addTargetAppId, filterAppId]);
+
   const [trackingAiTerm, setTrackingAiTerm] = useState<string | null>(null);
   /** Optimistic keys after Add to tracker — merged until router.refresh() reloads rows. */
   const [optimisticTrackedKeys, setOptimisticTrackedKeys] = useState<Set<string>>(
@@ -1425,9 +1446,13 @@ export function KeywordTrackerClient({
                 <span className="font-medium text-zinc-300">{t("filter.label")}</span>
                 <select
                   value={filterAppId}
-                  onChange={(e) =>
-                    setFilterAppId(e.target.value === "all" ? "all" : e.target.value)
-                  }
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setFilterAppId(e.target.value === "all" ? "all" : id);
+                    if (id !== "all") {
+                      setWorkspaceAppId(id);
+                    }
+                  }}
                   className="h-11 rounded-md border border-white/[0.1] bg-[#070a0f] px-3 text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
                 >
                   <option value="all">{t("filter.allApps")}</option>
@@ -1443,7 +1468,11 @@ export function KeywordTrackerClient({
                   <span className="font-medium text-zinc-300">{t("add.targetAppLabel")}</span>
                   <select
                     value={addTargetAppId}
-                    onChange={(e) => setAddTargetAppId(e.target.value)}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setAddTargetAppId(id);
+                      setWorkspaceAppId(id || null);
+                    }}
                     className="h-11 rounded-md border border-white/[0.1] bg-[#070a0f] px-3 text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
                   >
                     {apps.map((a) => (

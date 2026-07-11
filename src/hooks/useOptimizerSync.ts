@@ -5,9 +5,10 @@
  * using React Query for automatic revalidation on staging events.
  */
 
-import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
+import { logAppScopedRequest } from "@/lib/client/workspace-app-sync";
 import {
   isActiveContextReconnecting,
   networkQueryRetryOptions,
@@ -68,8 +69,9 @@ export interface UseOptimizerSyncOptions {
 
 export const OPTIMIZER_CONTEXT_KEY = (
   workspaceId: string,
-  vaultLocale: VaultLocale = "en"
-) => ["optimizer-context", workspaceId, vaultLocale] as const;
+  vaultLocale: VaultLocale = "en",
+  appId?: string,
+) => ["optimizer-context", workspaceId, vaultLocale, appId ?? ""] as const;
 
 export const KEYWORD_SIGNALS_KEY = (
   workspaceId: string,
@@ -82,6 +84,7 @@ async function fetchKeywordSignals(
   appId: string,
   vaultLocale: VaultLocale
 ): Promise<KeywordSignalsResponse> {
+  logAppScopedRequest("keyword-signals", workspaceId, appId);
   let res: Response;
   try {
     res = await fetch(
@@ -151,7 +154,6 @@ export function useKeywordSignals(
       queryKey: KEYWORD_SIGNALS_KEY(workspaceId, appId ?? "", vaultLocale),
       queryFn: () => fetchKeywordSignals(workspaceId, appId!, vaultLocale),
       enabled: Boolean(workspaceId && appId),
-      placeholderData: keepPreviousData,
       staleTime: contextCache.staleTime,
       gcTime: contextCache.gcTime,
       refetchOnWindowFocus: contextCache.refetchOnWindowFocus,
@@ -200,16 +202,15 @@ export function useOptimizerSync(
   const queryClient = useQueryClient();
 
   const queryKey = useMemo(
-    () => OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
-    [workspaceId, vaultLocale],
+    () => OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale, appId),
+    [workspaceId, vaultLocale, appId],
   );
 
   const { data, error, isPending, isFetching, isError, failureCount } =
     useQuery<OptimizerContext>({
       queryKey,
       queryFn: () => fetchOptimizerContext(workspaceId, vaultLocale, appId),
-      enabled: enabled && Boolean(workspaceId),
-      placeholderData: keepPreviousData,
+      enabled: enabled && Boolean(workspaceId && appId),
       staleTime: resolvedStaleTime,
       gcTime: resolvedGcTime,
       refetchOnWindowFocus: contextCache.refetchOnWindowFocus,
@@ -243,7 +244,7 @@ export function useOptimizerSync(
   const mutate = useCallback(async () => {
     const tasks = [
       queryClient.invalidateQueries({
-        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
+        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale, appId),
       }),
     ];
     if (appId) {

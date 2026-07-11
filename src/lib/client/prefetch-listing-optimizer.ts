@@ -62,7 +62,7 @@ export function prefetchListingOptimizerQueries(
   });
 
   void queryClient.prefetchQuery({
-    queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
+    queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale, appId),
     queryFn: () => fetchOptimizerContext(workspaceId, vaultLocale, appId),
     ...contextDefaults,
   });

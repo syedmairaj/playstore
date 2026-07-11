@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import {
+  applyDraftOverlayIfPreferred,
   listingGenerationRowToHydrationPayload,
   type ListingOptimizerHydrationPayload,
 } from "@/lib/listing/latest-listing-hydration";
@@ -63,5 +64,67 @@ describe("paid unlock hydration regression", () => {
     expect(payload.publicationUnlocked).toBe(true);
     expect(payload.output?.title).toBe("Salt Sugar Tracker");
     expect(payload.output?.asoScore).toBe(88);
+  });
+});
+
+describe("per-app draft overlay isolation", () => {
+  const genRow = {
+    id: "gen-snap",
+    created_at: "2026-07-01T10:00:00.000Z",
+    updated_at: "2026-07-01T10:00:00.000Z",
+    credits_ledger_id: null,
+    prompt_version: "listing-modular-v1",
+  };
+
+  it("does not overlay listing output when draft row is null (no cross-app leak)", () => {
+    const payload = listingGenerationRowToHydrationPayload({
+      ...genRow,
+      app_name: "Snap",
+      category: "Social",
+      target_keywords: ["snap"],
+      app_features: "Share moments",
+      tone_style: "friendly",
+      output_json: null,
+    });
+
+    applyDraftOverlayIfPreferred(payload, genRow, null);
+
+    expect(payload.output).toBeNull();
+    expect(payload.appName).toBe("Snap");
+  });
+
+  it("overlays only when a draft row is provided for that app", () => {
+    const payload = listingGenerationRowToHydrationPayload({
+      ...genRow,
+      app_name: "Snap",
+      category: "Social",
+      target_keywords: ["snap"],
+      app_features: "Share moments",
+      tone_style: "friendly",
+      output_json: null,
+    });
+
+    applyDraftOverlayIfPreferred(payload, genRow, {
+      id: "draft-snap",
+      updated_at: "2026-07-02T10:00:00.000Z",
+      app_id: "snap-id",
+      app_name: "Snap",
+      modular_listing: {
+        title: { value: "Snap Social", variations: [] },
+        shortDescription: {
+          variations: [{ text: "Share your day.", rationale: "" }],
+          selectedIndex: 0,
+        },
+        longDescription: {
+          hook: "Connect instantly.",
+          features: "Stories and chat.",
+          closing: "Download Snap.",
+        },
+      },
+    });
+
+    expect(payload.output?.title).toBe("Snap Social");
+    expect(payload.output?.shortDescription).toBe("Share your day.");
+    expect(payload.publicationUnlocked).toBe(false);
   });
 });

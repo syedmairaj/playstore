@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
 import {
   isActiveContextReconnecting,
@@ -40,7 +40,7 @@ import {
 import { dispatchStagingVaultDelta } from "@/lib/client/staging-vault-sync";
 import {
   optimizationQueueQueryPrefix,
-  patchAllOptimizationQueueStores,
+  patchOptimizationQueueCaches,
   syncOptimizationQueueCaches,
 } from "@/lib/client/optimization-queue-cache-sync";
 import { withResolvedSignalCluster } from "@/lib/optimization-queue/signal-cluster";
@@ -54,6 +54,7 @@ import {
   returnStrengthAuditToQueue,
   STRENGTH_AUDIT_UPDATED_EVENT,
 } from "@/lib/client/competitor-strength-audit-store";
+import { OPTIMIZER_CONTEXT_KEY } from "@/hooks/useOptimizerSync";
 
 function buildOptimisticItems(
   prev: OptimizationQueueItem[],
@@ -132,8 +133,7 @@ export function useOptimizationQueue(
   const { data, isFetching, error, refetch, isPending, isError, failureCount } = useQuery({
     queryKey: key,
     queryFn: () => fetchOptimizationQueue(workspaceId, locale, appId),
-    enabled: Boolean(workspaceId),
-    placeholderData: keepPreviousData,
+    enabled: Boolean(workspaceId && appId),
     ...queryDefaultsFor("activeContext"),
     refetchOnMount: true,
     ...networkQueryRetryOptions,
@@ -182,28 +182,12 @@ export function useOptimizationQueue(
         getOptimizationQueueSnapshot(storeKey);
       const previousQuery = queryClient.getQueryData<typeof data>(key);
 
-      patchAllOptimizationQueueStores(workspaceId, locale, (prev) =>
-        buildOptimisticItems(prev, resolvedInputs, locale),
-      );
-
-      queryClient.setQueriesData(
-        { queryKey: optimizationQueueQueryPrefix(workspaceId, locale) },
-        (prev: typeof data | undefined) => {
-          if (!prev) {
-            return {
-              items: buildOptimisticItems([], resolvedInputs, locale),
-              stats: {
-                total: resolvedInputs.length,
-                byType: {} as never,
-                lastSyncAt: new Date().toISOString(),
-              },
-            };
-          }
-          return {
-            ...prev,
-            items: buildOptimisticItems(prev.items, resolvedInputs, locale),
-          };
-        },
+      patchOptimizationQueueCaches(
+        queryClient,
+        workspaceId,
+        locale,
+        appId,
+        (prev) => buildOptimisticItems(prev, resolvedInputs, locale),
       );
 
       try {
@@ -214,7 +198,13 @@ export function useOptimizationQueue(
           appId,
         );
 
-        syncOptimizationQueueCaches(queryClient, workspaceId, locale, result);
+        syncOptimizationQueueCaches(
+          queryClient,
+          workspaceId,
+          locale,
+          appId,
+          result,
+        );
 
         dispatchStagingVaultDelta(
           buildQueueDeltaFromResponse({
@@ -227,7 +217,7 @@ export function useOptimizationQueue(
         );
 
         void queryClient.invalidateQueries({
-          queryKey: ["optimizer-context", workspaceId, locale],
+          queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, locale, appId),
         });
 
         return result;
@@ -301,7 +291,7 @@ export function useOptimizationQueue(
           queryKey: optimizationQueueQueryPrefix(workspaceId, locale),
         });
         await queryClient.invalidateQueries({
-          queryKey: ["optimizer-context", workspaceId, locale],
+          queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, locale, appId),
         });
         window.dispatchEvent(
           new CustomEvent(STRENGTH_AUDIT_UPDATED_EVENT, {

@@ -31,20 +31,16 @@ import {
   OptimizerResultsGeneratingView,
   OptimizerResultsPanel,
 } from "@/components/listing/optimizer/optimizer-results-panel";
-import {
-  OptimizerSparkleTextarea,
-} from "@/components/listing/optimizer/optimizer-sparkle-textarea";
-import {
-  OptimizerStepper,
-  type OptimizerWizardStep,
-} from "@/components/listing/optimizer/optimizer-stepper";
+import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
+import { StepperContainer } from "@/components/listing/optimizer/stepper-container";
+import { MarketDiscoveryWorkflow } from "@/components/listing/optimizer/market-discovery-workflow";
 import {
   OptimizerCreditsConfirmDialog,
 } from "@/components/listing/optimizer/optimizer-credits-confirm-dialog";
 import { GenerationGuardrailModal } from "@/components/listing/optimizer/generation-guardrail-modal";
+import type { OptimizerWizardStep } from "@/components/listing/optimizer/optimizer-stepper";
 import { AlertTriangle, Hash, Info, Loader2, Shield, Sparkles } from "lucide-react";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
-import { OptimizerWizardStepShell } from "@/components/listing/optimizer/optimizer-wizard-step-shell";
 import { LogoGeneratorDialog } from "@/components/listing/logo-generator-dialog";
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import { CreditTopUpModal } from "@/components/ui/CreditTopUpModal";
@@ -81,12 +77,14 @@ import {
   consumeInjectedOptimizerKeywords,
   consumePlaystoreKeywordContext,
   consumePlaystoreCompetitorVulnerabilities,
+  clearOptimizerKeywordInjectionQueues,
   hasPlaystoreInjectedKeywordContext,
   LISTING_OPTIMIZER_KEYWORDS_PREFILL_STORAGE,
   mergeOptimizerKeywordText,
   OPTIMIZER_KEYWORDS_INJECTED_EVENT,
   readListingOptimizerSession,
   writeListingOptimizerSession,
+  clearListingOptimizerSession,
 } from "@/lib/client/listing-optimizer-keywords-prefill";
 import {
   AI_CREDIT_COSTS,
@@ -96,6 +94,29 @@ import { normalizePlan, PLAN_META, UNLIMITED_APP_SLOTS, canPurchaseCreditTopUps 
 import { refreshWorkspaceContext } from "@/lib/client/refresh-workspace-context";
 import { formatInstallCtasForCopy } from "@/lib/listing/cta-suggestions-utils";
 import { useWorkspaceCredits } from "@/contexts/WorkspaceCreditsContext";
+import { useWorkspaceApp } from "@/contexts/WorkspaceAppContext";
+import {
+  discoveryContextMatchesWorkspaceApp,
+  hasConfiguredDiscoveryInputs,
+  shouldPurgeOrphanedListingPreview,
+  shouldRestoreDiscoveryInputs,
+  shouldRestoreFinalListingCache,
+  shouldRestoreListingOutputFromHydration,
+} from "@/lib/client/app-discovery-context";
+import { readPersistedWorkspaceAppId } from "@/lib/client/workspace-app-sync";
+import {
+  buildOrchestratorProgress,
+  deriveOptimizerWizardStep,
+  incompletePrerequisiteStepNumbers,
+  isFinalOptimizationLocked,
+  orchestratorStepToWizardStep,
+  persistDiscoveryWorkflowMode,
+  persistOptimizerWizardStep,
+  readDiscoveryWorkflowMode,
+  readOptimizerWizardStep,
+  type DiscoveryWorkflowMode,
+  type OrchestratorStepId,
+} from "@/lib/client/growth-orchestrator";
 import {
   parseLogoGeneratorMetadata,
   resolveListingPreviewIconUrl,
@@ -177,7 +198,7 @@ import { useModularGeneration } from "@/hooks/useModularGeneration";
 import { useListingPipeline } from "@/hooks/useListingPipeline";
 import { PipelineProgressShell } from "@/components/listing/optimizer/pipeline-progress-shell";
 import { shortVariationText } from "@/lib/listing/modular-short-variations";
-import { useDraftPersistence, readModularDraftSavedAtMs } from "@/hooks/useDraftPersistence";
+import { useDraftPersistence, readModularDraftSavedAtMs, clearModularDraftStorage } from "@/hooks/useDraftPersistence";
 import type {
   ModularListingBlockId,
   ModularListingDraftSnapshot,
@@ -273,6 +294,16 @@ function clearSpotlightStubsFromSession(): void {
   try { sessionStorage.removeItem(SPOTLIGHT_STUBS_SESSION_KEY); } catch { /* ok */ }
 }
 // ─────────────────────────────────────────────────────────────────────────────
+
+async function parseFetchJson<T>(res: Response): Promise<T | null> {
+  const raw = await res.text();
+  if (!raw.trim()) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
 
 /** English instructions for Gemini (stable regardless of UI locale). */
 const REGENERATE_MODEL_INSTRUCTIONS = {
@@ -669,6 +700,8 @@ export function ListingOptimizer({
     (workspaceIdProp?.trim() ? workspaceIdProp.trim() : undefined) ??
     workspaceIdFromParams(params.workspaceId);
 
+  const { workspaceAppId, setWorkspaceAppId } = useWorkspaceApp();
+
   const intlLocale = useLocale();
   const locale: "en" | "ar" =
     localeProp === "ar" || localeProp === "en"
@@ -690,6 +723,9 @@ export function ListingOptimizer({
   const [features, setFeatures] = useState("");
   const [adoptingInsightId, setAdoptingInsightId] = useState<string | null>(null);
   const [removingInsightId, setRemovingInsightId] = useState<string | null>(null);
+  const [discoveryWorkflowMode, setDiscoveryWorkflowMode] =
+    useState<DiscoveryWorkflowMode>("recommended");
+  const [discoveryWorkflowChosen, setDiscoveryWorkflowChosen] = useState(false);
   const [toneStyle, setToneStyle] = useState<ToneStyle>("professional");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -704,7 +740,7 @@ export function ListingOptimizer({
   const [editedTitle, setEditedTitle] = useState("");
   const [editedShort, setEditedShort] = useState("");
   const [editedLong, setEditedLong] = useState("");
-  const [metadataVariant, setMetadataVariant] = useState<"aggressive" | "growth">("growth");
+  const [metadataVariant, setMetadataVariant] = useState<"aggressive" | "growth">("aggressive");
   const [regeneratingOrchestrationModule, setRegeneratingOrchestrationModule] =
     useState<OrchestrationModuleId | null>(null);
   const [modularDraftReady, setModularDraftReady] = useState(false);
@@ -730,7 +766,12 @@ export function ListingOptimizer({
   /** Dedicated debounce flag: set true the instant a credit-consuming action is dispatched,
    *  cleared in the finally block. Prevents double-click / double-fire before React re-renders. */
   const [isProcessingCredits, setIsProcessingCredits] = useState(false);
-  const [selectedAppId, setSelectedAppId] = useState("");
+  const [selectedAppId, setSelectedAppId] = useState(() => {
+    const wid = workspaceId?.trim() ?? "";
+    if (!wid || typeof window === "undefined") return "";
+    return readPersistedWorkspaceAppId(wid) ?? "";
+  });
+  const discoveryWriteAppIdRef = useRef(selectedAppId);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [creditTopUpOpen, setCreditTopUpOpen] = useState(false);
   const [workspaceLinkRecovering, setWorkspaceLinkRecovering] = useState(false);
@@ -1071,17 +1112,18 @@ export function ListingOptimizer({
   const dbDraftLoadedRef = useRef<string | null>(null);
   /** Timestamp (ms) of the last DB draft applied — blocks stale hydration overwrite. */
   const draftAppliedAtRef = useRef(0);
+  const listingOutputAppIdRef = useRef<string | null>(null);
   if (
     typeof window !== "undefined" &&
     workspaceId &&
     draftAppliedAtRef.current === 0
   ) {
-    const savedAt = readModularDraftSavedAtMs(workspaceId, "modular-listing");
-    if (savedAt > 0) {
-      draftAppliedAtRef.current = savedAt;
-    }
     const aid = selectedAppId.trim();
     if (aid) {
+      const savedAt = readModularDraftSavedAtMs(workspaceId, "modular-listing", aid);
+      if (savedAt > 0) {
+        draftAppliedAtRef.current = savedAt;
+      }
       const finalTs = readFinalListingCacheSavedAtMs(aid);
       if (finalTs > draftAppliedAtRef.current) {
         draftAppliedAtRef.current = finalTs;
@@ -1096,10 +1138,18 @@ export function ListingOptimizer({
   const [wizardStepHydrated, setWizardStepHydrated] = useState(false);
   const setWizardStep = useCallback(
     (step: React.SetStateAction<OptimizerWizardStep>) => {
-      setWizardStepRaw(step);
+      setWizardStepRaw((prev) => {
+        const next = typeof step === "function" ? step(prev) : step;
+        const ws = workspaceId?.trim();
+        const aid = selectedAppId.trim();
+        if (ws && aid) {
+          persistOptimizerWizardStep(ws, aid, next);
+        }
+        return next;
+      });
       setWizardStepHydrated(true);
     },
-    [],
+    [workspaceId, selectedAppId],
   );
 
   /**
@@ -1236,6 +1286,55 @@ export function ListingOptimizer({
   });
 
   const appsList = appsQuery.data ?? [];
+
+  const resolveDiscoveryField = useCallback(
+    (
+      appId: string,
+      appDisplayName: string,
+      appCategory: string,
+      field: "keywords" | "features",
+    ): string => {
+      const session = readListingOptimizerSession(appId);
+      const hyd = hydrationByApp[appId];
+      const sessionValue =
+        field === "keywords" ? session?.keywords : session?.features;
+      const hydValue =
+        field === "keywords" ? hyd?.keywordsText : hyd?.appFeatures;
+
+      if (
+        session?.appId === appId &&
+        sessionValue?.trim() &&
+        shouldRestoreDiscoveryInputs({
+          savedAppName: session.appName,
+          savedCategory: session.category,
+          keywordsText: field === "keywords" ? session.keywords : undefined,
+          appFeatures: field === "features" ? session.features : undefined,
+          workspaceAppDisplayName: appDisplayName,
+          workspaceAppCategory: appCategory,
+        })
+      ) {
+        return sessionValue.trim();
+      }
+      if (
+        hydValue?.trim() &&
+        shouldRestoreDiscoveryInputs({
+          savedAppName: hyd?.appName,
+          savedCategory: hyd?.category,
+          keywordsText: field === "keywords" ? hyd?.keywordsText : undefined,
+          appFeatures: field === "features" ? hyd?.appFeatures : undefined,
+          promptVersion: hyd?.promptVersion,
+          publicationUnlocked: hyd?.publicationUnlocked,
+          workspaceAppDisplayName: appDisplayName,
+          workspaceAppCategory: appCategory,
+        })
+      ) {
+        return hydValue.trim();
+      }
+      return "";
+    },
+    [hydrationByApp],
+  );
+
   const selectedAppRow = useMemo(() => {
     const list = appsQuery.data;
     if (!list) return undefined;
@@ -1353,28 +1452,138 @@ export function ListingOptimizer({
       if (generationId) setListingGenerationId(generationId);
       setListingExportUnlocked(publicationUnlocked);
       setPurgedAwaitingGenerate(false);
+      listingOutputAppIdRef.current = aid;
     },
     [],
   );
 
+  const clearListingOutputForAppSwitch = useCallback(() => {
+    listingOutputAppIdRef.current = null;
+    setResult(null);
+    setEditedTitle("");
+    setEditedShort("");
+    setEditedLong("");
+    setMeta(undefined);
+    setListingGenerationId(undefined);
+    setListingExportUnlocked(false);
+    setLastGeneratedAtIso(null);
+    setWizardStep(0);
+    setWizardPanelPeek({});
+    setPurgedAwaitingGenerate(false);
+    setModularDraftReady(false);
+    draftAppliedAtRef.current = 0;
+  }, []);
+
   const hasActiveModularDraftSession = useCallback((): boolean => {
     if (draftAppliedAtRef.current > 0) return true;
-    if (!workspaceId) return false;
-    return readModularDraftSavedAtMs(workspaceId, "modular-listing") > 0;
-  }, [workspaceId]);
+    const aid = selectedAppId.trim();
+    if (!workspaceId || !aid) return false;
+    return readModularDraftSavedAtMs(workspaceId, "modular-listing", aid) > 0;
+  }, [workspaceId, selectedAppId]);
+
+  const purgeOrphanedListingPreviewForApp = useCallback(
+    (aid: string, displayName: string, appCategory: string) => {
+      const discoveryKeywords = resolveDiscoveryField(
+        aid,
+        displayName,
+        appCategory,
+        "keywords",
+      );
+      const discoveryFeatures = resolveDiscoveryField(
+        aid,
+        displayName,
+        appCategory,
+        "features",
+      );
+      const final = readFinalListingCache(aid);
+      const shouldPurge =
+        shouldPurgeOrphanedListingPreview({
+          keywordsText: discoveryKeywords,
+          appFeatures: discoveryFeatures,
+          publicationUnlocked: final
+            ? isFinalListingCachePublicationUnlocked(final)
+            : false,
+          title: final?.title ?? resultRef.current?.title,
+          shortDescription:
+            final?.shortDescription ?? resultRef.current?.shortDescription,
+          fullDescription:
+            final?.longDescription ?? resultRef.current?.fullDescription,
+        }) ||
+        (final != null &&
+          !shouldRestoreFinalListingCache({
+            cache: final,
+            keywordsText: discoveryKeywords,
+            appFeatures: discoveryFeatures,
+            workspaceAppDisplayName: displayName,
+            workspaceAppCategory: appCategory,
+          }));
+      if (!shouldPurge) return false;
+
+      clearFinalListingCache(aid);
+      if (workspaceId) {
+        clearModularDraftStorage(workspaceId, "modular-listing", aid);
+      }
+      draftAppliedAtRef.current = 0;
+      if (readModularDraftSavedAtMs(workspaceId, "modular-listing", aid) === 0) {
+        clearListingOutputForAppSwitch();
+      }
+      return true;
+    },
+    [
+      resolveDiscoveryField,
+      workspaceId,
+      clearListingOutputForAppSwitch,
+    ],
+  );
 
   const tryApplyFinalListingCache = useCallback(
     (aid: string): boolean => {
+      const row = appsList.find((a) => a.id === aid);
+      const displayName = row?.name.trim() ?? appName.trim();
+      const appRowMeta = row
+        ? readAppListingMeta(row.metadata, row.icon_url)
+        : { category: category.trim(), shortDescription: "", iconUrl: "" };
+      const discoveryKeywords = resolveDiscoveryField(
+        aid,
+        displayName,
+        appRowMeta.category,
+        "keywords",
+      );
+      const discoveryFeatures = resolveDiscoveryField(
+        aid,
+        displayName,
+        appRowMeta.category,
+        "features",
+      );
+
       const final = readFinalListingCache(aid);
       if (!final) return false;
+
+      if (
+        !shouldRestoreFinalListingCache({
+          cache: final,
+          keywordsText: discoveryKeywords,
+          appFeatures: discoveryFeatures,
+          workspaceAppDisplayName: displayName,
+          workspaceAppCategory: appRowMeta.category,
+        })
+      ) {
+        clearFinalListingCache(aid);
+        return false;
+      }
+
       const paidUnlock = isFinalListingCachePublicationUnlocked(final);
       if (hasActiveModularDraftSession() && !paidUnlock) {
         return false;
       }
       const draftTs = Math.max(
         draftAppliedAtRef.current,
-        workspaceId
-          ? readModularDraftSavedAtMs(workspaceId, "modular-listing")
+        workspaceId && selectedAppId.trim()
+          ? readModularDraftSavedAtMs(
+              workspaceId,
+              "modular-listing",
+              selectedAppId.trim(),
+            )
           : 0,
       );
       const cacheTs = Date.parse(final.generatedAt);
@@ -1399,14 +1608,103 @@ export function ListingOptimizer({
       }
       return true;
     },
-    [applyCachedOrHydratedListingOutput, hasActiveModularDraftSession, workspaceId],
+    [
+      applyCachedOrHydratedListingOutput,
+      hasActiveModularDraftSession,
+      workspaceId,
+      selectedAppId,
+      appsList,
+      appName,
+      category,
+      resolveDiscoveryField,
+    ],
   );
 
   useLayoutEffect(() => {
     const aid = selectedAppId.trim();
     if (!aid || !workspaceId) return;
-    tryApplyFinalListingCache(aid);
-  }, [selectedAppId, workspaceId, tryApplyFinalListingCache]);
+
+    const row = appsList.find((a) => a.id === aid);
+    const appRowMeta = row
+      ? readAppListingMeta(row.metadata, row.icon_url)
+      : { category: "", shortDescription: "", iconUrl: "" };
+    const displayName = row?.name.trim() ?? "";
+    const discoveryKeywords = resolveDiscoveryField(
+      aid,
+      displayName,
+      appRowMeta.category,
+      "keywords",
+    );
+    const discoveryFeatures = resolveDiscoveryField(
+      aid,
+      displayName,
+      appRowMeta.category,
+      "features",
+    );
+
+    if (
+      purgeOrphanedListingPreviewForApp(aid, displayName, appRowMeta.category)
+    ) {
+      return;
+    }
+
+    const hyd = hydrationByApp[aid];
+    if (
+      hyd &&
+      row &&
+      !shouldRestoreListingOutputFromHydration({
+        savedAppName: hyd.appName,
+        savedCategory: hyd.category,
+        keywordsText: hyd.keywordsText,
+        appFeatures: hyd.appFeatures,
+        promptVersion: hyd.promptVersion,
+        publicationUnlocked: hyd.publicationUnlocked,
+        workspaceAppDisplayName: row.name,
+        workspaceAppCategory: appRowMeta.category,
+      })
+    ) {
+      clearFinalListingCache(aid);
+      clearModularDraftStorage(workspaceId, "modular-listing", aid);
+      draftAppliedAtRef.current = 0;
+      const hasAppDraft =
+        readModularDraftSavedAtMs(workspaceId, "modular-listing", aid) > 0;
+      if (!hasAppDraft) {
+        clearListingOutputForAppSwitch();
+      }
+      return;
+    }
+
+    const restored = tryApplyFinalListingCache(aid);
+    if (restored) {
+      listingOutputAppIdRef.current = aid;
+      return;
+    }
+    const hasAppDraft = readModularDraftSavedAtMs(workspaceId, "modular-listing", aid) > 0;
+    if (hasAppDraft) return;
+    if (
+      listingOutputAppIdRef.current &&
+      listingOutputAppIdRef.current !== aid
+    ) {
+      clearListingOutputForAppSwitch();
+    } else if (
+      !hasConfiguredDiscoveryInputs(discoveryKeywords, discoveryFeatures) &&
+      (resultRef.current || editedTitle || editedShort || editedLong)
+    ) {
+      clearListingOutputForAppSwitch();
+    }
+  }, [
+    selectedAppId,
+    workspaceId,
+    hydrationByApp,
+    appsList,
+    resolveDiscoveryField,
+    purgeOrphanedListingPreviewForApp,
+    tryApplyFinalListingCache,
+    clearListingOutputForAppSwitch,
+    editedTitle,
+    editedShort,
+    editedLong,
+  ]);
 
   const syncPreviewFromWorkspaceApp = useCallback(
     (appId: string) => {
@@ -1427,7 +1725,8 @@ export function ListingOptimizer({
   );
 
   const applyOptimizerKeywordInjection = useCallback(() => {
-    const freshReplaceQueued = hasPlaystoreInjectedKeywordContext();
+    const activeAppId = selectedAppId.trim();
+    const freshReplaceQueued = hasPlaystoreInjectedKeywordContext(activeAppId);
     if (keywordsPrefillAppliedRef.current && !freshReplaceQueued) return;
     if (appsBusy || appsQuery.isError) return;
     if (appsList.length > 0 && !selectedAppId.trim()) return;
@@ -1464,16 +1763,22 @@ export function ListingOptimizer({
       }
     }
 
+    const appIdParam = searchParams.get("appId")?.trim() ?? "";
+    const resolvedAppId =
+      appIdParam && appsList.some((a) => a.id === appIdParam)
+        ? appIdParam
+        : selectedAppId.trim();
+
     let injectedReplace: string[] = [];
     let injectedSession: string[] = [];
     if (!injectionConsumedForNavRef.current) {
       injectionConsumedForNavRef.current = true;
-      injectedReplace = consumePlaystoreKeywordContext();
+      injectedReplace = consumePlaystoreKeywordContext(resolvedAppId);
       injectedSession = consumeInjectedOptimizerKeywords();
       // Consume competitor vulnerabilities alongside keyword injection so they
       // arrive atomically. Stored in a ref — used once on the next generation run.
       // Also mirrored into competitorWeaknesses state so Step 3 can render them.
-      const vulns = consumePlaystoreCompetitorVulnerabilities();
+      const vulns = consumePlaystoreCompetitorVulnerabilities(resolvedAppId);
       if (vulns.length) {
         competitorVulnerabilitiesRef.current = vulns;
         setCompetitorWeaknesses(vulns);
@@ -1482,12 +1787,6 @@ export function ListingOptimizer({
 
     if (!legacy && injectedReplace.length === 0 && injectedSession.length === 0) return;
     keywordsPrefillAppliedRef.current = true;
-
-    const appIdParam = searchParams.get("appId")?.trim() ?? "";
-    const resolvedAppId =
-      appIdParam && appsList.some((a) => a.id === appIdParam)
-        ? appIdParam
-        : selectedAppId.trim();
 
     if (injectedReplace.length > 0) {
       // ── Atomic isolated state overwrite ─────────────────────────────────────
@@ -1526,12 +1825,13 @@ export function ListingOptimizer({
           workspacePickerPrevIdRef.current = resolvedAppId;
           setSelectedAppId(resolvedAppId);
         }
+        setWorkspaceAppId(resolvedAppId);
 
         // 3. Resolve app identity: workspace app row is the primary source of truth;
         //    fall back to hydration data when the row hasn't loaded yet (e.g. "Salt Sugar").
         const appRowFromList = appsList.find((a) => a.id === resolvedAppId);
         const hyd = hydrationByApp[resolvedAppId];
-        const session = readListingOptimizerSession();
+        const session = readListingOptimizerSession(resolvedAppId);
 
         // App Name — always overwrite from the authoritative source.
         const resolvedAppName =
@@ -2026,22 +2326,32 @@ export function ListingOptimizer({
   }, [applyOptimizerKeywordInjection]);
 
   useEffect(() => {
+    const aid = selectedAppId.trim();
     if (optimizerSessionRestoredRef.current) return;
     if (keywordsPrefillAppliedRef.current) return;
-    if (hasPlaystoreInjectedKeywordContext()) return;
+    if (hasPlaystoreInjectedKeywordContext(aid)) return;
     if (appsBusy || appsQuery.isError) return;
-    if (appsList.length > 0 && !selectedAppId.trim()) return;
+    if (appsList.length > 0 && !aid) return;
 
-    const session = readListingOptimizerSession();
-    if (!session) return;
+    const session = readListingOptimizerSession(aid);
+    if (!session || session.appId !== aid) return;
+    if (
+      !shouldRestoreDiscoveryInputs({
+        savedAppName: session.appName,
+        savedCategory: session.category,
+        keywordsText: session.keywords,
+        appFeatures: session.features,
+        workspaceAppDisplayName: displayAppName,
+        workspaceAppCategory:
+          selectedAppRow
+            ? readAppListingMeta(selectedAppRow.metadata, selectedAppRow.icon_url).category
+            : category,
+      })
+    ) {
+      return;
+    }
     optimizerSessionRestoredRef.current = true;
 
-    if (appsList.length > 0 && appsList.some((a) => a.id === session.appId)) {
-      if (selectedAppId !== session.appId) {
-        workspacePickerPrevIdRef.current = session.appId;
-        setSelectedAppId(session.appId);
-      }
-    }
     setKeywords(session.keywords);
     setAppName(session.appName);
     setCategory(session.category);
@@ -2067,7 +2377,7 @@ export function ListingOptimizer({
 
   useEffect(() => {
     const aid = selectedAppId.trim();
-    if (!aid) return;
+    if (!aid || discoveryWriteAppIdRef.current !== aid) return;
     writeListingOptimizerSession({
       appId: aid,
       keywords,
@@ -2102,10 +2412,11 @@ export function ListingOptimizer({
         const res = await fetch(
           `/api/workspaces/${workspaceId}/listings/localize?appId=${encodeURIComponent(appId)}`,
         );
-        const data = (await res.json()) as
+        const data = await parseFetchJson<
           | { ok: true; markets: LocalizedMarketRecord[] }
-          | { ok: false };
-        if (cancelled || !data.ok) return;
+          | { ok: false }
+        >(res);
+        if (cancelled || !data?.ok) return;
         setLocalizedMarkets(data.markets);
         setLocalizeInputExpanded(data.markets.length === 0);
         setActiveMarket((prev) =>
@@ -2123,6 +2434,268 @@ export function ListingOptimizer({
   }, [workspaceId, selectedAppId]);
 
   const hasTrackedKeywords = trackerKeywordSignals.length > 0;
+
+  useEffect(() => {
+    const ws = workspaceId?.trim();
+    const aid = selectedAppId.trim();
+    if (!ws || !aid) return;
+    const stored = readDiscoveryWorkflowMode(ws, aid);
+    if (stored) {
+      setDiscoveryWorkflowMode(stored);
+      setDiscoveryWorkflowChosen(true);
+    }
+  }, [workspaceId, selectedAppId]);
+
+  const handleDiscoveryWorkflowModeChange = useCallback(
+    (mode: DiscoveryWorkflowMode) => {
+      setDiscoveryWorkflowMode(mode);
+      setDiscoveryWorkflowChosen(true);
+      const ws = workspaceId?.trim();
+      const aid = selectedAppId.trim();
+      if (ws && aid) persistDiscoveryWorkflowMode(ws, aid, mode);
+    },
+    [workspaceId, selectedAppId],
+  );
+
+  const hasActiveResearchContext = useMemo(() => {
+    if (optimizationQueueItems.length > 0) return true;
+    if (!hasTrackedKeywords) return false;
+    return (
+      activeContextPartition.competitorSpyPills.length > 0 ||
+      activeContextPartition.reviewPills.length > 0 ||
+      activeContextPartition.marketIntelPills.length > 0
+    );
+  }, [
+    optimizationQueueItems.length,
+    hasTrackedKeywords,
+    activeContextPartition.competitorSpyPills.length,
+    activeContextPartition.reviewPills.length,
+    activeContextPartition.marketIntelPills.length,
+  ]);
+
+  useEffect(() => {
+    if (hasActiveResearchContext) {
+      setDiscoveryWorkflowChosen(true);
+    }
+  }, [hasActiveResearchContext]);
+
+  const navigateToOptimizerModule = useCallback(
+    (module: "keywords" | "competitors" | "reviews") => {
+      if (!workspaceId) return;
+      const aid = selectedAppId.trim();
+      if (aid) setWorkspaceAppId(aid);
+      router.push(`/app/${workspaceId}/${module}`);
+    },
+    [workspaceId, selectedAppId, setWorkspaceAppId, router],
+  );
+
+  const orchestratorProgress = useMemo(
+    () =>
+      buildOrchestratorProgress({
+        appName: displayAppName,
+        category,
+        keywordsText: keywords,
+        featuresText: features,
+        hasTrackedKeywords,
+        competitorSignalCount: activeContextPartition.competitorSpyPills.length,
+        reviewSignalCount: activeContextPartition.reviewPills.length,
+        reviewAnalysisValid: reviewGateValid,
+        hasListingOutput: Boolean(result),
+        optimizationQueueItems,
+      }),
+    [
+      displayAppName,
+      category,
+      keywords,
+      features,
+      hasTrackedKeywords,
+      activeContextPartition.competitorSpyPills.length,
+      activeContextPartition.reviewPills.length,
+      reviewGateValid,
+      result,
+      optimizationQueueItems,
+    ],
+  );
+
+  const finalOptimizationLocked = isFinalOptimizationLocked(
+    orchestratorProgress.steps,
+  );
+
+  useEffect(() => {
+    const ws = workspaceId?.trim();
+    const aid = selectedAppId.trim();
+    if (!ws || !aid) return;
+    if (serverStep === 2) return;
+
+    const derived = deriveOptimizerWizardStep(orchestratorProgress, {
+      hasListingOutput: Boolean(result),
+      hasModularDraft: hasActiveModularDraftSession(),
+      hasActiveResearchContext,
+    });
+    const stored = readOptimizerWizardStep(ws, aid);
+    const target = Math.max(derived, stored ?? derived) as OptimizerWizardStep;
+
+    setWizardStep((current) => (current < target ? target : current));
+  }, [
+    workspaceId,
+    selectedAppId,
+    orchestratorProgress,
+    serverStep,
+    result,
+    hasActiveModularDraftSession,
+    hasActiveResearchContext,
+    setWizardStep,
+  ]);
+
+  const orchestratorLockedMessage = useMemo(() => {
+    const nums = incompletePrerequisiteStepNumbers(orchestratorProgress.steps);
+    const stepsLabel =
+      nums.length <= 1
+        ? String(nums[0] ?? "")
+        : nums
+            .slice(0, -1)
+            .join(locale === "ar" ? "، " : ", ") +
+          (locale === "ar" ? " و " : " and ") +
+          nums[nums.length - 1];
+    return t("orchestrator.lockedFinalMessage", { steps: stepsLabel });
+  }, [orchestratorProgress.steps, locale, t]);
+
+  const orchestratorStepHints = useMemo(
+    () => ({
+      app_identity: { why: t("orchestrator.steps.app_identity.why") },
+      research_keywords: { why: t("orchestrator.steps.research_keywords.why") },
+      analyze_competitors: { why: t("orchestrator.steps.analyze_competitors.why") },
+      audit_reviews: { why: t("orchestrator.steps.audit_reviews.why") },
+      market_discovery: { why: t("orchestrator.steps.market_discovery.why") },
+      final_optimization: { why: t("orchestrator.steps.final_optimization.why") },
+    }),
+    [t],
+  );
+
+  const orchestratorTaskLists = useMemo(
+    () => ({
+      app_identity: [
+        {
+          id: "name",
+          label: t("orchestrator.tasks.app_identity.name"),
+          complete: displayAppName.trim().length > 0,
+        },
+        {
+          id: "category",
+          label: t("orchestrator.tasks.app_identity.category"),
+          complete: category.trim().length > 0,
+        },
+      ],
+      market_discovery: [
+        {
+          id: "keywords",
+          label: t("orchestrator.tasks.market_discovery.keywords"),
+          complete: keywords.trim().length > 0,
+        },
+        {
+          id: "features",
+          label: t("orchestrator.tasks.market_discovery.features"),
+          complete: features.trim().length > 0,
+        },
+      ],
+      final_optimization: [
+        {
+          id: "generate",
+          label: t("orchestrator.tasks.final_optimization.generate"),
+          complete: Boolean(result),
+        },
+        {
+          id: "review",
+          label: t("orchestrator.tasks.final_optimization.review"),
+          complete: Boolean(result?.asoScore),
+        },
+        {
+          id: "export",
+          label: t("orchestrator.tasks.final_optimization.export"),
+          complete: listingExportUnlocked,
+        },
+      ],
+    }),
+    [
+      t,
+      displayAppName,
+      category,
+      keywords,
+      features,
+      result,
+      listingExportUnlocked,
+    ],
+  );
+
+  const handleLockedFinalAttempt = useCallback(() => {
+    toast.message(t("orchestrator.lockedTitle"), {
+      description: orchestratorLockedMessage,
+    });
+  }, [orchestratorLockedMessage, t]);
+
+  const handleOrchestratorStepAction = useCallback(
+    (stepId: OrchestratorStepId) => {
+      if (
+        stepId === "final_optimization" &&
+        isFinalOptimizationLocked(orchestratorProgress.steps)
+      ) {
+        handleLockedFinalAttempt();
+        return;
+      }
+
+      const wizardStep = orchestratorStepToWizardStep(stepId);
+      if (wizardStep !== null) {
+        setWizardStep(wizardStep);
+        setWizardPanelPeek({});
+        return;
+      }
+
+      switch (stepId) {
+        case "research_keywords":
+          navigateToOptimizerModule("keywords");
+          break;
+        case "analyze_competitors":
+          navigateToOptimizerModule("competitors");
+          break;
+        case "audit_reviews":
+          navigateToOptimizerModule("reviews");
+          break;
+        default:
+          break;
+      }
+    },
+    [
+      navigateToOptimizerModule,
+      orchestratorProgress.steps,
+      handleLockedFinalAttempt,
+    ],
+  );
+
+  const vaultReadiness = useMemo(
+    () => assessVaultSynthesisReadiness(optimizationQueueItems),
+    [optimizationQueueItems],
+  );
+
+  const hasCompetitorContext =
+    vaultReadiness.hasCompetitors ||
+    activeContextPartition.competitorSpyPills.length > 0;
+  const hasReviewContext =
+    reviewGateValid || activeContextPartition.reviewPills.length > 0;
+  const hasGrowthContext = hasCompetitorContext || hasReviewContext;
+
+  const isFetchingSpyContext =
+    discoveryWorkflowMode === "recommended" &&
+    !keywords.trim() &&
+    !features.trim() &&
+    hasCompetitorContext &&
+    (hasPlaystoreInjectedKeywordContext(selectedAppId.trim()) ||
+      optimizationQueueLoading);
+
+  const showMissingContextAlert =
+    discoveryWorkflowMode === "recommended" &&
+    !hasGrowthContext &&
+    !keywords.trim() &&
+    !features.trim();
 
   const keywordTrackerHref = workspaceId
     ? `/app/${workspaceId}/keywords`
@@ -2165,6 +2738,17 @@ export function ListingOptimizer({
 
   function onWorkspaceAppChange(id: string) {
     setSelectedAppId(id);
+    setWorkspaceAppId(id || null);
+    discoveryWriteAppIdRef.current = id;
+    if (id && workspaceId) {
+      try {
+        localStorage.removeItem(
+          `listing-modular-draft:${workspaceId}:modular-listing`,
+        );
+      } catch {
+        /* ignore */
+      }
+    }
     if (id) {
       generateNoAppToastShownRef.current = false;
     }
@@ -2180,7 +2764,7 @@ export function ListingOptimizer({
     if (!row) return;
 
     const prevPickerId = workspacePickerPrevIdRef.current;
-    const switchingApps = prevPickerId !== id;
+    const switchingApps = Boolean(prevPickerId) && prevPickerId !== id;
     workspacePickerPrevIdRef.current = id;
 
     const appRowMeta = readAppListingMeta(row.metadata, row.icon_url);
@@ -2190,15 +2774,100 @@ export function ListingOptimizer({
     });
     const displayName = row.name.trim();
 
+    if (switchingApps) {
+      suppressListingHydrationRef.current = false;
+      keywordsPrefillAppliedRef.current = false;
+      optimizerSessionRestoredRef.current = true;
+      clearOptimizerKeywordInjectionQueues(id);
+      setCompetitorWeaknesses([]);
+      competitorVulnerabilitiesRef.current = [];
+
+      const hydForDiscovery = hydrationByApp[id];
+      const sessionForDiscovery = readListingOptimizerSession(id);
+      const discoveryKeywords = resolveDiscoveryField(
+        id,
+        displayName,
+        appRowMeta.category,
+        "keywords",
+      );
+      const discoveryFeatures = resolveDiscoveryField(
+        id,
+        displayName,
+        appRowMeta.category,
+        "features",
+      );
+      setKeywords(discoveryKeywords);
+      setFeatures(discoveryFeatures);
+      if (!discoveryKeywords.trim()) {
+        clearFinalListingCache(id);
+        clearListingOptimizerSession(id);
+        if (workspaceId) {
+          clearModularDraftStorage(workspaceId, "modular-listing", id);
+        }
+        clearListingOutputForAppSwitch();
+        modularGeneration.resetModularState();
+      }
+      setCategory(
+        (sessionForDiscovery?.appId === id &&
+        sessionForDiscovery.category.trim() &&
+        discoveryContextMatchesWorkspaceApp(sessionForDiscovery.appName, displayName)
+          ? sessionForDiscovery.category
+          : hydForDiscovery?.category?.trim() &&
+              discoveryContextMatchesWorkspaceApp(hydForDiscovery.appName, displayName)
+            ? hydForDiscovery.category.trim()
+            : appRowMeta.category) || "",
+      );
+      setToneStyle(
+        (hydForDiscovery?.toneStyle ||
+          sessionForDiscovery?.toneStyle ||
+          "professional") as ToneStyle,
+      );
+
+      const hasCache = Boolean(readFinalListingCache(id));
+      const hasAppDraft =
+        Boolean(workspaceId) &&
+        readModularDraftSavedAtMs(workspaceId, "modular-listing", id) > 0;
+      if (!discoveryKeywords.trim()) {
+        /* output + cache already cleared above */
+      } else if (!hasCache && !hasAppDraft) {
+        clearListingOutputForAppSwitch();
+        modularGeneration.resetModularState();
+      } else {
+        draftAppliedAtRef.current = 0;
+        listingOutputAppIdRef.current = null;
+      }
+    }
+
     const hyd = hydrationByApp[id];
     const suppressHydration = suppressListingHydrationRef.current;
 
     if (hyd) {
       setAppName(displayName);
-      if (!suppressHydration) {
+      if (!suppressHydration && !switchingApps) {
         setCategory(hyd.category.trim() || appRowMeta.category);
-        setKeywords(hyd.keywordsText);
-        setFeatures(hyd.appFeatures);
+        if (discoveryContextMatchesWorkspaceApp(hyd.appName, displayName)) {
+          if (
+            shouldRestoreDiscoveryInputs({
+              savedAppName: hyd.appName,
+              savedCategory: hyd.category,
+              keywordsText: hyd.keywordsText,
+              appFeatures: hyd.appFeatures,
+              promptVersion: hyd.promptVersion,
+              publicationUnlocked: hyd.publicationUnlocked,
+              workspaceAppDisplayName: displayName,
+              workspaceAppCategory: appRowMeta.category,
+            })
+          ) {
+            setKeywords(hyd.keywordsText);
+            setFeatures(hyd.appFeatures);
+          } else {
+            setKeywords(resolveDiscoveryField(id, displayName, appRowMeta.category, "keywords"));
+            setFeatures(resolveDiscoveryField(id, displayName, appRowMeta.category, "features"));
+          }
+        } else {
+          setKeywords(resolveDiscoveryField(id, displayName, appRowMeta.category, "keywords"));
+          setFeatures(resolveDiscoveryField(id, displayName, appRowMeta.category, "features"));
+        }
         setToneStyle(hyd.toneStyle);
         setListingGenerationId(hyd.generationId);
         const preferLocalFinalCache = shouldPreferFinalListingCacheOverHydration(
@@ -2213,7 +2882,18 @@ export function ListingOptimizer({
         setCategory(appRowMeta.category);
       }
       setMeta(undefined);
-      if (hyd.output && !suppressHydration) {
+      if (
+        hyd.output &&
+        !suppressHydration &&
+        shouldRestoreListingOutputFromHydration({
+          savedAppName: hyd.appName,
+          savedCategory: hyd.category,
+          promptVersion: hyd.promptVersion,
+          publicationUnlocked: hyd.publicationUnlocked,
+          workspaceAppDisplayName: displayName,
+          workspaceAppCategory: appRowMeta.category,
+        })
+      ) {
         const hydTs = Date.parse(hyd.createdAt);
         const finalCache = readFinalListingCache(id);
         const finalCacheTs = readFinalListingCacheSavedAtMs(id);
@@ -2312,6 +2992,7 @@ export function ListingOptimizer({
       setListingGenerationId(undefined);
       setLastGeneratedAtIso(null);
       setMeta(undefined);
+      setPurgedAwaitingGenerate(false);
     }
     setPickAppGate(false);
   }
@@ -2322,10 +3003,21 @@ export function ListingOptimizer({
     if (selectedAppId) return;
     if (autoPickedInitialAppRef.current) return;
     autoPickedInitialAppRef.current = true;
-    onWorkspaceAppChange(appsList[0].id);
+    const persistedId =
+      workspaceAppId && appsList.some((a) => a.id === workspaceAppId)
+        ? workspaceAppId
+        : appsList[0].id;
+    onWorkspaceAppChange(persistedId);
     // `onWorkspaceAppChange` is stable enough for this one-shot init; listing deps would retrigger every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appsBusy, appsQuery.isError, appsList, selectedAppId]);
+  }, [appsBusy, appsQuery.isError, appsList, selectedAppId, workspaceAppId]);
+
+  useEffect(() => {
+    if (!workspaceAppId || workspaceAppId === selectedAppId) return;
+    if (!appsList.some((a) => a.id === workspaceAppId)) return;
+    onWorkspaceAppChange(workspaceAppId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceAppId, appsList, selectedAppId]);
 
   useEffect(() => {
     if (appsBusy || appsQuery.isError) return;
@@ -2446,8 +3138,28 @@ export function ListingOptimizer({
         setAppName(displayName);
         if (!suppressHydrationAsync) {
           setCategory(hyd.category.trim() || appRowMeta.category);
-          setKeywords(hyd.keywordsText);
-          setFeatures(hyd.appFeatures);
+          if (
+            shouldRestoreDiscoveryInputs({
+              savedAppName: hyd.appName,
+              savedCategory: hyd.category,
+              keywordsText: hyd.keywordsText,
+              appFeatures: hyd.appFeatures,
+              promptVersion: hyd.promptVersion,
+              publicationUnlocked: hyd.publicationUnlocked,
+              workspaceAppDisplayName: displayName,
+              workspaceAppCategory: appRowMeta.category,
+            })
+          ) {
+            setKeywords(hyd.keywordsText);
+            setFeatures(hyd.appFeatures);
+          } else {
+            setKeywords(
+              resolveDiscoveryField(aid, displayName, appRowMeta.category, "keywords"),
+            );
+            setFeatures(
+              resolveDiscoveryField(aid, displayName, appRowMeta.category, "features"),
+            );
+          }
           setToneStyle(hyd.toneStyle);
           const preferLocalFinalCache = shouldPreferFinalListingCacheOverHydration(
             aid,
@@ -2462,7 +3174,18 @@ export function ListingOptimizer({
           }
         }
         setMeta(undefined);
-        if (hyd.output && !suppressHydrationAsync) {
+        if (
+          hyd.output &&
+          !suppressHydrationAsync &&
+          shouldRestoreListingOutputFromHydration({
+            savedAppName: hyd.appName,
+            savedCategory: hyd.category,
+            promptVersion: hyd.promptVersion,
+            publicationUnlocked: hyd.publicationUnlocked,
+            workspaceAppDisplayName: displayName,
+            workspaceAppCategory: appRowMeta.category,
+          })
+        ) {
           const hydTs = Date.parse(hyd.createdAt);
           const finalCacheTs = readFinalListingCacheSavedAtMs(aid);
           const finalCache = readFinalListingCache(aid);
@@ -2603,10 +3326,22 @@ export function ListingOptimizer({
   }
 
   function requestAutofill(field: AutofillField) {
+    if (discoveryWorkflowMode === "recommended") {
+      toast.message(t("marketDiscoveryWorkflow.scratchBlockedTitle"), {
+        description: t("marketDiscoveryWorkflow.scratchBlockedBody"),
+      });
+      return;
+    }
     setCreditConfirmPending({ kind: "autofill", field });
   }
 
   async function runAutofill(field: AutofillField) {
+    if (discoveryWorkflowMode === "recommended") {
+      toast.message(t("marketDiscoveryWorkflow.scratchBlockedTitle"), {
+        description: t("marketDiscoveryWorkflow.scratchBlockedBody"),
+      });
+      return;
+    }
     if (!workspaceId) {
       setError(t("appContext.missingWorkspaceId"));
       return;
@@ -3079,7 +3814,7 @@ export function ListingOptimizer({
       setGenerateJustSucceeded(true);
       setWizardStep(2);
       setWizardPanelPeek({});
-      setMetadataVariant("growth");
+      setMetadataVariant("aggressive");
       setActiveStrategyMode(queueSynthesis.strategyMode);
       setEditedTitle(coerceListingText(d.title));
       setEditedShort(coerceListingText(d.shortDescription));
@@ -3174,7 +3909,7 @@ export function ListingOptimizer({
     // used here for display only so an empty string is acceptable.
     queueHash: "",
     phase: "pipeline",
-    maxPollMs: 120_000, // match LISTING_GENERATION_TIMEOUT_MS — pipeline can take 60–90s
+    maxPollMs: 330_000, // match LISTING_GENERATION_TIMEOUT_MS — sync full unlock can exceed 180s
   });
 
   // versionId returned by POST /api/listings/generate for the optimistic shell
@@ -3284,6 +4019,44 @@ export function ListingOptimizer({
 
   const applyPersistedListingDraft = useCallback(
     (draft: ListingDraftPersistState) => {
+      const aid = selectedAppId.trim();
+      if (!aid) return;
+      const row = appsList.find((a) => a.id === aid);
+      const displayName = row?.name.trim() ?? appName.trim();
+      const appRowMeta = row
+        ? readAppListingMeta(row.metadata, row.icon_url)
+        : { category: category.trim(), shortDescription: "", iconUrl: "" };
+      const discoveryKeywords = resolveDiscoveryField(
+        aid,
+        displayName,
+        appRowMeta.category,
+        "keywords",
+      );
+      const discoveryFeatures = resolveDiscoveryField(
+        aid,
+        displayName,
+        appRowMeta.category,
+        "features",
+      );
+      const draftOutput = {
+        title: draft.editedTitle,
+        shortDescription: draft.editedShort,
+        fullDescription: draft.editedLong ?? "",
+        keywordSuggestions: [] as string[],
+        ctaSuggestions: [] as string[],
+      };
+      if (
+        shouldPurgeOrphanedListingPreview({
+          keywordsText: discoveryKeywords,
+          appFeatures: discoveryFeatures,
+          title: draftOutput.title,
+          shortDescription: draftOutput.shortDescription,
+          fullDescription: draftOutput.fullDescription,
+        })
+      ) {
+        return;
+      }
+
       const draftTs = Date.parse(draft.updatedAt ?? "");
       draftAppliedAtRef.current = Number.isFinite(draftTs)
         ? draftTs
@@ -3296,13 +4069,6 @@ export function ListingOptimizer({
       setEditedLong(draft.editedLong ?? "");
       setModularDraftReady(draft.modularDraftReady);
       setListingExportUnlocked(false);
-      const draftOutput = {
-        title: draft.editedTitle,
-        shortDescription: draft.editedShort,
-        fullDescription: draft.editedLong ?? "",
-        keywordSuggestions: [] as string[],
-        ctaSuggestions: [] as string[],
-      };
       setResult(draftOutput);
       if (draft.modularDraftReady) {
         setWizardStep(2);
@@ -3327,7 +4093,7 @@ export function ListingOptimizer({
         setServerStep((prev) => (prev === null ? 0 : prev));
       }
     },
-    [modularGeneration, selectedAppId],
+    [modularGeneration, selectedAppId, appsList, appName, category, resolveDiscoveryField],
   );
 
   const modularDraftPayload = useMemo((): ModularListingDraftSnapshot | null => {
@@ -3338,7 +4104,10 @@ export function ListingOptimizer({
       modularGeneration.state.shortDescription.variations.length > 0 ||
       Boolean((editedLong ?? "").trim());
     if (!hasContent) return null;
+    const aid = selectedAppId.trim();
+    if (!aid) return null;
     return {
+      appId: aid,
       modularState: modularGeneration.state,
       editedTitle,
       editedShort,
@@ -3354,15 +4123,51 @@ export function ListingOptimizer({
     editedShort,
     editedLong,
     modularLongUiMode,
+    selectedAppId,
   ]);
 
   const { restoredFromStorage: draftRestoredFromStorage, clearDraft } =
     useDraftPersistence<ModularListingDraftSnapshot>({
       workspaceId: workspaceId ?? "",
+      appId: selectedAppId.trim() || undefined,
       storageKey: "modular-listing",
       payload: modularDraftPayload,
-      enabled: Boolean(workspaceId),
+      enabled: Boolean(workspaceId && selectedAppId.trim()),
       onRestore: (draft, savedAt) => {
+        const aid = selectedAppId.trim();
+        if (!aid) return;
+        if (draft.appId && draft.appId !== aid) return;
+        const row = appsList.find((a) => a.id === aid);
+        const displayName = row?.name.trim() ?? "";
+        const appRowMeta = row
+          ? readAppListingMeta(row.metadata, row.icon_url)
+          : { category: "", shortDescription: "", iconUrl: "" };
+        const discoveryKeywords = resolveDiscoveryField(
+          aid,
+          displayName,
+          appRowMeta.category,
+          "keywords",
+        );
+        const discoveryFeatures = resolveDiscoveryField(
+          aid,
+          displayName,
+          appRowMeta.category,
+          "features",
+        );
+        if (
+          shouldPurgeOrphanedListingPreview({
+            keywordsText: discoveryKeywords,
+            appFeatures: discoveryFeatures,
+            title: draft.editedTitle,
+            shortDescription: draft.editedShort,
+            fullDescription: draft.editedLong,
+          })
+        ) {
+          if (workspaceId) {
+            clearModularDraftStorage(workspaceId, "modular-listing", aid);
+          }
+          return;
+        }
         const savedTs = Date.parse(savedAt);
         draftAppliedAtRef.current = Number.isFinite(savedTs)
           ? savedTs
@@ -3382,6 +4187,7 @@ export function ListingOptimizer({
           keywordSuggestions: [],
           ctaSuggestions: [],
         });
+        listingOutputAppIdRef.current = aid;
         setLastGeneratedAtIso(
           Number.isFinite(savedTs) ? savedAt : new Date().toISOString(),
         );
@@ -3394,6 +4200,39 @@ export function ListingOptimizer({
         }
       },
     });
+
+  const prevSelectedAppForListingRef = useRef(selectedAppId);
+  useEffect(() => {
+    const aid = selectedAppId.trim();
+    const prev = prevSelectedAppForListingRef.current.trim();
+    prevSelectedAppForListingRef.current = selectedAppId;
+    if (!workspaceId || !aid || !prev || prev === aid) return;
+
+    const row = appsList.find((a) => a.id === aid);
+    const displayName = row?.name.trim() ?? "";
+    const appRowMeta = row
+      ? readAppListingMeta(row.metadata, row.icon_url)
+      : { category: "", shortDescription: "", iconUrl: "" };
+    if (purgeOrphanedListingPreviewForApp(aid, displayName, appRowMeta.category)) {
+      modularGeneration.resetModularState();
+      return;
+    }
+
+    const hasCache = Boolean(readFinalListingCache(aid));
+    const hasAppDraft =
+      readModularDraftSavedAtMs(workspaceId, "modular-listing", aid) > 0;
+    if (!hasCache && !hasAppDraft) {
+      clearListingOutputForAppSwitch();
+      modularGeneration.resetModularState();
+    }
+  }, [
+    selectedAppId,
+    workspaceId,
+    appsList,
+    modularGeneration,
+    clearListingOutputForAppSwitch,
+    purgeOrphanedListingPreviewForApp,
+  ]);
 
   useEffect(() => {
     clearDraftRef.current = clearDraft;
@@ -3439,75 +4278,7 @@ export function ListingOptimizer({
     applyPersistedListingDraft,
   ]);
 
-  useEffect(() => {
-    if (!workspaceId) return;
-    if (displayAppName.length === 0 || !category.trim() || !keywords.trim() || !features.trim()) {
-      return;
-    }
-    if (result) return;
-    if (loading) return;
-    if (modularWorkInFlight) return;
-    if (
-      asyncPipelineState.status === "queued" ||
-      asyncPipelineState.status === "processing"
-    ) {
-      return;
-    }
-    if (optimizationQueueLoading) return;
-
-    const draftKey = `${workspaceId}:${selectedAppId.trim() || "_no_app"}:${locale}`;
-    if (instantDraftLoadedRef.current === draftKey) return;
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        const queueHash = await computeActiveContextQueueHashClient(
-          allOptimizationQueueItems,
-          locale,
-        );
-        if (instantDraftLoadedRef.current === draftKey) return;
-        instantDraftLoadedRef.current = draftKey;
-
-        const draft = await generateInstantDraftListing({
-          workspaceId,
-          appId: selectedAppId.trim() || undefined,
-          appName: displayAppName,
-          category: category.trim(),
-          targetKeywords: keywords.trim(),
-          appFeatures: features.trim(),
-          toneStyle,
-          targetArabic: locale === "ar",
-          vaultLocale: locale,
-          queueHash,
-          queueItemCount: allOptimizationQueueItems.length,
-        });
-        if (cancelled || !draft.ok) return;
-        applyInstantDraftResult(draft);
-      } catch {
-        /* non-blocking preview */
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    workspaceId,
-    selectedAppId,
-    locale,
-    displayAppName,
-    category,
-    keywords,
-    features,
-    toneStyle,
-    allOptimizationQueueItems,
-    optimizationQueueLoading,
-    result,
-    loading,
-    modularWorkInFlight,
-    asyncPipelineState.status,
-    applyInstantDraftResult,
-  ]);
+  // Instant-draft preview is only created when the user runs Generate — never on mount.
 
   useEffect(() => {
     if (!result?.orchestration) {
@@ -4345,7 +5116,7 @@ export function ListingOptimizer({
       setGenerateJustSucceeded(true);
       setWizardStep(2);
       setWizardPanelPeek({});
-      setMetadataVariant("growth");
+      setMetadataVariant("aggressive");
       setActiveStrategyMode(queueSynthesis.strategyMode);
       setEditedTitle(coerceListingText(d.title));
       setEditedShort(coerceListingText(d.shortDescription));
@@ -4409,7 +5180,9 @@ export function ListingOptimizer({
           },
         }));
       }
-      if (json.meta?.persisted === false) {
+      if (json.meta?.recoveredAfterTimeout) {
+        toast.success(t("form.recoveredAfterTimeout"));
+      } else if (json.meta?.persisted === false) {
         toast.warning(t("results.persistWarning"));
       } else {
         toast.success(t("form.generateSuccessToastSaved"));
@@ -4742,17 +5515,18 @@ export function ListingOptimizer({
           }),
         },
       );
-      const data = (await res.json()) as
+      const data = await parseFetchJson<
         | {
             ok: true;
             results: LocalizedMarketRecord[];
             creditsUsed: number;
             failures?: Array<{ market: LocalizeMarket; code: string; message: string }>;
           }
-        | { ok: false; error: { code: string; message: string } };
+        | { ok: false; error: { code: string; message: string } }
+      >(res);
 
-      if (!data.ok) {
-        const errCode = (data as { ok: false; error: { code: string } }).error.code;
+      if (!data?.ok) {
+        const errCode = data && !data.ok ? data.error.code : "unknown";
         setLocalizeError(
           errCode === "insufficient_credits"
             ? t("results.localize.errorInsufficient")
@@ -4829,8 +5603,8 @@ export function ListingOptimizer({
         `/api/workspaces/${workspaceId}/listings/localize?appId=${encodeURIComponent(selectedAppId.trim())}&market=${encodeURIComponent(market)}`,
         { method: "DELETE" },
       );
-      const data = (await res.json()) as { ok: boolean };
-      if (!data.ok) {
+      const data = await parseFetchJson<{ ok: boolean }>(res);
+      if (!data?.ok) {
         setLocalizeError(t("results.localize.errorDelete"));
         return;
       }
@@ -4880,6 +5654,14 @@ export function ListingOptimizer({
   }
 
   function advanceWizard() {
+    if (wizardStep === 1) {
+      setDiscoveryWorkflowChosen(true);
+      const ws = workspaceId?.trim();
+      const aid = selectedAppId.trim();
+      if (ws && aid) {
+        persistDiscoveryWorkflowMode(ws, aid, discoveryWorkflowMode);
+      }
+    }
     setWizardStep((s) => {
       const n = (s >= 2 ? 2 : s + 1) as OptimizerWizardStep;
       return n;
@@ -5145,37 +5927,14 @@ export function ListingOptimizer({
           </div>
         ) : null}
         <p className="max-w-2xl text-[15px] leading-relaxed text-white/55 sm:text-base">{t("subtitle")}</p>
-        <p
-          className="flex max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium leading-relaxed text-[#86efac]/90 sm:text-[15px]"
-          role="status"
-          aria-label={[
-            t("guidance.selectApp"),
-            t("guidance.fillDetails"),
-            t("guidance.aiAssist"),
-            t("guidance.generate"),
-          ].join(", ")}
-        >
-          <span>{t("guidance.selectApp")}</span>
-          <span className="text-[#86efac]/45" aria-hidden>
-            {isRtl ? t("guidance.sepRtl") : t("guidance.sepLtr")}
-          </span>
-          <span>{t("guidance.fillDetails")}</span>
-          <span className="text-[#86efac]/45" aria-hidden>
-            {isRtl ? t("guidance.sepRtl") : t("guidance.sepLtr")}
-          </span>
-          <span>{t("guidance.aiAssist")}</span>
-          <span className="text-[#86efac]/45" aria-hidden>
-            {isRtl ? t("guidance.sepRtl") : t("guidance.sepLtr")}
-          </span>
-          <span>{t("guidance.generate")}</span>
-        </p>
       </header>
 
       <section
         dir={isRtl ? "rtl" : "ltr"}
-        className="mb-11 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 shadow-[0_8px_28px_-16px_rgba(0,0,0,0.42)] backdrop-blur-sm sm:mb-14 sm:p-6"
+        className="mb-11 overflow-visible rounded-2xl border border-white/[0.06] bg-white/[0.02] shadow-[0_8px_28px_-16px_rgba(0,0,0,0.42)] backdrop-blur-sm sm:mb-14"
         aria-label={t("appContext.label")}
       >
+        <div className="p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4ade80]">
@@ -5319,24 +6078,47 @@ export function ListingOptimizer({
             </div>
           </div>
         ) : null}
-      </section>
+        </div>
 
-      <OptimizerStepper
-        currentStep={wizardStep}
-        onStepChange={goWizardStep}
-        labels={[
-          t("workflow.step1"),
-          t("workflow.step2"),
-          t("workflow.step3"),
-        ]}
-        ariaLabel={t("workflow.stepperAria")}
-        stepStatusLabels={{
-          completed: t("workflow.stepCompleted"),
-          current: t("workflow.stepCurrent"),
-          upcoming: t("workflow.stepUpcoming"),
-        }}
-        isRtl={isRtl}
-      />
+        <div
+          className="mx-5 border-t border-white/[0.08] sm:mx-6"
+          role="separator"
+          aria-hidden
+        />
+
+        <div className="bg-gradient-to-b from-white/[0.03] via-white/[0.01] to-transparent px-3 py-4 sm:px-5 sm:py-5 md:px-6 md:py-6">
+          <StepperContainer
+            embedded
+            steps={orchestratorProgress.steps}
+            currentStepId={orchestratorProgress.currentStepId}
+            labels={{
+              app_identity: t("orchestrator.steps.app_identity.label"),
+              research_keywords: t("orchestrator.steps.research_keywords.label"),
+              analyze_competitors: t("orchestrator.steps.analyze_competitors.label"),
+              audit_reviews: t("orchestrator.steps.audit_reviews.label"),
+              market_discovery: t("orchestrator.steps.market_discovery.label"),
+              final_optimization: t("orchestrator.steps.final_optimization.label"),
+            }}
+            stepHints={orchestratorStepHints}
+            taskLists={orchestratorTaskLists}
+            taskListTitle={t("orchestrator.taskListTitle")}
+            ariaLabel={t("orchestrator.ariaLabel")}
+            stepStatusLabels={{
+              completed: t("workflow.stepCompleted"),
+              current: t("workflow.stepCurrent"),
+              upcoming: t("workflow.stepUpcoming"),
+              locked: t("orchestrator.stepLocked"),
+            }}
+            formatLockedTooltip={(previousStep) =>
+              t("orchestrator.lockedTooltip", { previousStep })
+            }
+            finalOptimizationLocked={finalOptimizationLocked}
+            isRtl={isRtl}
+            onStepAction={handleOrchestratorStepAction}
+            onLockedAttempt={handleLockedFinalAttempt}
+          />
+        </div>
+      </section>
 
       <div
         dir={isRtl ? "rtl" : "ltr"}
@@ -5433,69 +6215,27 @@ export function ListingOptimizer({
                   <p className="mb-4 text-xs leading-relaxed text-white/45">
                     {t("form.sectionDiscoveryHelper")}
                   </p>
-                  <div className="space-y-6 pt-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
-                      {t("workflow.discoveryCardTitle")}
-                    </p>
-                    <div className="space-y-1.5">
-                      <OptimizerSparkleTextarea
-                        id="lo-keywords"
-                        label={t("form.keywords")}
-                        labelTitle={t("form.keywordsFieldTitle")}
-                        value={keywords}
-                        onChange={setKeywords}
-                        placeholder={t("form.keywordsPlaceholder")}
-                        rows={4}
-                        minHeightClass="min-h-[92px]"
-                        disabled={Boolean(autofillBusy) || isProcessingCredits || !workspaceId}
-                        busy={autofillBusy === "keywords"}
-                        onAutofill={() => void runAutofill("keywords")}
-                        onBeforeAutofill={() => requestAutofill("keywords")}
-                        sparkleAriaLabel={t("form.autofill.sparkleAriaKeywords")}
-                        sparkleTooltip={t("form.autofill.aiAssistTooltipKeywords")}
-                        creditsNote={t("form.autofill.usesCredits", {
-                          credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
-                        })}
-                      />
-                      {keywords.trim().length === 0 ? (
-                        <p className={cn(
-                          "text-[11px] leading-relaxed text-zinc-500",
-                          isRtl && "font-arabic",
-                        )}>
-                          {t("smartWorkflow.keywordsHelper")}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="space-y-1.5">
-                      <OptimizerSparkleTextarea
-                        id="lo-features"
-                        label={t("form.features")}
-                        labelTitle={t("form.featuresFieldTitle")}
-                        value={features}
-                        onChange={setFeatures}
-                        placeholder={t("form.featuresPlaceholder")}
-                        rows={5}
-                        minHeightClass="min-h-[144px]"
-                        disabled={Boolean(autofillBusy) || isProcessingCredits || !workspaceId}
-                        busy={autofillBusy === "features"}
-                        onAutofill={() => void runAutofill("features")}
-                        onBeforeAutofill={() => requestAutofill("features")}
-                        sparkleAriaLabel={t("form.autofill.sparkleAriaFeatures")}
-                        sparkleTooltip={t("form.autofill.aiAssistTooltipFeatures")}
-                        creditsNote={t("form.autofill.usesCredits", {
-                          credits: AI_CREDIT_COSTS.listing_optimizer_autofill,
-                        })}
-                      />
-                      {features.trim().length === 0 ? (
-                        <p className={cn(
-                          "text-[11px] leading-relaxed text-zinc-500",
-                          isRtl && "font-arabic",
-                        )}>
-                          {t("smartWorkflow.featuresHelper")}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
+                  <MarketDiscoveryWorkflow
+                    mode={discoveryWorkflowMode}
+                    onModeChange={handleDiscoveryWorkflowModeChange}
+                    workflowChosen={discoveryWorkflowChosen}
+                    isRtl={isRtl}
+                    keywords={keywords}
+                    features={features}
+                    onKeywordsChange={setKeywords}
+                    onFeaturesChange={setFeatures}
+                    isFetchingSpyContext={isFetchingSpyContext}
+                    showMissingContextAlert={showMissingContextAlert}
+                    disableScratchAutofill={discoveryWorkflowMode === "recommended"}
+                    autofillBusy={autofillBusy}
+                    isProcessingCredits={isProcessingCredits}
+                    workspaceReady={Boolean(workspaceId)}
+                    onRequestAutofill={requestAutofill}
+                    onNavigateToCompetitorSpy={() =>
+                      navigateToOptimizerModule("competitors")
+                    }
+                    onNavigateToReviews={() => navigateToOptimizerModule("reviews")}
+                  />
                   {/* Step-1 Continue: hidden while serverStep is null (server check
                       pending) or when serverStep is already 2 (Final Optimization
                       should be shown instead — guard-clause effect will sync). */}
@@ -5902,6 +6642,7 @@ export function ListingOptimizer({
               workspaceId={workspaceId}
               selectedAppId={selectedAppId}
               listingGenerationId={listingGenerationId}
+              listingVersionId={currentBuildVersionId ?? undefined}
               trackKwBusy={trackKwBusy}
               onTrackKeywords={() => void trackKeywordsInKeywordTracker()}
               logoGenTriggerDisabled={logoGenTriggerDisabled}
@@ -5912,6 +6653,7 @@ export function ListingOptimizer({
               canSaveToTracker={canSaveKeywordsToTracker}
               generationQueueSnapshot={generationQueueSnapshot}
               strategyMode={activeStrategyMode}
+              toneStyle={toneStyle}
               metadataVariant={metadataVariant}
               onMetadataVariantChange={handleMetadataVariantChange}
               onRegenerateOrchestrationModule={(moduleId) =>
@@ -5986,6 +6728,11 @@ export function ListingOptimizer({
               <ListingHistory
                 workspaceId={workspaceId}
                 appId={selectedAppId.trim() || undefined}
+                appName={
+                  selectedAppRow?.id === selectedAppId.trim()
+                    ? selectedAppRow.name?.trim() || undefined
+                    : undefined
+                }
                 locale={locale}
               />
             ) : null}

@@ -1,8 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { OptimizationQueueItem, OptimizationQueueLocale } from "@/lib/optimization-queue";
+import type { OptimizationQueueLocale } from "@/lib/optimization-queue";
 import type { OptimizationQueueResponse } from "@/lib/client/optimization-queue-client";
+import { OPTIMIZATION_QUEUE_KEY } from "@/lib/client/optimization-queue-client";
 import {
-  getOptimizationQueueStoreRegistryKeys,
   hydrateOptimizationQueueStore,
   optimizationQueueStoreKey,
   patchOptimizationQueueStore,
@@ -16,53 +16,52 @@ export function optimizationQueueQueryPrefix(
   return ["optimization-queue", workspaceId, locale] as const;
 }
 
-function collectStoreKeysForWorkspaceLocale(
-  workspaceId: string,
-  locale: OptimizationQueueLocale,
-): Set<string> {
-  const prefix = `${workspaceId}:${locale}:`;
-  const keys = new Set<string>([optimizationQueueStoreKey(workspaceId, locale)]);
-  for (const key of getOptimizationQueueStoreRegistryKeys()) {
-    if (key.startsWith(prefix)) keys.add(key);
-  }
-  return keys;
-}
-
-/** Hydrate every in-memory queue store for this workspace locale (all app scopes). */
-export function hydrateAllOptimizationQueueStores(
-  workspaceId: string,
-  locale: OptimizationQueueLocale,
-  snapshot: Pick<OptimizationQueueResponse, "items" | "stats">,
-): void {
-  for (const key of collectStoreKeysForWorkspaceLocale(workspaceId, locale)) {
-    hydrateOptimizationQueueStore(key, snapshot);
-  }
-}
-
-/** Patch every in-memory queue store for optimistic cross-route updates. */
-export function patchAllOptimizationQueueStores(
-  workspaceId: string,
-  locale: OptimizationQueueLocale,
-  updater: (prev: OptimizationQueueItem[]) => OptimizationQueueItem[],
-): void {
-  for (const key of collectStoreKeysForWorkspaceLocale(workspaceId, locale)) {
-    patchOptimizationQueueStore(key, updater);
-  }
-}
-
 /**
- * Keep React Query + useSyncExternalStore aligned across appId-scoped cache keys.
- * Market Intel stages without appId while Listing Optimizer reads app-scoped keys.
+ * Keep React Query + useSyncExternalStore aligned for one workspace app only.
+ * Never fan out queue data across other apps in the same workspace.
  */
 export function syncOptimizationQueueCaches(
   queryClient: QueryClient,
   workspaceId: string,
   locale: OptimizationQueueLocale,
+  appId: string | undefined,
   data: OptimizationQueueResponse,
 ): void {
-  queryClient.setQueriesData<OptimizationQueueResponse>(
-    { queryKey: optimizationQueueQueryPrefix(workspaceId, locale) },
-    data,
-  );
-  hydrateAllOptimizationQueueStores(workspaceId, locale, data);
+  const key = OPTIMIZATION_QUEUE_KEY(workspaceId, locale, appId);
+  queryClient.setQueryData(key, data);
+  hydrateOptimizationQueueStore(optimizationQueueStoreKey(workspaceId, locale, appId), {
+    items: data.items,
+    stats: data.stats,
+  });
+}
+
+/** Optimistic patch for a single app-scoped queue store + React Query cache. */
+export function patchOptimizationQueueCaches(
+  queryClient: QueryClient,
+  workspaceId: string,
+  locale: OptimizationQueueLocale,
+  appId: string | undefined,
+  updater: (
+    prev: OptimizationQueueResponse["items"],
+  ) => OptimizationQueueResponse["items"],
+): void {
+  const key = OPTIMIZATION_QUEUE_KEY(workspaceId, locale, appId);
+  const storeKey = optimizationQueueStoreKey(workspaceId, locale, appId);
+  const prevQuery = queryClient.getQueryData<OptimizationQueueResponse>(key);
+  const prevItems = prevQuery?.items ?? [];
+  const nextItems = updater(prevItems);
+
+  patchOptimizationQueueStore(storeKey, () => nextItems);
+
+  if (prevQuery) {
+    queryClient.setQueryData<OptimizationQueueResponse>(key, {
+      ...prevQuery,
+      items: nextItems,
+      stats: {
+        ...prevQuery.stats,
+        total: nextItems.length,
+        lastSyncAt: new Date().toISOString(),
+      },
+    });
+  }
 }

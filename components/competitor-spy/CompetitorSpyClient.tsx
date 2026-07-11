@@ -1200,13 +1200,13 @@ export function CompetitorSpyClient({
             .split(/[,;\n]+/u)
             .map((s) => s.trim())
             .filter(Boolean);
-      if (list.length) {
-        setPlaystoreInjectedKeywordContext(list.join(", "));
+      const appId = targetAppId || apps[0]?.id;
+      if (list.length && appId) {
+        setPlaystoreInjectedKeywordContext(list.join(", "), appId);
       }
       if (vulnerabilities?.length) {
-        setPlaystoreInjectedCompetitorVulnerabilities(vulnerabilities);
+        setPlaystoreInjectedCompetitorVulnerabilities(vulnerabilities, appId);
       }
-      const appId = targetAppId || apps[0]?.id;
       const ok = navigateToListingOptimizer(
         router,
         workspaceId,

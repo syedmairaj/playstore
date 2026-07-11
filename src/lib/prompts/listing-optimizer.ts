@@ -3,6 +3,8 @@ import type { ClusterSynthesisPayload } from "@/lib/optimization-queue/build-act
 import { activeContextHasSignals } from "@/lib/optimization-queue/build-active-context-synthesis";
 import { buildStrategyModePromptBlock } from "@/lib/prompts/aso-strategy-mode";
 import { buildOrchestrationProtocolPromptBlock } from "@/lib/prompts/listing-orchestration-protocol";
+import { buildPerformanceAnalystSystemXml } from "@/lib/gemini/prompt-builder";
+import { buildListingVariantsTonePromptBlock } from "@/lib/listing/tone-ab-deploy-plan";
 
 const PROMPT_VERSION = "listing-optimizer-v16.0";
 
@@ -325,8 +327,10 @@ function buildCvrSynthesisStrategyBlock(targetArabic: boolean): string {
 // clarity), ctaSuggestion (single best outcome-driven CTA alongside array).
 // All v8/v10 fields retained.
 //
-function buildSystemMessage(targetArabic: boolean): string {
+function buildSystemMessage(targetArabic: boolean, selectedTone: ToneStyle): string {
   return [
+    buildPerformanceAnalystSystemXml(),
+    "",
     // ── Role ─────────────────────────────────────────────────────────────────
     "You are the world's leading ASO Strategist. " +
       "You are provided with a curated optimization queue containing high-intent keywords and specific user/competitor pain points. " +
@@ -404,7 +408,8 @@ function buildSystemMessage(targetArabic: boolean): string {
       "[intent] (7 items — goal-oriented queries your user types), " +
       "[gap] (5 items — SYNTHESIS: if competitor weaknesses present, gap keywords must directly reflect them; " +
       "otherwise frame competitor shortcomings as frustrated search queries). " +
-      "Vocabulary register matches tone. Keywords are for Play Console backend — not for verbatim insertion in prose.",
+      "Vocabulary register matches tone. Keywords are for Play Console backend — not for verbatim insertion in prose. " +
+      "Do NOT include keywordIntelligence in JSON — ROI metrics are computed server-side from these keywords.",
 
     "  ctaSuggestions: array of 4-8 items. " +
       "First item MUST start with 'WHY THIS RANKS: ' — 1-2 sentences on the specific keyword + displacement angle for page 1. " +
@@ -440,11 +445,7 @@ function buildSystemMessage(targetArabic: boolean): string {
       "exploitationResolutionSummary (≤800 chars): top 3 staged issues addressed with Impact %; if Offensive, how copy positions against competitor failure (no rival names). " +
       "roiPrediction (≤500 chars): how metadata alignment targets Impact % for conversion + visibility. ",
 
-    "  listingVariants: object with aggressive + growth — BOTH required when Strategy Mode block is present. " +
-      "Each variant: title (≤30), shortDescription (≤80), fullDescription (≤4000), whatsNew (≤500). " +
-      "aggressive = high-velocity acquisition (urgency, contrast, bold hooks). " +
-      "growth = sustainable conversion (trust, clarity, retention). " +
-      "Root title/shortDescription/fullDescription/whatsNew MUST equal listingVariants.growth values.",
+    buildListingVariantsTonePromptBlock(selectedTone),
 
     // ── v16 Orchestration Protocol ───────────────────────────────────────────
     "  orchestration: object — MANDATORY. Three-phase discrete modules for independent UI regenerate:",
@@ -769,6 +770,7 @@ function buildUserMessage(
     topStagedIssues: input.topStagedIssues ?? [],
     trackedKeywordSignals: input.trackedKeywordSignals,
     targetArabic,
+    selectedTone: input.toneStyle,
   });
 
   const primaryPainPoint =
@@ -866,7 +868,7 @@ export function buildListingOptimizerMessages(input: ListingOptimizerInput): {
   // Token-budget enforcement
   const keywords = truncateKeywords(input.targetKeywords);
 
-  const system = buildSystemMessage(targetArabic);
+  const system = buildSystemMessage(targetArabic, input.toneStyle);
   const user = buildUserMessage(input, keywords, targetArabic);
 
   return { system, user };

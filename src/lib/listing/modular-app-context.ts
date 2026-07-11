@@ -63,6 +63,7 @@ export function buildModularAppContextBlock(
       topStagedIssues: input.topStagedIssues ?? [],
       trackedKeywordSignals: input.trackedKeywordSignals,
       targetArabic,
+      selectedTone: input.toneStyle,
     }),
   ];
 

@@ -92,6 +92,12 @@ export type MetadataVariantToggleProps = {
   hasGrowth: boolean;
   isRtl?: boolean;
   className?: string;
+  /** When true, labels map to dynamic tone A/B arms (e.g. Friendly · 50%). */
+  toneAbMode?: boolean;
+  /** Override Arm A label when toneAbMode (from deploy plan). */
+  armALabel?: string;
+  /** Override Arm B label when toneAbMode (from deploy plan). */
+  armBLabel?: string;
 };
 
 export function MetadataVariantToggle({
@@ -101,6 +107,9 @@ export function MetadataVariantToggle({
   hasGrowth,
   isRtl = false,
   className,
+  toneAbMode = false,
+  armALabel,
+  armBLabel,
 }: MetadataVariantToggleProps) {
   const t = useTranslations("optimizer.results.metadataVariant");
 
@@ -130,7 +139,7 @@ export function MetadataVariantToggle({
           !hasAggressive && "pointer-events-none opacity-40",
         )}
       >
-        {t("aggressive")}
+        {toneAbMode ? (armALabel ?? t("aggressiveAb")) : t("aggressive")}
       </button>
       <button
         type="button"
@@ -145,7 +154,7 @@ export function MetadataVariantToggle({
           !hasGrowth && "pointer-events-none opacity-40",
         )}
       >
-        {t("growth")}
+        {toneAbMode ? (armBLabel ?? t("growthAb")) : t("growth")}
       </button>
     </div>
   );

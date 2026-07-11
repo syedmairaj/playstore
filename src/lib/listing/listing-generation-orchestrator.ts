@@ -47,6 +47,7 @@ import {
 import { shortVariationText, orderShortVariations, shortVariationTypeFromOrchestrationId } from "@/lib/listing/modular-short-variations";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import { upsertListingGeneration } from "@/lib/db/listing-generations";
+import { recordGenerationPhaseCost } from "@/lib/listing/record-generation-phase-cost";
 import {
   clearListingGenerationJobState,
   LISTING_GENERATION_SUPERSEDED_ERROR,
@@ -1172,9 +1173,17 @@ export async function runListingGenerationOrchestrator(
         "\n" +
         (bodyForGeneration.modularListing?.longDescription?.closing ?? "");
 
+      const listingTitle =
+        bodyForGeneration.modularListing?.title?.value?.trim() ||
+        bodyForGeneration.contextTitle?.trim() ||
+        input.appName;
+
       const captionsResult = await generateListingPipelineCaptions({
         appName: input.appName,
         category: input.category,
+        listingTitle,
+        toneStyle: input.toneStyle,
+        appFeatures: input.appFeatures,
         longDescription:
           longText.trim() || input.appFeatures.slice(0, 800),
         locale: (body.vaultLocale ?? "en") as "en" | "ar",

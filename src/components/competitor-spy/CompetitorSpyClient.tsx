@@ -27,6 +27,8 @@ import { Crosshair, Info, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useRouter } from "@/i18n/navigation";
+import { useWorkspaceApp } from "@/contexts/WorkspaceAppContext";
+import { readPersistedWorkspaceAppId } from "@/lib/client/workspace-app-sync";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -132,11 +134,19 @@ type WorkspaceKeywordListRow = {
 
 export type { StoredCompetitor };
 
-function storageKeyCompetitors(workspaceId: string) {
+function storageKeyCompetitors(workspaceId: string, appId: string) {
+  return `${STORAGE_COMPETITORS}:${workspaceId}:${appId}`;
+}
+
+function storageKeyTracked(workspaceId: string, appId: string) {
+  return `${STORAGE_TRACKED}:${workspaceId}:${appId}`;
+}
+
+function legacyStorageKeyCompetitors(workspaceId: string) {
   return `${STORAGE_COMPETITORS}:${workspaceId}`;
 }
 
-function storageKeyTracked(workspaceId: string) {
+function legacyStorageKeyTracked(workspaceId: string) {
   return `${STORAGE_TRACKED}:${workspaceId}`;
 }
 
@@ -177,7 +187,11 @@ function parseTracked(raw: string | null): string[] {
 
 type PreviewByCompetitorId = Record<string, SerperPreviewCountry[]>;
 
-function storageKeyPreviews(workspaceId: string) {
+function storageKeyPreviews(workspaceId: string, appId: string) {
+  return `${STORAGE_PREVIEWS}:${workspaceId}:${appId}`;
+}
+
+function legacyStorageKeyPreviews(workspaceId: string) {
   return `${STORAGE_PREVIEWS}:${workspaceId}`;
 }
 
@@ -309,6 +323,7 @@ export function CompetitorSpyClient({
   const analyzeSectionRef = useRef<HTMLDivElement>(null);
   const locale = useLocale();
   const router = useRouter();
+  const { workspaceAppId, setWorkspaceAppId } = useWorkspaceApp();
   const isRtl = locale === "ar";
   const defaultMarket = (locale === "ar" ? "sa" : "us") as SupportedCountryCode;
   const rankLabels = useMemo(
@@ -332,8 +347,21 @@ export function CompetitorSpyClient({
   );
   const [apps, setApps] = useState<WorkspaceAppListRow[]>(() => initialApps ?? []);
   const [appsLoadError, setAppsLoadError] = useState<string | null>(initialAppsLoadError);
-  const [targetAppId, setTargetAppId] = useState(() => initialApps?.[0]?.id ?? "");
+  const [targetAppId, setTargetAppId] = useState(() => {
+    const persisted = readPersistedWorkspaceAppId(workspaceId);
+    if (persisted && initialApps?.some((a) => a.id === persisted)) {
+      return persisted;
+    }
+    return initialApps?.[0]?.id ?? "";
+  });
   const vaultLocale = locale === "ar" ? "ar" : "en";
+
+  useEffect(() => {
+    if (!workspaceAppId || workspaceAppId === targetAppId) return;
+    if (!apps.some((a) => a.id === workspaceAppId)) return;
+    setTargetAppId(workspaceAppId);
+  }, [workspaceAppId, apps, targetAppId]);
+
   const {
     addItems: addToOptimizationQueue,
     allItems: allQueueItems,
@@ -464,20 +492,53 @@ export function CompetitorSpyClient({
   }, [activeCountry, countriesHydrated]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const sessionList = parseSessionCompetitors(
-      sessionStorage.getItem(storageKeyCompetitors(workspaceId)),
-    );
-    const sessionPreviews = parsePreviews(
-      sessionStorage.getItem(storageKeyPreviews(workspaceId)),
-    );
-    if (sessionList.length > 0) {
-      setCompetitors(sessionList);
-      setPreviewByCompetitorId(sessionPreviews);
+    if (!targetAppId || typeof window === "undefined") return;
+    const migrateLegacy =
+      targetAppId === readPersistedWorkspaceAppId(workspaceId);
+    const competitorsKey = storageKeyCompetitors(workspaceId, targetAppId);
+    const previewsKey = storageKeyPreviews(workspaceId, targetAppId);
+    const trackedKey = storageKeyTracked(workspaceId, targetAppId);
+
+    let sessionList = parseSessionCompetitors(sessionStorage.getItem(competitorsKey));
+    let sessionPreviews = parsePreviews(sessionStorage.getItem(previewsKey));
+    let tracked = parseTracked(sessionStorage.getItem(trackedKey));
+
+    if (sessionList.length === 0 && migrateLegacy) {
+      const legacyList = parseSessionCompetitors(
+        sessionStorage.getItem(legacyStorageKeyCompetitors(workspaceId)),
+      );
+      if (legacyList.length > 0) {
+        sessionList = legacyList;
+        sessionStorage.setItem(competitorsKey, JSON.stringify(legacyList));
+        sessionStorage.removeItem(legacyStorageKeyCompetitors(workspaceId));
+      }
     }
-    setTrackedTerms(parseTracked(sessionStorage.getItem(storageKeyTracked(workspaceId))));
+    if (Object.keys(sessionPreviews).length === 0 && migrateLegacy) {
+      const legacyPreviews = parsePreviews(
+        sessionStorage.getItem(legacyStorageKeyPreviews(workspaceId)),
+      );
+      if (Object.keys(legacyPreviews).length > 0) {
+        sessionPreviews = legacyPreviews;
+        sessionStorage.setItem(previewsKey, JSON.stringify(legacyPreviews));
+        sessionStorage.removeItem(legacyStorageKeyPreviews(workspaceId));
+      }
+    }
+    if (tracked.length === 0 && migrateLegacy) {
+      const legacyTracked = parseTracked(
+        sessionStorage.getItem(legacyStorageKeyTracked(workspaceId)),
+      );
+      if (legacyTracked.length > 0) {
+        tracked = legacyTracked;
+        sessionStorage.setItem(trackedKey, JSON.stringify(legacyTracked));
+        sessionStorage.removeItem(legacyStorageKeyTracked(workspaceId));
+      }
+    }
+
+    setCompetitors(sessionList);
+    setPreviewByCompetitorId(sessionPreviews);
+    setTrackedTerms(tracked);
     setHydrated(true);
-  }, [workspaceId]);
+  }, [workspaceId, targetAppId]);
 
   useEffect(() => {
     if (initialApps?.length) return;
@@ -576,7 +637,12 @@ export function CompetitorSpyClient({
           // Eagerly flush to sessionStorage so a same-tab page navigation picks up the
           // pruned list before the React re-render writes the state via the deferred effect.
           try {
-            sessionStorage.setItem(storageKeyTracked(workspaceId), JSON.stringify(next));
+            if (targetAppId) {
+              sessionStorage.setItem(
+                storageKeyTracked(workspaceId, targetAppId),
+                JSON.stringify(next),
+              );
+            }
           } catch { /* private mode / quota */ }
           return next;
         });
@@ -693,13 +759,13 @@ export function CompetitorSpyClient({
     setDbLoadPending(true);
 
     const sessionList = parseSessionCompetitors(
-      typeof window !== "undefined"
-        ? sessionStorage.getItem(storageKeyCompetitors(workspaceId))
+      typeof window !== "undefined" && targetAppId
+        ? sessionStorage.getItem(storageKeyCompetitors(workspaceId, targetAppId))
         : null,
     );
     const sessionPreviews = parsePreviews(
-      typeof window !== "undefined"
-        ? sessionStorage.getItem(storageKeyPreviews(workspaceId))
+      typeof window !== "undefined" && targetAppId
+        ? sessionStorage.getItem(storageKeyPreviews(workspaceId, targetAppId))
         : null,
     );
 
@@ -851,19 +917,28 @@ export function CompetitorSpyClient({
   }, [dbLoadPending, hydrated, selectedCompetitorId, workspaceId]);
 
   useEffect(() => {
-    if (!hydrated || typeof window === "undefined") return;
-    sessionStorage.setItem(storageKeyCompetitors(workspaceId), JSON.stringify(competitors));
-  }, [competitors, hydrated, workspaceId]);
+    if (!hydrated || !targetAppId || typeof window === "undefined") return;
+    sessionStorage.setItem(
+      storageKeyCompetitors(workspaceId, targetAppId),
+      JSON.stringify(competitors),
+    );
+  }, [competitors, hydrated, workspaceId, targetAppId]);
 
   useEffect(() => {
-    if (!hydrated || typeof window === "undefined") return;
-    sessionStorage.setItem(storageKeyTracked(workspaceId), JSON.stringify(trackedTerms));
-  }, [trackedTerms, hydrated, workspaceId]);
+    if (!hydrated || !targetAppId || typeof window === "undefined") return;
+    sessionStorage.setItem(
+      storageKeyTracked(workspaceId, targetAppId),
+      JSON.stringify(trackedTerms),
+    );
+  }, [trackedTerms, hydrated, workspaceId, targetAppId]);
 
   useEffect(() => {
-    if (!hydrated || typeof window === "undefined") return;
-    sessionStorage.setItem(storageKeyPreviews(workspaceId), JSON.stringify(previewByCompetitorId));
-  }, [previewByCompetitorId, hydrated, workspaceId]);
+    if (!hydrated || !targetAppId || typeof window === "undefined") return;
+    sessionStorage.setItem(
+      storageKeyPreviews(workspaceId, targetAppId),
+      JSON.stringify(previewByCompetitorId),
+    );
+  }, [previewByCompetitorId, hydrated, workspaceId, targetAppId]);
 
   useEffect(() => {
     if (apps[0]?.id && !apps.some((a) => a.id === targetAppId)) {
@@ -1611,9 +1686,9 @@ export function CompetitorSpyClient({
         // Purge sessionStorage entry immediately so a subsequent mount does not
         // resurrect the deleted row from the session cache before the next DB fetch.
         try {
-          if (typeof window !== "undefined") {
-            sessionStorage.removeItem(storageKeyCompetitors(workspaceId));
-            sessionStorage.removeItem(storageKeyPreviews(workspaceId));
+          if (typeof window !== "undefined" && targetAppId) {
+            sessionStorage.removeItem(storageKeyCompetitors(workspaceId, targetAppId));
+            sessionStorage.removeItem(storageKeyPreviews(workspaceId, targetAppId));
           }
         } catch { /* private mode / quota */ }
         // Invalidate the Next.js router cache so any in-flight or cached GET
@@ -2091,7 +2166,11 @@ export function CompetitorSpyClient({
                   <span className="font-medium text-zinc-300">{t("gap.targetAppLabel")}</span>
                   <select
                     value={targetAppId}
-                    onChange={(e) => setTargetAppId(e.target.value)}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setTargetAppId(id);
+                      setWorkspaceAppId(id || null);
+                    }}
                     className="h-11 rounded-md border border-white/[0.1] bg-[#070a0f] px-3 text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
                   >
                     {apps.map((a) => (

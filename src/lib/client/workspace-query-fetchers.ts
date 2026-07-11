@@ -4,6 +4,7 @@
  */
 
 import { isRetryableNetworkError } from "@/lib/client/query-network-retry";
+import { logAppScopedRequest } from "@/lib/client/workspace-app-sync";
 import type { AppLimitsData } from "@/hooks/use-app-limits";
 import type { VaultLocale } from "@/hooks/useOptimizerSync";
 
@@ -98,6 +99,7 @@ export async function fetchOptimizerContext(
   vaultLocale: VaultLocale,
   appId?: string,
 ) {
+  logAppScopedRequest("optimizer/context", workspaceId, appId);
   const params = new URLSearchParams({ locale: vaultLocale });
   if (appId) params.set("appId", appId);
   const response = await fetchJsonWithNetworkRetry(

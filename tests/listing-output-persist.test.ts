@@ -19,7 +19,19 @@ describe("parsePersistedListingOutput", () => {
       },
       strategySummary: "Fixed review pain points and captured market keywords.",
       ctaSuggestion: "Start tracking today — free trial.",
+      keywordIntelligence: [
+        {
+          keyword: "salt tracker",
+          cluster: "competitive",
+          searchVolume: 8000,
+          difficultyScore: 40,
+          relevanceMatch: 88,
+          roiRationale: "High-volume cluster for title reach.",
+        },
+      ],
     });
+
+    expect(parsed?.keywordIntelligence?.[0]?.searchVolume).toBe(8000);
 
     expect(parsed?.screenshotCaptions).toHaveLength(3);
     expect(parsed?.abTestVariant?.titleB).toBe("Daily Salt Sugar Log");

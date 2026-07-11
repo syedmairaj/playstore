@@ -1,5 +1,6 @@
 import type { OptimizationQueueLocale } from "@/lib/optimization-queue";
 import { fetchWithRetry } from "@/lib/client/fetch-with-retry";
+import { getSupabaseAuthHeaders } from "@/lib/client/supabase-auth-fetch-headers";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { ListingGenerationWarningsPayload } from "@/lib/listing/listing-generation-warnings";
 
@@ -50,13 +51,15 @@ export async function generateInstantDraftListing(
   input: InstantDraftListingInput,
 ): Promise<InstantDraftListingSuccess | InstantDraftListingError> {
   const workspaceId = input.workspaceId.trim();
+  const authHeaders = await getSupabaseAuthHeaders();
   const res = await fetchWithRetry("/api/listings/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Workspace-Id": workspaceId,
+      ...authHeaders,
     },
-    credentials: "same-origin",
+    credentials: "include",
     body: JSON.stringify({
       ...input,
       targetKeywords: input.targetKeywords

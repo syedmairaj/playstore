@@ -1011,6 +1011,7 @@ export function KeywordValidatorCard({
           locale: vaultLocale,
           appId,
           keyword: score.keyword,
+          market: validationMarkets[0] ?? 'us',
           difficulty: score.difficulty,
           confidence: score.confidence,
           searchVolume: score.searchVolume,
@@ -1022,6 +1023,14 @@ export function KeywordValidatorCard({
       if (!res.ok && res.status !== 404) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? 'Staging failed');
+      }
+
+      const staged = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        rankMonitoring?: { status?: string };
+      };
+      if (res.ok && staged.rankMonitoring?.status !== 'tracking_pending') {
+        console.warn('[KeywordValidator] rank monitoring bridge returned unexpected status');
       }
 
       try {
@@ -1068,7 +1077,7 @@ export function KeywordValidatorCard({
     onSuccess: (s) => {
       setStagingState((p) => ({ ...p, [s.keyword]: 'done' }));
       onKeywordStaged?.(s.keyword, s);
-      toast.success(tKv('toastStagedOptimizer'));
+      toast.success(tKv('toastStagedRankTracking'));
       dispatchStagingVaultChanged({
         workspaceId,
         appId,
@@ -1076,7 +1085,10 @@ export function KeywordValidatorCard({
         keyword: s.keyword,
       });
       void queryClient.invalidateQueries({
-        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
+        queryKey: ['market-rank-wins', workspaceId, appId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale, appId),
       });
       void queryClient.invalidateQueries({
         queryKey: optimizationQueueQueryPrefix(workspaceId, vaultLocale),
@@ -1233,7 +1245,7 @@ export function KeywordValidatorCard({
       }
 
       void queryClient.invalidateQueries({
-        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale),
+        queryKey: OPTIMIZER_CONTEXT_KEY(workspaceId, vaultLocale, appId),
       });
       if (appId) {
         patchKeywordSignalsCache(

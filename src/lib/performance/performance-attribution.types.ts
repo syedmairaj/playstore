@@ -160,6 +160,12 @@ export type PerformanceAttributionRow = {
    * Human-readable efficacy tier derived from signalEfficacyScore.
    */
   efficacyTier: "strong" | "moderate" | "weak" | "negative" | "insufficient";
+  /** Generation tone applied to this version (tone-aware A/B arm or fallback). */
+  toneApplied?: string | null;
+  /** @deprecated Use toneApplied — kept for backward compatibility. */
+  toneStyle?: string | null;
+  /** Tone experiment id when generation included an A/B deploy plan. */
+  experimentId?: string | null;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,6 +179,8 @@ export type PerformanceAttributionResponse = {
   totalVersions: number;
   /** Number of versions with at least one day of metric data. */
   versionsWithMetrics: number;
+  /** Whether Play Console GCS ingest is configured in this environment. */
+  ingestReadiness?: import("@/lib/performance/play-metrics-ingest-readiness").PlayMetricsIngestReadiness;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

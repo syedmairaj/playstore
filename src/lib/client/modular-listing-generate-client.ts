@@ -17,6 +17,7 @@ import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { ListingGenerationWarningsPayload } from "@/lib/listing/listing-generation-warnings";
 import type { GenerateOptimizedListingSuccess } from "@/lib/listing/generate-optimized-listing";
 import { fetchWithRetry } from "@/lib/client/fetch-with-retry";
+import { getSupabaseAuthHeaders } from "@/lib/client/supabase-auth-fetch-headers";
 import { pollListingGenerationJob } from "@/lib/client/poll-listing-generation-status";
 import { createListingGenerationAbortSignal, isListingGenerationClientTimeout, releaseListingGenerationAbort } from "@/lib/client/listing-generation-abort";
 import {
@@ -43,10 +44,12 @@ export type ModularGenerateClientHooks = {
   onWorkspaceHandshakeFailed?: () => void | Promise<void>;
 };
 
-function listingGenerateHeaders(workspaceId: string): HeadersInit {
+async function listingGenerateHeaders(workspaceId: string): Promise<HeadersInit> {
+  const auth = await getSupabaseAuthHeaders();
   return {
     "Content-Type": "application/json",
     "X-Workspace-Id": workspaceId,
+    ...auth,
   };
 }
 
@@ -334,8 +337,8 @@ async function postModularStep<TStep extends ModularListingGenerationStep, TData
       "/api/listings/generate",
       {
         method: "POST",
-        headers: listingGenerateHeaders(workspaceId),
-        credentials: "same-origin",
+        headers: await listingGenerateHeaders(workspaceId),
+        credentials: "include",
         body: JSON.stringify(buildModularRequestBody(input, step, extras)),
         ...(signal ? { signal } : {}),
       },
@@ -575,8 +578,8 @@ export async function finalizeModularListing(
   try {
     const res = await fetchWithRetry("/api/listings/generate", {
       method: "POST",
-      headers: listingGenerateHeaders(workspaceId),
-      credentials: "same-origin",
+      headers: await listingGenerateHeaders(workspaceId),
+      credentials: "include",
       body: JSON.stringify(
         buildModularRequestBody(input, "finalize", { modularListing }),
       ),

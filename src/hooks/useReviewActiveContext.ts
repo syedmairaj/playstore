@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo } from "react";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
 import type { OptimizationQueueItem, OptimizationQueueLocale } from "@/lib/optimization-queue";
@@ -50,8 +50,7 @@ export function useReviewActiveContext(
           .filter((id): id is string => typeof id === "string" && id.length > 0),
       };
     },
-    enabled: Boolean(workspaceId),
-    placeholderData: keepPreviousData,
+    enabled: Boolean(workspaceId && appId),
     ...queryDefaultsFor("activeContext"),
   });
 

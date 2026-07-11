@@ -1,8 +1,10 @@
+import type { ListingOptimizerHydrationPayload } from "@/lib/listing/latest-listing-hydration";
 import type { OptimizationQueueSynthesisPayload } from "@/lib/optimization-queue";
 import type { ListingGenerationOutput } from "@/lib/validation/listing-output";
 import type { OptimizationQueueLocale } from "@/lib/optimization-queue/optimization-queue.types";
 import { logClientContextAudit } from "@/lib/client/context-audit-log-client";
 import { fetchWithRetry } from "@/lib/client/fetch-with-retry";
+import { getSupabaseAuthHeaders } from "@/lib/client/supabase-auth-fetch-headers";
 import { pollListingGenerationJob } from "@/lib/client/poll-listing-generation-status";
 import { createListingGenerationAbortSignal, isListingGenerationClientTimeout, releaseListingGenerationAbort } from "@/lib/client/listing-generation-abort";
 import {
@@ -37,6 +39,8 @@ export type GenerateOptimizedListingSuccess = {
     creditsRemaining?: number;
     quality_status?: "All signals active. Synthesis mode: Maximum.";
     quality_warning?: "Listing generated using partial data. Add Review, Market, or Competitor signals for a more comprehensive strategy.";
+    /** Set when the server saved the listing but the browser timed out waiting for the response body. */
+    recoveredAfterTimeout?: boolean;
   };
 };
 
@@ -75,6 +79,59 @@ export type GenerateOptimizedListingInput = {
   modularListing?: ModularListingState;
 };
 
+/** If the HTTP client timed out but the server finished, recover the saved generation. */
+const TIMEOUT_RECOVERY_WINDOW_MS = 4 * 60 * 1000;
+
+async function tryRecoverListingAfterClientTimeout(
+  input: GenerateOptimizedListingInput,
+): Promise<GenerateOptimizedListingSuccess | null> {
+  const appId = input.appId?.trim();
+  if (!appId) return null;
+
+  try {
+    const authHeaders = await getSupabaseAuthHeaders();
+    const url = new URL("/api/listings/latest", window.location.origin);
+    url.searchParams.set("workspaceId", input.workspaceId);
+    url.searchParams.set("appId", appId);
+
+    const res = await fetch(url.toString(), {
+      credentials: "include",
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as {
+      ok?: boolean;
+      data?: ListingOptimizerHydrationPayload;
+    };
+    if (!json.ok || !json.data?.output) return null;
+
+    const hydration = json.data;
+    const createdMs = Date.parse(hydration.createdAt);
+    if (
+      !Number.isFinite(createdMs) ||
+      Date.now() - createdMs > TIMEOUT_RECOVERY_WINDOW_MS
+    ) {
+      return null;
+    }
+    if (!hydration.publicationUnlocked) return null;
+
+    return {
+      ok: true,
+      data: hydration.output,
+      meta: {
+        generationId: hydration.generationId,
+        savedAt: hydration.createdAt,
+        recoveredAfterTimeout: true,
+        quality_status: "All signals active. Synthesis mode: Maximum.",
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Client service — POST /api/listings/generate.
  * Validation/guardrails run before this is called.
@@ -101,13 +158,15 @@ export async function generateOptimizedListing(
   const timeoutAbort = createListingGenerationAbortSignal();
 
   try {
+    const authHeaders = await getSupabaseAuthHeaders();
     const res = await fetchWithRetry("/api/listings/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Workspace-Id": input.workspaceId,
+        ...authHeaders,
       },
-      credentials: "same-origin",
+      credentials: "include",
       body: JSON.stringify({
         workspaceId: input.workspaceId,
         ...(input.appId ? { appId: input.appId } : {}),
@@ -246,6 +305,10 @@ export async function generateOptimizedListing(
   } catch (error) {
     console.error("Frontend Fetch Error:", error);
     if (isListingGenerationClientTimeout(error, timeoutAbort)) {
+      const recovered = await tryRecoverListingAfterClientTimeout(input);
+      if (recovered) {
+        return recovered;
+      }
       return {
         ok: false,
         status: 503,

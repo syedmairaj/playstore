@@ -9,6 +9,7 @@ import { diffQueueInputs } from "@/lib/optimization-queue/queue-routing";
 import { buildQueueDeltaFromResponse } from "@/lib/client/active-context-delta";
 import { dispatchStagingVaultDelta } from "@/lib/client/staging-vault-sync";
 import { isRetryableNetworkError } from "@/lib/client/query-network-retry";
+import { logAppScopedRequest } from "@/lib/client/workspace-app-sync";
 
 export type OptimizationQueueResponse = {
   items: OptimizationQueueItem[];
@@ -26,6 +27,7 @@ export async function fetchOptimizationQueue(
   locale: OptimizationQueueLocale,
   appId?: string,
 ): Promise<OptimizationQueueResponse> {
+  logAppScopedRequest("optimization-queue", workspaceId, appId);
   const params = new URLSearchParams({ locale });
   if (appId) params.set("appId", appId);
   let res: Response;

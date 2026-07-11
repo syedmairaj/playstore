@@ -27,7 +27,10 @@ type DashboardShellProps = {
 
 export function DashboardShell(props: DashboardShellProps) {
   return (
-    <WorkspaceAppProviders initialCreditsBalance={props.creditsRemaining}>
+    <WorkspaceAppProviders
+      workspaceId={props.workspaceId}
+      initialCreditsBalance={props.creditsRemaining}
+    >
       <DashboardShellInner {...props} />
     </WorkspaceAppProviders>
   );

@@ -10,6 +10,11 @@
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  invalidateRankWinsCacheForApp,
+  stageKeyword,
+} from "@/lib/keywords/stage-keyword";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 
 const ROUTE = "POST/DELETE /api/workspaces/[workspaceId]/staging-vault/keywords";
@@ -30,6 +35,8 @@ const postBodySchema = z.object({
     })
     .optional(),
   recommendation: z.string().optional(),
+  /** Primary Play market for Keyword Tracker + Live Rank Tracking (e.g. us). */
+  market: z.string().trim().min(2).max(8).default("us"),
 });
 
 const deleteBodySchema = z.object({
@@ -177,10 +184,30 @@ export async function POST(request: Request, context: Ctx) {
 
     console.info(`[${ROUTE}] Staged keyword "${keywordKey}" for app ${body.appId}`);
 
+    const admin = getSupabaseAdmin();
+    const bridge = await stageKeyword({
+      supabase: admin,
+      workspaceId,
+      appId: body.appId,
+      term: keywordKey,
+      market: body.market,
+      locale: body.locale === "ar" ? "ar-SA" : "en-US",
+      source: "keyword_validator",
+    });
+
+    void invalidateRankWinsCacheForApp(admin, workspaceId, body.appId).catch(
+      (err) => {
+        console.warn(`[${ROUTE}] rank-wins cache invalidation failed:`, err);
+      },
+    );
+
     return NextResponse.json({
       ok: true,
       keyword: keywordKey,
       stagedAt: now,
+      market: bridge.market,
+      keywordTracker: bridge.keywordTracker,
+      rankMonitoring: bridge.rankMonitoring,
     });
   } catch (err) {
     console.error(`[${ROUTE}] POST error:`, err);

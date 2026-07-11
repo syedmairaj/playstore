@@ -1,13 +1,13 @@
 # Growth Hub - Project Status & Architecture Reference
 
-**Last Updated:** June 22, 2026  
+**Last Updated:** July 11, 2026  
 **Project Phase:** Production - Active Development  
 **Status:** 🟢 Stable with Active Enhancements  
-**Session:** Post-session 5 (Async QStash listing pipeline, Context Gateway, granular billing, Settings billing UI)
+**Session:** Post-session 8 (Growth Orchestrator, multi-app ASO isolation, refresh persistence, localize hardening)
 
 > **Filename note:** Git tracks this file as `PROJECT_STATUS.md`. On case-insensitive filesystems (macOS default), `project_status.md` resolves to the **same file** — there is no separate copy. Use `PROJECT_STATUS.md` in links and tooling.
 
-**Related docs:** [`STAGING_VAULT_INTEGRATION_SUMMARY.md`](./STAGING_VAULT_INTEGRATION_SUMMARY.md) · [`docs/architecture.md`](./docs/architecture.md) · [`docs/api.md`](./docs/api.md) · [`docs/database.md`](./docs/database.md)
+**Related docs:** [`STAGING_VAULT_INTEGRATION_SUMMARY.md`](./STAGING_VAULT_INTEGRATION_SUMMARY.md) · [`IMPLEMENTATION_STATUS.md`](./IMPLEMENTATION_STATUS.md) · [`docs/architecture.md`](./docs/architecture.md) · [`docs/api.md`](./docs/api.md) · [`docs/database.md`](./docs/database.md)
 
 ---
 
@@ -16,6 +16,219 @@
 Growth Hub is a **pro-grade ASO (App Store Optimization) platform** built on modern cloud-native architecture. The platform leverages a **Staged-State architecture** pattern for feature isolation, workspace-scoped data management, and zero-breaking-changes deployment strategy.
 
 **Core Mission:** Enable indie app developers to optimize their Google Play Store listings through AI-powered keyword validation, experiment snapshots, and synthesis-driven improvements.
+
+**July 2026 focus:** Shift listing AI from “copy generator” to **Performance Analyst** — competitive gap synthesis, standardized ROI keyword intelligence, automated Bold vs Professional A/B deploy guidance, reliable sync Full AI unlock under long Gemini runs. **July 11 addendum:** unified **Growth Orchestrator** stepper, per-app discovery isolation, and refresh-safe wizard routing so returning users land on Active Context — not repeated onboarding.
+
+---
+
+## Session 8 — Growth Orchestrator, Multi-App Isolation & Refresh Persistence (July 9–11, 2026)
+
+Handoff for the Listing Optimizer UX overhaul, per-app ASO data boundaries, and session-restore fixes on `feature/hardened-listing-pipeline`.
+
+### Problem statements (resolved)
+
+| Symptom | Root cause | Fix |
+|---------|------------|-----|
+| Salt Sugar / blood pressure copy bleeding into **snap** | Ungated `localStorage`, modular drafts, DB hydration restored listing output without configured Market Discovery | `app-discovery-context.ts` restore policy + gated hydration in `ListingOptimizer.tsx` |
+| Two competing steppers (wizard + growth path) | Duplicate navigators | Single `StepperContainer` driven by `growth-orchestrator.ts` |
+| Refresh always opened **App Identity** + workflow cards | `switchingApps` true on every mount (`prevPickerId === ""`); wizard step defaulted to `0` | `Boolean(prevPickerId) && prevPickerId !== id`; `deriveOptimizerWizardStep()` + `sessionStorage` wizard step |
+| Refresh showed Auto-Fill vs Scratch again | Workflow onboarding cards always rendered; Active Context lives in Final Optimization panel | Hide cards when `discoveryWorkflowChosen`; jump to step 2 when `hasActiveResearchContext` |
+| `SyntaxError: Unexpected end of JSON input` on localize | `geminiRes.json()` / `request.json()` on empty bodies | Safe parse in `localize-listing-schema.ts` + `listings/localize/route.ts` |
+
+### Architectural decisions
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | **Single Growth Orchestrator** | Six outcome steps: Define App → Find Keywords → Steal Gaps → User Insights → Assemble → Launch. Replaces fragmented wizard + growth-path steppers. |
+| 2 | **Off-page steps stay in modules** | `research_keywords`, `analyze_competitors`, `audit_reviews` route to Keyword Tracker / Competitor Spy / Reviews with `workspaceAppId` preserved. |
+| 3 | **Launch lock** | `isFinalOptimizationLocked()` — requires competitors + reviews complete before Final Optimization / generation. |
+| 4 | **Discovery required for listing restore** | `hasConfiguredDiscoveryInputs()` must pass before final listing cache, modular drafts, or hydration output applies. |
+| 5 | **Outcome-Based Navigator UI** | Outlined SVG icons (Tag, Search, Target, Star, Layers, Rocket); portaled `CustomTooltip` (glassmorphism, description-only); glowing path connectors; dynamic locked tooltip via `formatLockedTooltip({ previousStep })`. |
+| 6 | **Unified header panel** | Workspace App dropdown + divider + embedded stepper in one card; redundant breadcrumb guidance removed. |
+| 7 | **Wizard step derivation** | `deriveOptimizerWizardStep()` maps orchestrator progress → panels 0–2; bumps to Final Optimization when vault research is staged even if discovery text fields are empty. |
+| 8 | **Per-app session keys** | `listing-discovery-workflow:`, `listing-optimizer-wizard-step:` in `localStorage` / `sessionStorage` scoped by `workspaceId:appId`. |
+| 9 | **Market Discovery workflow** | Recommended (Auto-Fill from research) vs Manual (Start from Scratch); scratch autofill disabled in Recommended mode; credit guardrails in UI. |
+| 10 | **Localize API hardening** | `parsePostBody()` via `request.text()`; GET/POST `try/catch` always returns JSON; client `parseFetchJson()` helper. |
+| 11 | **WorkspaceAppContext** | `WorkspaceAppContext` + `useAppSync` — dashboard-scoped active app id sync across Keyword Tracker, Spy, Reviews, Optimizer. |
+
+### Growth Orchestrator step map
+
+| Orchestrator ID | Outcome label (EN) | Wizard step | Module |
+|-----------------|-------------------|-------------|--------|
+| `app_identity` | Define App | 0 | Optimizer form |
+| `research_keywords` | Find Keywords | — | `/keywords` |
+| `analyze_competitors` | Steal Gaps | — | `/competitors` |
+| `audit_reviews` | User Insights | — | `/reviews` |
+| `market_discovery` | Assemble | 1 | Optimizer form |
+| `final_optimization` | Launch | 2 | Optimizer form + Active Context |
+
+### Refresh / restore flow (after Session 8)
+
+```
+Page load → read workspaceAppId + selectedAppId
+  → switchingApps = false on first mount (prevPickerId empty)
+  → buildOrchestratorProgress() from DB + vault + form state
+  → deriveOptimizerWizardStep({ hasActiveResearchContext })
+  → max(derived, sessionStorage wizard step) → open correct panel
+  → discoveryWorkflowChosen from localStorage OR active research → hide workflow cards
+```
+
+### Session 8 key files
+
+```
+src/lib/client/growth-orchestrator.ts              — progress, locks, wizard derivation, workflow persistence
+src/lib/client/app-discovery-context.ts            — discovery restore policy, orphan preview purge
+src/components/listing/optimizer/stepper-container.tsx
+src/components/listing/optimizer/custom-tooltip.tsx
+src/components/listing/optimizer/orchestrator-step-icons.tsx
+src/components/listing/optimizer/market-discovery-workflow.tsx
+src/components/ListingOptimizer.tsx                — orchestrator wiring, hydration gates, refresh fixes
+src/contexts/WorkspaceAppContext.tsx
+src/hooks/useAppSync.ts
+app/api/workspaces/[workspaceId]/listings/localize/route.ts
+src/lib/gemini/localize-listing-schema.ts
+app/globals.css                                    — orchestrator-next-glow, orchestrator-path-glow
+messages/en.json + messages/ar.json                — optimizer.orchestrator.*, marketDiscoveryWorkflow.*
+tests/growth-orchestrator.test.ts
+tests/app-discovery-context.test.ts
+tests/localize-listing-schema.test.ts
+tests/latest-listing-hydration.test.ts
+```
+
+### Session 8 verification checklist
+
+1. Select **snap** (Social) — Market Discovery blank on first visit; no Salt Sugar / blood pressure pollution.
+2. Stage keywords + review insights → refresh → lands on **Final Optimization / Active Context**, not workflow cards.
+3. Growth Orchestrator stepper shows **Assemble** with tooltips (EN + AR); Launch locked until Spy + Reviews complete.
+4. `GET /api/workspaces/.../listings/localize` returns `200` JSON (no `SyntaxError` on empty Gemini body).
+5. `npm test` — `growth-orchestrator`, `app-discovery-context`, `localize-listing-schema`, `latest-listing-hydration`.
+
+### Not errors (console noise)
+
+| Log | Meaning |
+|-----|---------|
+| `GET .../listings/localize 200` | Success — loading saved localized listings for workspace app |
+| `[KeywordCurationMode] ✓ CHECKPOINT #9` | Dev debug from Competitor Spy keyword mode (`copy` vs `selection`) — not a failure |
+
+---
+
+## Session 7 — Sync Timeout, MAX_TOKENS & Client Recovery (July 7, 2026)
+
+Quick handoff when users see `listing_generation_client_timeout` or “Service Temporarily Unavailable” despite `POST /api/listings/generate 200`.
+
+### Symptom
+
+- Server completes sync full unlock in **~170–180s** (`maxDuration = 300` on route).
+- Gemini logs `finishReason: MAX_TOKENS` at `maxOutputTokens: 32768`.
+- Browser aborts at **180s** before the large JSON body finishes downloading → `TimeoutError` / `listing_generation_client_timeout`.
+
+### Architectural decisions
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | **Client timeout 330s** | Align with API `maxDuration` (300s) + body download buffer. Constant: `LISTING_GENERATION_TIMEOUT_MS` in `listing-fast-draft.ts`. |
+| 2 | **Post-timeout recovery** | On client abort, `generateOptimizedListing()` calls `GET /api/listings/latest` — if a publication-unlocked generation exists within 4 minutes, restore it as success (`recoveredAfterTimeout: true`). |
+| 3 | **keywordIntelligence server-only** | Removed from Gemini `responseSchema` + prompt JSON contract. Enriched post-parse via `enrichKeywordIntelligence()` — cuts output tokens, avoids MAX_TOKENS on analyst fields. |
+| 4 | **Compact listingVariants** | Variant `fullDescription` capped at **1500 chars** in prompt (hook + bullets only) — root `fullDescription` stays ≤4000. Reduces duplicate prose in JSON. |
+| 5 | **User-facing recovery toast** | `form.recoveredAfterTimeout` i18n key when hydration salvage succeeds after slow response. |
+
+### Key files
+
+```
+src/lib/listing/listing-fast-draft.ts              — LISTING_GENERATION_TIMEOUT_MS = 330_000
+src/lib/client/listing-generation-abort.ts         — abort signal + release on response
+src/lib/listing/generate-optimized-listing.ts      — tryRecoverListingAfterClientTimeout()
+src/lib/gemini/generate-listing.ts                 — enrichKeywordIntelligence post-parse
+src/lib/prompts/listing-optimizer.ts               — no model keywordIntelligence; compact variants
+src/components/ListingOptimizer.tsx                — maxPollMs 330_000; recovery toast
+app/api/listings/latest/route.ts                   — hydration source for recovery
+app/api/listings/generate/route.ts                 — maxDuration = 300
+```
+
+### Verification
+
+1. Restart dev server after timeout constant change.
+2. Run **Full AI** on a workspace with gap keywords + listing variants — should complete without client timeout.
+3. If timeout still occurs but server saved: page refresh or automatic recovery should show results + toast.
+
+---
+
+## Session 6 — B2B Performance Analyst & ROI Intelligence (July 3–6, 2026)
+
+Quick handoff for multi-tenant ASO analyst output, keyword strategy UI, and tone A/B automation.
+
+### Architectural decisions
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | **Performance-first analyst XML** | `buildPerformanceAnalystSystemXml()` prepended to listing system prompt — competitive gap analysis + ROI standards, not generic copy generation. |
+| 2 | **keywordIntelligence enrichment (server)** | `enrichKeywordIntelligence()` merges Keyword Tracker signals + heuristics + optional model hints into standardized rows: `searchVolume`, `difficultyScore`, `relevanceMatch`, `roiRationale`. |
+| 3 | **Model does NOT emit keywordIntelligence** | B2B ROI fields computed server-side after parse — keeps JSON smaller and multi-tenant consistent. |
+| 4 | **Shared keyword parsing** | `keyword-strategy-parse.ts` — server-safe `parseKeyword` / `categoriseKeywords` for `[competitive]` / `[intent]` / `[gap]` prefixes. |
+| 5 | **Tone A/B deploy plan** | When ≥3 gap keywords (or ≥20% gap share) + `listingVariants` exist, `buildToneAbDeployPlan()` recommends **Bold 50%** (aggressive) vs **Professional 50%** (growth) with Play Console experiment steps. |
+| 6 | **Metadata variant labels** | `MetadataVariantToggle` shows **Bold · 50%** / **Professional · 50%** when A/B plan is active. |
+| 7 | **Attribution tone column** | `GET /performance-attribution` joins `listing_generations.tone_style` via `source_generation_id` — tone badge per version for CPI/CVR comparison. |
+| 8 | **CPI monitoring guidance** | Performance Attribution legend + deploy plan card: CPI = weekly UAC spend ÷ installers (manual until paid-metrics ingest). |
+
+### ROI intelligence output shape
+
+```typescript
+// listing-output.ts — optional on ListingGenerationOutput
+keywordIntelligence?: Array<{
+  keyword: string;
+  cluster: "competitive" | "intent" | "gap";
+  searchVolume?: number;      // from Keyword Tracker when available
+  difficultyScore?: number;   // 0–100
+  relevanceMatch?: number;    // 0–100 utility fit (anti-spam)
+  roiRationale?: string;      // ≤300 chars — why cluster drives install velocity
+}>;
+```
+
+**Quick-win heuristic:** `isQuickWinKeyword()` — volume ≥1k, difficulty ≤30 → badge in Keyword Strategy panel.
+
+### Tone A/B deploy flow
+
+```
+Keyword Strategy (gap-heavy) + listingVariants.aggressive/growth
+  → buildToneAbDeployPlan()
+  → ToneAbDeployPlanCard (optimizer results)
+  → User exports Aggressive copy → Play Console Variant A (50%)
+  → User exports Growth copy → Variant B (50%)
+  → Monitor Performance Attribution (CVR Δ, CTR, tone badge, CPI guidance)
+```
+
+### Session 6 key files
+
+```
+src/lib/gemini/prompt-builder.ts                 — buildPerformanceAnalystSystemXml()
+src/lib/prompts/listing-optimizer.ts             — analyst XML + v16 JSON contract
+src/lib/listing/enrich-keyword-intelligence.ts   — server ROI merge
+src/lib/listing/keyword-strategy-parse.ts        — shared category parser
+src/lib/listing/tone-ab-deploy-plan.ts           — Bold/Professional 50/50 plan
+src/lib/validation/listing-output.ts             — keywordIntelligence schema + persist merge
+src/lib/gemini/generate-listing.ts               — parse + enrich after Gemini
+src/components/listing/optimizer/keyword-strategy-panel.tsx  — Vol/Diff/Rel + Quick win
+src/components/listing/optimizer/tone-ab-deploy-plan-card.tsx
+src/components/listing/optimizer/strategic-rationale-card.tsx — toneAbMode labels
+src/components/listing/performance-attribution-table.tsx — tone badge + CPI legend
+app/api/workspaces/[workspaceId]/performance-attribution/route.ts — tone join
+tests/enrich-keyword-intelligence.test.ts
+tests/tone-ab-deploy-plan.test.ts
+tests/listing-output-persist.test.ts
+```
+
+### Listing Optimizer hardening (same arc — branch `feature/hardened-listing-pipeline`)
+
+| Area | Fix |
+|------|-----|
+| Full AI credits / 500 on unlock | Sync debit uses user Supabase client (not service_role bypass) |
+| Regenerate infinite spinner | `SYNC_LISTING_STEPS` runs all phases in-request on sync path |
+| Nav credits stale | `WorkspaceCreditsContext` + `syncCreditsBalance()` after billing |
+| 401 on generate | `resolveAuthenticatedUser()` — cookies + Bearer; clients send `getSupabaseAuthHeaders()` |
+| Performance Attribution empty | API filter fix + sync path creates `listing_versions` |
+| Title half-cooked | `clamp-play-store-title.ts` word-boundary clamp |
+| CTA “Why This Ranks” leak | `cta-suggestions-utils.ts` — export/copy separation |
+| Caption prompts | XML modular prompts in `prompt-builder.ts` + `enhance-listing-captions.ts` |
 
 ---
 
@@ -509,6 +722,10 @@ PlayStore Menu (static — do not modify)
 | Experiment Snapshots | Tabbed panel | ✅ Complete (parity fixed) |
 | Optimization Queue | Active Context SSOT | ✅ Complete (Session 3) |
 | Modular Listing Pipeline | Phased title/short/long + finalize | ✅ Complete (Session 4) |
+| B2B Performance Analyst prompts | XML analyst framing + gap synthesis | ✅ Complete (Session 6) |
+| ROI keywordIntelligence | Server enrichment + strategy panel UI | ✅ Complete (Session 6) |
+| Tone A/B deploy plan | Bold 50% / Professional 50% from gap keywords | ✅ Complete (Session 6) |
+| Sync full unlock timeout | 330s client + post-timeout hydration recovery | ✅ Complete (Session 7) |
 | Trial-to-Paid regenerates | Workspace trial counter + post-success debit | ✅ Complete (Session 4) |
 | Draft auto-save | `useDraftPersistence` (localStorage) | ✅ Complete (Session 4) |
 | Competitor Spy curation | Add to Queue + badges | ✅ Complete (Session 3) |
@@ -593,11 +810,14 @@ queryClient.invalidateQueries({ queryKey: ['optimization-queue', workspaceId, lo
 queryClient.invalidateQueries({ queryKey: ['optimizer-context', workspaceId, locale] });
 ```
 
-### Generate Full Listing (modular — async since Session 5)
+### Generate Full Listing (modular — async since Session 5; sync full unlock Session 6–7)
 
-- **Producer:** `POST /api/listings/generate` → validates, context gateway, phase read-check → `202 { jobId }` (or sync for `isDraft: true`)
+- **Producer:** `POST /api/listings/generate` → validates, context gateway, phase read-check → `202 { jobId }` (or **sync** for `isDraft: true` / **sync full unlock** when worker bypassed)
+- **Sync full unlock:** Can run 120–180s+; client timeout **330s**; recovery via `GET /api/listings/latest` on abort
 - **Worker:** QStash → `POST /api/listings/worker` → serialized title → short → long → post-success billing
 - **Polling:** `GET /api/listings/status?jobId=` until `completed` | `failed`
+- **ROI output:** `keywordIntelligence` enriched server-side after Gemini — not in model JSON (Session 6)
+- **Tone A/B:** `listingVariants.aggressive` = Bold arm; `listingVariants.growth` = Professional arm (Session 6)
 - **WAITING_FOR_PHASES:** `202` when finalize/regenerate called before prerequisite phases persisted (not 500)
 - **Pipeline entry:** `generationStep: pipeline` or `isRegenerate: true` required for individual steps
 - **Finalize:** `generationStep: finalize` → 5 credits post-success in worker
@@ -772,6 +992,14 @@ DROP INDEX IF EXISTS idx_vault_state_ar_features;
 
 ---
 
+## Manual Test Checklist (Session 6–7)
+
+1. **Full AI unlock:** Stage gap keywords → generate → Keyword Strategy shows Vol/Diff/Rel + Quick win badges
+2. **Tone A/B card:** With gap keywords + listingVariants → Bold/Professional 50/50 plan + variant toggle labels
+3. **Performance Attribution:** Deploy two versions → tone badges visible; CPI legend shown
+4. **Timeout recovery:** Slow generation → if client times out but server saved, results restore via latest API
+5. **No MAX_TOKENS regression:** Full JSON completes without truncation after compact variants + no model keywordIntelligence
+
 ## Manual Test Checklist (Session 5)
 
 1. **Async pipeline:** Stage keywords → Generate pipeline → `202` + `jobId` → poll until `completed`
@@ -792,6 +1020,41 @@ DROP INDEX IF EXISTS idx_vault_state_ar_features;
 
 ---
 
-**Version:** 5.0  
-**Last Updated:** June 22, 2026  
+## Open Bugs Backlog (July 7, 2026)
+
+Full table: [`IMPLEMENTATION_STATUS.md` §5](./IMPLEMENTATION_STATUS.md#5-known-bugs--open-issues).
+
+| Priority | Issue | Next action |
+|----------|-------|-------------|
+| **P0** | `MAX_TOKENS` on heavy vault contexts | Load-test full unlock; default async worker if truncation rate >20% |
+| **P0** | Empty attribution metrics in prod | Configure `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` + validate cron ingest |
+| **P1** | 2–3 min sync unlock UX | Progressive phase reveal or SSE streaming |
+| **P1** | Heuristic search volume | Integrate one SV data partner for ROI credibility |
+| **P2** | i18n gaps in new analyst UI | Move Tone A/B + keyword hints to `messages/ar.json` |
+| **P3** | `lib/` vs `src/lib/` duplication | Consolidate imports |
+
+---
+
+## Market Uplift Roadmap (playstore.xyz)
+
+**Positioning:** B2B Performance Analyst — vault signals → ROI intelligence → deploy → attribution proof.
+
+| Tier | Feature | Competitive edge |
+|------|---------|------------------|
+| **1** | Real search volume API | Enterprise/agency sales |
+| **1** | Auto Play metrics + Google Ads CPI ingest | Closed-loop ROI (no spreadsheets) |
+| **1** | Play Listing Experiments API (one-click 50/50) | Completes Tone A/B deploy plan |
+| **1** | Agency portfolio dashboard | Multi-client B2B wedge |
+| **2** | Niche analyst templates (health, fintech, games) | “Works for any app vertical” |
+| **2** | Competitor gap → auto-queue | Faster Research → Curate → Synthesize |
+| **2** | MENA Arabic optimizer parity | Regional moat vs US-only ASO tools |
+| **3** | Public ASO score embed | Top-of-funnel on playstore.xyz |
+| **3** | App Store (iOS) expansion | TAM multiplier |
+
+Detail + effort estimates: [`IMPLEMENTATION_STATUS.md` §11](./IMPLEMENTATION_STATUS.md#11-market-uplift--features-to-differentiate-playstorexyz).
+
+---
+
+**Version:** 7.1  
+**Last Updated:** July 7, 2026  
 **Status:** Production — Active Development

@@ -24,14 +24,15 @@
     "stageButton": "Stage to Keyword Tracker",
     "stagingButton": "Staging…",
     "stagedButton": "Staged to tracker",
-    "addedButton": "Added",
+    "addedButton": "Staged & Added to Rank Tracking",
     "stageStepLabel": "Stage to optimizer",
-    "stageStepHint": "Sends this keyword to the AI Listing Optimizer Active Context so you can weave it into your listing draft.",
+    "stageStepHint": "Adds this keyword to Keyword Tracker and queues it for Live Rank Tracking on the Wins Dashboard.",
     "stageCreditNotice": "Free to stage · rank updates use 1 credit/country",
     "toastValidated": "Keyword validated",
     "toastValidationFailed": "Validation failed",
     "toastStaged": "\"{keyword}\" staged to tracker",
     "toastStagedOptimizer": "Successfully staged to AI Listing Optimizer",
+    "toastStagedRankTracking": "Staged and added to Live Rank Tracking — fetch estimated rank to capture your first snapshot.",
     "toastStagingFailed": "Staging failed",
     "marketsAnalyzed": "Analyzing for {markets}",
     "marketTabAria": "View viability for {market}",
@@ -1912,6 +1913,7 @@
       "finalizeAwaitingPersistence": "Generate and save all listing phases before finalizing.",
       "finalizeStarting": "Saving final listing ({credits, plural, one {# AI credit} other {# AI credits}})…",
       "generateSuccessToastSaved": "Listing generated and saved",
+      "recoveredAfterTimeout": "Generation completed on the server — your saved listing was restored after a slow response.",
       "invalidModelOutputRegenerating": "AI output was malformed. Auto-retrying with stricter formatting rules…",
       "truncatedModelOutput": "The AI response was cut off before it finished. Your credits were refunded — try again; we automatically retry with a higher output limit.",
       "staleActiveContext": "Your Active Context changed while you were editing. We refreshed your signals — review them and generate again.",
@@ -2073,6 +2075,117 @@
       "discoverySummaryEmpty": "Add target keywords and value props",
       "finalSummaryLine": "Tone: {tone}"
     },
+    "growthPath": {
+      "title": "Growth Path",
+      "subtitle": "Complete each research step before spending credits on listing generation.",
+      "ariaLabel": "ASO Growth Path interactive navigator",
+      "researchKeywords": "Research Keywords",
+      "analyzeCompetitors": "Analyze Competitors",
+      "auditReviews": "Audit Reviews",
+      "generateListing": "Generate Listing",
+      "stepLocked": "Locked",
+      "pulseAria": "Why this step matters",
+      "lockedTitle": "Step locked",
+      "lockedGenerateMessage": "Complete Step {steps} first to unlock the best-performing listing generation.",
+      "steps": {
+        "research_keywords": {
+          "why": "Rank-ready keywords anchor your title and descriptions to real search demand.",
+          "quickAction": "Open Keyword Tracker"
+        },
+        "analyze_competitors": {
+          "why": "Competitor gaps reveal high-intent keywords and positioning you can own faster.",
+          "quickAction": "Run Analysis"
+        },
+        "audit_reviews": {
+          "why": "Review pain points become conversion hooks that reduce install friction.",
+          "quickAction": "Sync Insights"
+        },
+        "generate_listing": {
+          "why": "A researched brief produces higher ASO scores and fewer wasted generation credits.",
+          "quickAction": "Open Market Discovery",
+          "quickActionLocked": "Complete missing steps"
+        }
+      }
+    },
+    "orchestrator": {
+      "ariaLabel": "Outcome-based growth navigator",
+      "taskListTitle": "Task list",
+      "stepLocked": "Locked",
+      "lockedTooltip": "Complete {previousStep} to unlock this.",
+      "lockedTitle": "Step locked",
+      "lockedFinalMessage": "Complete Step {steps} first to unlock the best-performing listing generation.",
+      "steps": {
+        "app_identity": {
+          "label": "Define App",
+          "why": "Set app name and category so every AI asset targets the right Play listing."
+        },
+        "research_keywords": {
+          "label": "Find Keywords",
+          "why": "Identify terms that bring real traffic."
+        },
+        "analyze_competitors": {
+          "label": "Steal Gaps",
+          "why": "Spot competitor weaknesses and winnable keyword angles."
+        },
+        "audit_reviews": {
+          "label": "User Insights",
+          "why": "Turn review pain points into conversion hooks that reduce install friction."
+        },
+        "market_discovery": {
+          "label": "Assemble",
+          "why": "Pull research into a listing brief the AI can execute."
+        },
+        "final_optimization": {
+          "label": "Launch",
+          "why": "Generate a high-traffic listing when your brief is research-backed."
+        }
+      },
+      "tasks": {
+        "app_identity": {
+          "name": "Enter app name",
+          "category": "Set Play category"
+        },
+        "market_discovery": {
+          "keywords": "Add target keywords",
+          "features": "Describe app value"
+        },
+        "final_optimization": {
+          "generate": "Run full AI generation",
+          "review": "Review ASO score",
+          "export": "Unlock export to Play Console"
+        }
+      }
+    },
+    "marketDiscoveryWorkflow": {
+      "pathToggleLabel": "Recommended workflow",
+      "pathToggleHint": "Choose how Market Discovery is filled before you spend credits on generation.",
+      "pathToggleAria": "Market Discovery input mode",
+      "recommended": "Auto-Fill (AI)",
+      "manual": "Start from Scratch",
+      "manualCardTitle": "Start from Scratch",
+      "manualCardSubtitle": "Brainstorm keywords and features manually. Each ✦ field uses 3 AI credits.",
+      "manualBadge": "Manual",
+      "recommendedCardTitle": "Auto-Fill from Research",
+      "recommendedCardSubtitle": "Pull competitor keywords and review insights into this workspace — no extra autofill credits.",
+      "recommendedBadge": "AI-Powered",
+      "manualFeaturesTitle": "Write your value props",
+      "manualFeaturesSubtitle": "Describe install reasons and proof points yourself.",
+      "recommendedFeaturesTitle": "Features from Competitor Spy",
+      "recommendedFeaturesSubtitle": "Strengths and gaps flow here after you run Competitor Spy.",
+      "manualKeywordsHint": "Uses 3 credits per field to generate from scratch.",
+      "manualFeaturesHint": "Uses 3 credits per field to draft features from scratch.",
+      "recommendedKeywordsPlaceholder": "Competitor keywords appear here after you run Competitor Spy…",
+      "recommendedFeaturesPlaceholder": "Extracted strengths and gaps appear here after research modules…",
+      "autoFillNoExtraCredits": "Filled from Competitor Spy / Reviews — 0 autofill credits",
+      "missingContextTitle": "Missing context",
+      "missingContextBody": "We need your competitor insights to build a winning listing. Run Competitor Spy first, then audit Reviews for conversion signals.",
+      "linkCompetitorSpy": "Link to Competitor Spy →",
+      "linkReviews": "Audit Reviews →",
+      "fetchingFromSpy": "Fetching from Competitor Spy…",
+      "scratchDisabledTooltip": "Disabled in Auto-Fill mode — run Competitor Spy or switch to Start from Scratch.",
+      "scratchBlockedTitle": "Generate from scratch is disabled",
+      "scratchBlockedBody": "Auto-Fill mode uses Competitor Spy and Reviews. Switch to Start from Scratch or open Competitor Spy first."
+    },
     "appContext": {
       "label": "Workspace app",
       "hint": "Pick an app to pre-fill the name, or register another app when your plan allows.",
@@ -2181,7 +2294,87 @@
         "label": "Metadata version",
         "ariaLabel": "Select metadata version",
         "aggressive": "Aggressive",
-        "growth": "Growth"
+        "growth": "Growth",
+        "aggressiveAb": "Bold · 50%",
+        "growthAb": "Professional · 50%"
+      },
+      "toneAbExperiment": {
+        "kicker": "Run a Play Store A/B test",
+        "title": "{armA} vs {armB} — 50/50 split",
+        "subtitle": "Two tones, same keywords. Copy each version from the tabs below into Play Console — then see which one converts better.",
+        "variantA": "→ Play Console Variant A",
+        "variantB": "→ Play Console Variant B",
+        "previewHint": "Click to preview copy in Title / Short / Long below",
+        "proTipLabel": "Pro tip",
+        "proTips": {
+          "noOverlap": "Ensure your app is not running another store listing experiment on the same listing. Overlapping experiments corrupt your results.",
+          "significance": "For reliable results, wait until Play Console shows at least 95% statistical significance before declaring a winner — not just 14 days."
+        },
+        "checklist": {
+          "heading": "Experiment checklist",
+          "progress": "{done} of {total} complete",
+          "expandDetails": "Expand for details",
+          "hideDetails": "Hide details",
+          "playstorePrefix": "playstore.xyz:",
+          "playConsolePrefix": "Play Console:"
+        },
+        "steps": {
+          "create": {
+            "action": "Create experiment in Play Console",
+            "title": "Create the experiment in Play Console",
+            "body": "Open Grow → Store presence → Store listing experiments → Create experiment. Choose a 50/50 traffic split.",
+            "playConsoleHint": "Grow → Store presence → Store listing experiments",
+            "tip": "If you have low daily traffic (under 100 installs per day), a 50/50 split is essential to reach statistical significance faster."
+          },
+          "control": {
+            "action": "Set your live listing as Control",
+            "title": "Set your control (current live listing)",
+            "body": "Keep one arm as your current live store listing (Control). Do not replace the control with new AI copy — otherwise you lose your performance baseline.",
+            "playConsoleHint": "Control / Current listing (baseline)",
+            "controlTip": "Ideal setup: Control = what is live today. Paste only new tone copy into Variant A ({armA}) and/or Variant B ({armB}). Replacing both arms compares tones to each other — not lift vs your previous live listing."
+          },
+          "copyA": {
+            "action": "Copy {armA} → Variant A",
+            "title": "Copy {armA} into Play Console Variant A",
+            "body": "Under “Metadata version”, open the {armA} tab. Copy Title, Short description, and Full description. Paste into Variant A (50% of visitors). Skip if Variant A is your unchanged control.",
+            "playstoreHint": "Metadata version → {armA} → Title / Short / Long",
+            "playConsoleHint": "Variant A (50%)"
+          },
+          "copyB": {
+            "action": "Copy {armB} → Variant B",
+            "title": "Copy {armB} into Play Console Variant B",
+            "body": "Switch to the {armB} tab. Copy Title, Short description, and Full description again. Paste into Variant B (other 50%).",
+            "playstoreHint": "Metadata version → {armB} → Title / Short / Long",
+            "playConsoleHint": "Variant B (50%)"
+          },
+          "significance": {
+            "action": "Wait for 95% significance in Play Console",
+            "title": "Wait for significance, then mark the winner Live",
+            "body": "Start the experiment. Do not stop early just because 14 days passed — low traffic needs more time. When Play Console shows a clear winner, apply that variant as your live listing.",
+            "playConsoleHint": "Start → monitor significance %"
+          }
+        },
+        "cta": {
+          "heading": "When you have a winner",
+          "headingReady": "Setup complete — mark your winner",
+          "body": "After you apply the winning variant in Play Console, mark it Live here so Growth Tracking and Performance Attribution stay accurate.",
+          "markLive": "Mark winner as Live",
+          "markedLive": "Marked Live",
+          "updating": "Updating…",
+          "saveFirstHint": "Generate and save listing copy first to enable this action.",
+          "toastSaveFirst": "Save this generation first to track deployment status.",
+          "toastNoVersion": "No listing version found yet. Finish generation, then try again.",
+          "toastAlreadyLive": "This metadata version is already marked Live.",
+          "toastSuccess": "Winner marked as Live. Growth Tracking will treat this as your deployed listing.",
+          "toastError": "Could not update deployment status. Try again from Version History."
+        },
+        "whileRunning": {
+          "heading": "While the experiment is running",
+          "body": "Wait until Play Console shows ≥95% statistical significance — not just 14 days. Then open Performance Attribution to compare {armA} vs {armB}. For paid installs, log CPI in Growth Tracking (weekly UAC spend ÷ installers).",
+          "attributionLink": "Open Performance Attribution →"
+        },
+        "toneArmsHint": "Tone arms ({armA} vs {armB}) change voice only. Keyword strategy comes from your active Keyword Tracker and market signals — not from tone.",
+        "toneOnlyHint": "Tone changes voice only. Keyword strategy comes from your active Keyword Tracker and market signals — not from tone."
       },
       "regenerate": {
         "label": "Regenerate",
@@ -2683,7 +2876,13 @@
       "noMetricsHintTitle": "Connect Play Store metrics",
       "noMetricsHintBody": "Set GOOGLE_PLAY_SERVICE_ACCOUNT_JSON and GOOGLE_PLAY_DEVELOPER_ACCOUNT_ID to enable automatic metric sync from Google Play Console, or use PATCH /performance-attribution to enter metrics manually.",
       "legendEfficacy": "Signal Efficacy = CVR Δ ÷ Signals Used",
-      "legendCvr": "CVR delta vs previous deployed version"
+      "legendCvr": "CVR delta vs previous deployed version",
+      "legendCpi": "CPI = weekly UAC spend ÷ installers — compare arms in Performance Attribution",
+      "toneBold": "Bold",
+      "toneProfessional": "Professional",
+      "toneFriendly": "Friendly",
+      "toneMinimal": "Minimal",
+      "colTone": "Tone"
     }
   },
   "brandAssets": {
@@ -3060,6 +3259,119 @@
   "market": {
     "title": "Market Intelligence",
     "subheadline": "See what's ranking at the top of your category — and the keyword patterns driving those apps. Updated every 6 hours.",
+    "views": {
+      "charts": "Top Charts",
+      "wins": "Wins Dashboard"
+    },
+    "wins": {
+      "title": "Recent Keyword Gains",
+      "subtitle": "Keywords that climbed at least 2 positions since your last listing went live.",
+      "titleTooltip": "Compares each tracked keyword's market rank at deployment against the latest snapshot. A win counts when rank improves by at least 2 positions.",
+      "correlationNote": "Correlation based on your last metadata update on {date}.",
+      "noDeploymentNote": "Mark a listing version as Live in the AI Listing Optimizer to start tracking keyword wins after deployment.",
+      "needApp": "Add an app to your workspace to see keyword wins.",
+      "loadError": "Could not load keyword wins. Please try again.",
+      "retry": "Retry",
+      "emptyTitle": "No keyword wins yet",
+      "emptyHint": "Wins appear when a tracked keyword improves by at least {threshold} positions since deployment. Refresh ranks in Keyword Tracker to update.",
+      "emptyStates": {
+        "wins": {
+          "noDeployment": {
+            "title": "Set a deployment baseline first",
+            "body": "Keyword wins are measured from the day you mark a listing version as Live. Without that anchor date, we cannot tell whether ranks improved because of your metadata changes.",
+            "step1": "Open AI Listing Optimizer and deploy or mark your current listing as Live.",
+            "step2": "Confirm the app has tracked keywords in Keyword Tracker.",
+            "step3": "Return here after market ranks update — gains of {threshold}+ positions will appear automatically."
+          },
+          "noKeywords": {
+            "title": "Add keywords to track",
+            "body": "You have a live deployment baseline, but no keywords are being monitored yet. Wins only appear for terms you track in Keyword Tracker.",
+            "step1": "Go to Keyword Tracker and add target search terms for this app.",
+            "step2": "Run a market rank refresh to capture today's positions.",
+            "step3": "Come back once ranks move up by at least {threshold} positions since deployment."
+          },
+          "awaitingWins": {
+            "title": "Tracking {count} keywords — waiting for movement",
+            "body": "Your deployment baseline is set and keywords are tracked, but none have climbed {threshold}+ positions yet. Small daily shifts are normal; meaningful wins show up after metadata changes take hold.",
+            "step1": "Review Keyword Tracker for terms stuck below page one (100+).",
+            "step2": "Stage high-impact keywords from Market Intelligence into your next listing update.",
+            "step3": "After redeploying, allow a few rank refresh cycles before expecting wins."
+          }
+        }
+      },
+      "winCount": "{count, plural, one {# win} other {# wins}}",
+      "colKeyword": "Keyword",
+      "colRankChange": "Rank change",
+      "colGain": "Gain",
+      "gainTooltip": "Improved {positions} positions since deployment",
+      "alerts": {
+        "title": "Performance Alert",
+        "message": "Performance Alert: <term>{keyword}</term> has dropped {positions} positions. Consider reviewing your metadata in <optimizer>AI Listing Optimizer</optimizer>."
+      },
+      "liveTracking": {
+        "title": "Live Rank Tracking",
+        "subtitle": "Full market rank validation for every tracked keyword since your last deployment.",
+        "titleTooltip": "Shows pre-deployment market rank at Mark as Live, current market rank, and the net change. Expand a row for a 7-day performance sparkline.",
+        "howTo": {
+          "tooltipIntro": "How to get live market ranks in this table:",
+          "title": "How to get live market ranks",
+          "body": "Live ranks come from your <keywordTracker>Keyword Tracker</keywordTracker> refresh cycle. After you deploy, validation compares each refresh against your <optimizer>AI Listing Optimizer</optimizer> baseline.",
+          "step1": "Add target keywords in Keyword Tracker and pick the correct app and market.",
+          "step2": "Tap Refresh ranks on each keyword row to capture a live market position snapshot.",
+          "step3": "Mark your listing as Live in AI Listing Optimizer to set the pre-deployment baseline.",
+          "step4": "Return here — Current Rank and Rank Change update after each refresh."
+        },
+        "colKeyword": "Keyword",
+        "colPreDeployment": "Pre-Deployment Rank",
+        "colCurrent": "Current Rank",
+        "colChange": "Rank Change",
+        "expandSparkline": "7-day market rank trend",
+        "noData": "No tracked keywords yet. Add terms in Keyword Tracker to start live validation.",
+        "pendingDeployment": "Pending Deployment",
+        "pendingDeploymentBanner": "Keywords found: {count}. Deploy your listing to start validation.",
+        "gain": "+{value}",
+        "drop": "−{value}",
+        "neutral": "—",
+        "statusTrackingPending": "Tracking Pending"
+      },
+      "forecast": {
+        "title": "Growth Forecast",
+        "subtitle": "Projected install momentum from market performance trends × your current conversion rate.",
+        "titleTooltip": "Estimates monthly install momentum from your post-deployment market performance trend and your Growth Tracking conversion rate. Requires a 5-day observation period.",
+        "whyFiveDaysLabel": "Why 5 days?",
+        "whyFiveDaysTooltip": "To ensure your Growth Forecast is accurate and free of daily ranking fluctuations, we require a 5-day observation period to identify a genuine growth trend.",
+        "gathering": "Gathering data…",
+        "potentialGain": "Potential gain",
+        "projectedInstalls": "Projected +{count} installs this month if momentum continues",
+        "velocityLabel": "Est. install velocity",
+        "velocityValue": "{value}/day",
+        "methodNote": "Based on {days} days of post-deployment market performance and {cvr}% conversion rate from Growth Tracking.",
+        "emptyStates": {
+          "needRankHistory": {
+            "title": "Calibrating your performance baseline",
+            "body": "We require {minDays} days of market performance snapshots after your last deployment before we can estimate install velocity.",
+            "progress": "Analysis progress: {days} of {minDays} days captured.",
+            "step1": "Keep keywords active in Keyword Tracker so market performance is monitored daily.",
+            "step2": "Allow {minDays} post-deployment days of snapshots to complete calibration.",
+            "step3": "Your Growth Forecast unlocks automatically once a reliable trend is detected."
+          },
+          "needConversionRate": {
+            "title": "Add a conversion rate",
+            "body": "Market performance gains alone cannot project installs — we multiply daily visibility improvements by your store listing conversion rate from Growth Tracking.",
+            "step1": "Open Growth Tracking and enter or sync your latest conversion rate.",
+            "step2": "Ensure performance snapshots continue after deployment.",
+            "step3": "Return here once both performance trend and conversion rate are available."
+          },
+          "flatMomentum": {
+            "title": "No upward momentum yet",
+            "body": "Your performance baseline is calibrated and a conversion rate is on file, but daily market performance is flat or declining — so a meaningful install projection cannot be shown yet.",
+            "step1": "Review Keyword Tracker for terms that have not moved since deployment.",
+            "step2": "Prioritize listing updates targeting high-volume, low-visibility keywords.",
+            "step3": "Redeploy and watch for sustained improvement over several observation cycles."
+          }
+        }
+      }
+    },
     "howItWorksSummary": "How this works",
     "howItWorksDetail": "We pull the live top-chart ranking directly from Google Play for any category and market you choose. The AI Keyword Spotlight analyses the top 10 app titles and descriptions, then categorises signals into Growth Keywords and Competitor Threats for staging — qualitative UX and sentiment themes are routed to Review Insights.",
     "spotlight": {

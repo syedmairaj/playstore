@@ -1,9 +1,27 @@
 # IMPLEMENTATION_STATUS.md
 
-> **Product:** Growth Hub — ASO SaaS for Google Play  
-> **Stack:** Next.js 15 · React 19 · Supabase · Gemini · QStash · Upstash Redis · Stripe · Vercel  
-> **Last updated:** 2026-07-01  
+> **Product:** playstore.xyz (Growth Hub) — B2B ASO SaaS for Google Play  
+> **Stack:** Next.js 15 · React 19 · Supabase · Gemini (Vertex) · QStash · Upstash Redis · Stripe · Vercel  
+> **Last updated:** 2026-07-11  
+> **Branch context:** `feature/hardened-listing-pipeline`  
 > **Rule:** This file reflects current implementation reality — update it every session.
+
+**Related:** [`PROJECT_STATUS.md`](./PROJECT_STATUS.md) · [`STAGING_VAULT_INTEGRATION_SUMMARY.md`](./STAGING_VAULT_INTEGRATION_SUMMARY.md)
+
+---
+
+## 0. Current Status Snapshot (July 11, 2026)
+
+| Area | Status |
+|------|--------|
+| **Core platform** | 🟢 Production — auth, workspaces, billing, i18n shell |
+| **Listing Optimizer** | 🟢 Growth Orchestrator; per-app ASO isolation; refresh-safe wizard |
+| **Keyword / Competitor / Reviews** | 🟢 Operational; `WorkspaceAppContext` cross-module app sync |
+| **Performance Attribution** | 🟡 API + page mounted; GCS ingest needs prod credentials |
+| **Play Console publish** | 🟡 Works with service account; E2E not fully validated |
+| **Market differentiation** | 🟡 Analyst + ROI + tone A/B + guided growth path |
+
+**Positioning shift (July 2026):** playstore.xyz is no longer “AI listing copy” alone — it is a **Performance Analyst** platform: vault signals → competitive gap metadata → ROI keyword intelligence → deploy + attribution loop.
 
 ---
 
@@ -52,7 +70,7 @@
 - [x] Async QStash producer/worker — `POST /api/listings/generate` → 202 + `jobId`
 - [x] Worker (`/api/listings/worker`) — orchestrator execution + post-success credit debit
 - [x] Job status polling (`/api/listings/status`) — `force-dynamic`, `no-store` headers
-- [x] Modular steps: `title`, `short`, `long`, `finalize`, `pipeline`, `captions`
+- [x] Modular steps: `title`, `short`, `long`, `finalize`, `pipeline`, `captions`, **`full` (sync unlock)**
 - [x] Instant draft path (sync fallback)
 - [x] Context gateway — keyword signal stamping, `queueHash` deduplication
 - [x] Redis queue-hash lock — prevents duplicate in-flight jobs
@@ -66,6 +84,35 @@
 - [x] Optimizer autofill — single-field AI fill (3 credits)
 - [x] Dead-letter queue (`listing_dlq`) for failed/zombie jobs
 - [x] Phase cost telemetry — `listing_generation_costs` per step
+
+### B2B Performance Analyst & ROI Intelligence (July 2026) — **NEW**
+- [x] `buildPerformanceAnalystSystemXml()` — competitive gap + ROI standards prepended to listing prompts
+- [x] `listing-optimizer-v16.0` — performance-first JSON contract (gap keywords, strategicRationale, listingVariants)
+- [x] `enrichKeywordIntelligence()` — server-side ROI rows (searchVolume, difficultyScore, relevanceMatch, roiRationale)
+- [x] `keyword-strategy-parse.ts` — shared `[competitive]` / `[intent]` / `[gap]` parser (server + client)
+- [x] `KeywordStrategyPanel` — Vol / Diff / Rel metrics, Quick win badges, hover ROI rationale
+- [x] `keywordIntelligence` schema + persist merge in `listing-output.ts`
+- [x] Model **does not** emit `keywordIntelligence` (reduces MAX_TOKENS; enriched post-parse)
+- [x] Compact `listingVariants.fullDescription` (≤1500 chars in prompt) — reduces JSON bloat
+
+### Tone A/B Deploy Automation (July 2026) — **NEW**
+- [x] `buildToneAbDeployPlan()` — Bold 50% (aggressive) vs Professional 50% (growth) when gap keywords dominate
+- [x] `ToneAbDeployPlanCard` — Play Console experiment steps + link to Performance Attribution
+- [x] `MetadataVariantToggle` — **Bold · 50%** / **Professional · 50%** labels when plan active
+- [x] Tests: `tone-ab-deploy-plan.test.ts`, `enrich-keyword-intelligence.test.ts`
+
+### Listing Optimizer Hardening (July 2026) — **NEW**
+- [x] Sync Full AI credit debit — user-scoped Supabase client (fixes 500 on unlock)
+- [x] Regenerate spinner fix — `SYNC_LISTING_STEPS` runs all phases in-request on sync path
+- [x] `WorkspaceCreditsContext` — nav credits refresh after billing
+- [x] `resolveAuthenticatedUser()` — cookies + Bearer; fixes 401 on generate
+- [x] `getSupabaseAuthHeaders()` on all listing generate clients
+- [x] Client timeout **330s** + `tryRecoverListingAfterClientTimeout()` via `GET /api/listings/latest`
+- [x] `clamp-play-store-title.ts` — word-boundary title clamp
+- [x] `cta-suggestions-utils.ts` — “Why This Ranks” separated from install CTAs on export
+- [x] XML caption prompts (`prompt-builder.ts`) + `enhance-listing-captions.ts`
+- [x] Sync path creates `listing_versions` for Performance Attribution
+- [x] `ListingHistory` — metrics tooltips / guide for Growth Tracking
 
 ### Listing Versions & Deployment View
 - [x] `listing_versions` table — draft → published → deployed lifecycle
@@ -85,8 +132,11 @@
 - [x] Signal Efficacy Score — `(ΔCVR) / signals_used`
 - [x] Performance attribution dashboard component — expandable rows, CVR delta, efficacy tier badges
 - [x] Performance Attribution page mounted — `/app/[workspaceId]/performance-attribution` route, sidebar nav item, EN/AR i18n
+- [x] **Tone badge per version** — joins `listing_generations.tone_style` via `source_generation_id` (July 2026)
+- [x] **CPI monitoring legend** — UAC spend ÷ installers guidance in attribution table (July 2026)
 - [x] Daily cron ingestion (`/api/cron/ingest-play-metrics`) — GCS acquisition CSV → upsert
 - [x] Google Play GCS CSV parser — fuzzy header matching, bigint-safe, aggregates by country
+- [x] `listing_snapshots` + `listing_metrics` — Growth Tracking in Listing Optimizer (weekly manual entry)
 
 ### Runware Visual / Screenshot Studio
 - [x] `generateRunwareVisualPrompt` — brand-consistent prompt from brandKit.style + palette
@@ -151,30 +201,32 @@
 
 ## 2. In Progress Features
 
+### Play Console Metrics Ingestion (Production)
+- **Status:** Cron + GCS parser built; attribution table renders when data exists
+- **Gap:** Requires `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` + `GOOGLE_PLAY_DEVELOPER_ACCOUNT_ID` in production
+- **Gap:** Most workspaces see empty metrics until ingest runs or manual PATCH
+
+### CPI / Paid Acquisition Loop
+- **Status:** CPI formula documented in UI (UAC spend ÷ installers)
+- **Gap:** No `cost_per_install` column in `listing_metrics` — manual spreadsheet workflow only
+- **Gap:** No Google Ads / UAC API integration
+
+### Real Keyword Search Volume
+- **Status:** ROI panel shows tracker volume when available; else heuristics
+- **Gap:** No AppTweak / data.ai / Sensor Tower API — limits enterprise credibility
+
 ### i18n Dashboard Parity
-- **Status:** All key namespaces exist in `ar.json` but most dashboard optimizer UI is English-hardcoded inline
-- **Gap:** Many string literals in `ListingOptimizer.tsx`, `modular-listing-panel.tsx`, `deployment-view.tsx` not using `useTranslations()`
-- **Next:** Audit and replace hardcoded strings in core optimizer surfaces
+- **Status:** Performance Attribution + main nav i18n done; optimizer has mixed EN inline strings
+- **Gap:** `ToneAbDeployPlanCard`, parts of `KeywordStrategyPanel` still English-only inline
+- **Next:** Audit `ListingOptimizer.tsx` + new Session 6 components for `useTranslations()`
 
-### Listing Version — Deployment View Polish
-- **Status:** Core component built; version history panel exists
-- **Gap:** Version comparison diff view is minimal — no field-level diff highlighting
-- **Gap:** "Deploy to Play Store" button wires through `publish-listing-to-play-store.ts` but full E2E flow needs validation with live Google credentials
-
-### Performance Attribution Dashboard Integration
-- **Status:** API + table component built and wired
-- **Gap:** Not yet mounted in the main dashboard tab layout (Settings / sidebar)
-- **Gap:** `listing_version_metrics` aggregation function (`areMetricsStale`) tested but ingestion E2E not validated in production
-
-### Keyword Validator Volume Data
-- **Status:** Heuristic scoring only (competition/length/specificity heuristics)
-- **Gap:** No real search volume API connected — `estimatedVolume` is a heuristic estimate
-- **Note:** This is a known limitation; placeholder for a future data partner
+### Play Store Listing Experiments — One-Click Deploy
+- **Status:** Tone A/B plan + export copy exists; user manually pastes into Play Console
+- **Gap:** No Play Developer API experiment create/update — guidance only
 
 ### Streaming / Progressive LLM Output
-- **Status:** Modular polling returns full step results; partial field reveal on partial-status works
-- **Gap:** True streaming (SSE/token-by-token) from Gemini to frontend not implemented — pipeline uses request/response cycle
-- **Gap:** `useListingPipeline.ts` polls every 2s; no WebSocket or SSE path exists yet
+- **Status:** Modular polling returns full step results
+- **Gap:** No SSE/token streaming — long sync full unlock still 2–3 min perceived wait
 
 ---
 
@@ -218,6 +270,23 @@
 ---
 
 ## 4. All Changes (Recent Sessions)
+
+### Session 9 — Sync Timeout & MAX_TOKENS Hardening (2026-07-07)
+- `LISTING_GENERATION_TIMEOUT_MS` → **330_000** (was 180s — caused false timeouts at ~179s server completion)
+- `tryRecoverListingAfterClientTimeout()` — salvages saved listing via `GET /api/listings/latest`
+- `recoveredAfterTimeout` toast + i18n key
+- Removed `keywordIntelligence` from Gemini `responseSchema` — server enrichment only
+- Prompt: compact `listingVariants.fullDescription` (≤1500) to reduce output tokens
+- Documented in `PROJECT_STATUS.md` Session 7
+
+### Session 8 — B2B Performance Analyst + Tone A/B (2026-07-03–06)
+- Performance Analyst XML prompts (`buildPerformanceAnalystSystemXml`)
+- `enrich-keyword-intelligence.ts` + `keyword-strategy-parse.ts`
+- `KeywordStrategyPanel` ROI metrics UI
+- `tone-ab-deploy-plan.ts` + `ToneAbDeployPlanCard`
+- Performance Attribution tone badge + CPI legend
+- Listing optimizer hardening: auth 401, credits sync, regenerate spinner, title clamp, CTA export
+- Tests: `enrich-keyword-intelligence.test.ts`, `tone-ab-deploy-plan.test.ts`, `listing-output-persist.test.ts`
 
 ### Session 7 — Runware Brand-Consistent Screenshots (2026-06-29)
 - Extended `ScreenshotCaption` type with `uiFocus` (Gemini background context) and `runwarePrompt` (persisted to JSONB)
@@ -268,18 +337,35 @@
 
 ---
 
-## 5. Known Bugs / Issues
+## 5. Known Bugs / Open Issues
 
 | # | Severity | Area | Description | Status |
 |---|----------|------|-------------|--------|
-| 1 | Medium | Build | `PGRST116_FINAL_FIX.ts` in root — SQL patch file picked up as TypeScript by `tsc`, generates parse errors | Pre-existing; does not block build (Next.js ignores it) |
-| 2 | Medium | Build | `src/components/staging/StagingButtonTestHarness.tsx` — malformed JSX, multiple TS errors | Pre-existing test artifact; not imported in production |
-| 3 | Low | i18n | Most dashboard optimizer UI has hardcoded English strings inline — not using `useTranslations()` | Known; Arabic users see EN text in optimizer |
-| 4 | Low | Arch | Dual `lib/` + `src/lib/` duplication — both have `google-play-oauth.ts`, `generate-screenshot-layout.ts` etc. | Technical debt; gradual migration to `src/lib/` |
-| 5 | Low | Perf | `workspace_staging_vault` JSONB (`state_en`/`state_ar`) can grow unbounded per app; mitigated by queue cap of 50 items and dropped btree indexes | Monitor in production |
-| 6 | Low | Data | Keyword `estimatedVolume` is a heuristic — not real search volume data | By design; no data provider connected |
-| 7 | Low | Auth | `publish-play-store-reply.ts` returns `{ result: "skipped" }` silently when Google service account credentials are missing — no user-visible error | Intentional for workspaces without Play integration |
-| 8 | Info | Dev | `src/debug-token.ts`, `src/test-ingestion.ts` — debug/test scripts committed to repo | Dev artifacts; not included in production bundle |
+| 1 | **High** | Listing gen | `finishReason: MAX_TOKENS` still possible on very large vault context — mitigated but not eliminated | Monitor; consider async-only for full unlock |
+| 2 | **Medium** | UX | Sync full unlock takes **2–3 min** — no progressive UI beyond spinner | Streaming or phase reveal planned |
+| 3 | **Medium** | Data | Keyword `searchVolume` / ROI metrics are **heuristic** unless Keyword Tracker has data | Needs data partner API |
+| 4 | **Medium** | Attribution | GCS metrics ingest empty without Play service account in prod | Env config + E2E validation |
+| 5 | **Medium** | Build | `PGRST116_FINAL_FIX.ts` in root — SQL patch picked up by `tsc` | Pre-existing; delete or move to `scripts/` |
+| 6 | **Medium** | Build | `StagingButtonTestHarness.tsx` — malformed JSX, TS errors | Test artifact; delete or fix |
+| 7 | **Low** | i18n | New Session 8 components partly English-inline | Audit ToneAbDeployPlanCard, keyword hints |
+| 8 | **Low** | Arch | Dual `lib/` + `src/lib/` and `components/` + `src/components/` | Consolidate to `src/` |
+| 9 | **Low** | Perf | `workspace_staging_vault` JSONB growth — mitigated by queue cap 50 | Monitor |
+| 10 | **Low** | Auth | Play publish/reply silently skips without Google credentials | Needs clearer user messaging |
+| 11 | **Info** | Dev | Verbose `[DEBUG]` logs in `generate/route.ts` | Gate behind `DEBUG_GEMINI` only |
+
+### Recently Fixed (Session 8–9) ✅
+
+| Bug | Fix |
+|-----|-----|
+| `listing_generation_client_timeout` despite POST 200 | 330s timeout + hydration recovery |
+| Full AI 500 / credits not debited on sync unlock | User-scoped Supabase debit |
+| Regenerate infinite spinner | `SYNC_LISTING_STEPS` in-request |
+| Stale nav credits after unlock | `WorkspaceCreditsContext` |
+| 401 on `POST /api/listings/generate` | `resolveAuthenticatedUser` + Bearer headers |
+| Performance Attribution empty after sync | `listing_versions` on sync persist |
+| Half-cooked Play Store title | Word-boundary clamp |
+| “Why This Ranks” in CTA export | `cta-suggestions-utils` separation |
+| Hardcoded secrets in repo history | Scrubbed + history rewrite (branch clean) |
 
 ---
 
@@ -315,7 +401,8 @@
 | `/api/workspaces/[workspaceId]/staging/vault` | GET, POST |
 | `/api/workspaces/[workspaceId]/listing-versions` | GET, POST |
 | `/api/workspaces/[workspaceId]/listing-versions/[versionId]` | GET, PATCH |
-| `/api/workspaces/[workspaceId]/performance-attribution` | GET, PATCH |
+| `/api/workspaces/[workspaceId]/performance-attribution` | GET + PATCH; tone join; page mounted at `/performance-attribution` |
+| `/api/listings/latest` | GET — hydration + timeout recovery |
 | `/api/cron/ingest-play-metrics` | POST |
 | `/api/cron/cleanup` | POST |
 | `/api/billing/stripe/webhook` | POST |
@@ -333,10 +420,9 @@
 | Endpoint | Issue |
 |----------|-------|
 | `/api/workspaces/[workspaceId]/apps/[appId]/publish-listing` | Works when service account credentials present; silently skips otherwise. E2E with live Play Console not validated |
-| `/api/workspaces/[workspaceId]/performance-attribution` | API built; not mounted in dashboard tab navigation yet |
 | `/api/workspaces/[workspaceId]/apps/[appId]/attribution` | Attribution summary route exists; wiring to UI incomplete |
 | `/api/listings/pipeline-status` | Returns intel module readiness; some module states always return `not_ready` if vault empty |
-| `/api/workspaces/[workspaceId]/keywords/ranking-impact` | Returns data; not displayed outside credit dashboard |
+| `/api/cron/ingest-play-metrics` | Built; needs prod Google credentials to populate attribution |
 | `/api/workspaces/[workspaceId]/billing/prorated-upgrade` | GET proration + POST purchase; Stripe test mode only |
 
 ### ❌ Missing / Stub
@@ -413,7 +499,9 @@ None currently pending. All Session 7 changes (`uiFocus`, `runwarePrompt` on `Sc
 | Listing generation — title step | Gemini 2.5 Flash | Billed |
 | Listing generation — short description | Gemini 2.5 Flash | Billed |
 | Listing generation — long description (granular) | Gemini 2.5 Flash | Billed |
-| Listing generation — finalize/extras | Gemini 2.5 Flash | Billed |
+| Listing generation — full sync unlock | Gemini 2.5 Flash | Billed (5 credits) |
+| Performance Analyst + ROI enrichment | Server post-process | Free (included in full gen) |
+| Tone A/B deploy plan | Rule-based from gap keywords | Free |
 | Screenshot captions (7 per locale) | Gemini 2.5 Flash | Free step |
 | Listing autofill (single field) | Gemini 2.5 Flash | 3 credits |
 | App name / short description suggest | Gemini 2.5 Flash | 3 credits |
@@ -447,36 +535,89 @@ None currently pending. All Session 7 changes (`uiFocus`, `runwarePrompt` on `Sc
 
 ---
 
+| Real keyword search volume | Heuristic only; ROI panel needs data partner for enterprise sales |
+| Play Store Listing Experiments API | Guidance only — no automated experiment create |
+| CPI auto-tracking | Manual UAC ÷ installers; no Google Ads ingest |
+| GPT-4 / Claude fallback | Single model path (Gemini); no multi-model fallback |
+
+---
+
+## 11. Market Uplift — Features to Differentiate playstore.xyz
+
+These are **not yet built** but ranked by competitive impact for B2B ASO / MENA positioning.
+
+### Tier 1 — High impact (revenue + retention)
+
+| Feature | Why it wins | Effort |
+|---------|-------------|--------|
+| **Real search volume API** | Enterprise ASO buyers expect SV + difficulty from AppTweak/data.ai — unlocks agency tier | Medium (partner API) |
+| **Closed-loop attribution** | Auto-ingest Play Console + optional Google Ads → show CPI/CVR by tone arm without manual entry | Medium (credentials + UI) |
+| **Play Listing Experiments API** | One-click deploy Bold/Professional 50/50 from `ToneAbDeployPlanCard` — no copy-paste | High (Play API scope) |
+| **Agency multi-workspace dashboard** | Portfolio view: all client apps, attribution deltas, white-label exports | Medium |
+| **Keyword rank → listing ROI report** | “Keyword X improved #42→#12 after listing v3” — ties tracker to attribution | Medium |
+
+### Tier 2 — Differentiation (vs copy-only ASO tools)
+
+| Feature | Why it wins | Effort |
+|---------|-------------|--------|
+| **Niche-aware analyst templates** | Health / fintech / games prompt packs — “Performance Analyst for any vertical” | Low–Medium |
+| **Competitor gap auto-queue** | Competitor Spy → auto-suggest gap keywords into optimization queue | Low |
+| **MENA Arabic listing parity** | Full AR optimizer UI + localized market packs (ae/sa/eg) | Medium (i18n audit) |
+| **Screenshot CVR correlation** | Show which Runware caption + visual drove install lift | Medium (needs metrics) |
+| **Weekly ASO digest email** | Attribution + rank movement + recommended pivot — reduces churn | Low |
+
+### Tier 3 — Growth & moat
+
+| Feature | Why it wins | Effort |
+|---------|-------------|--------|
+| **Public ASO score API / embed** | Marketing wedge — “audit any Play URL” on playstore.xyz home | Medium |
+| **Chrome extension** | Capture competitor listing + queue to vault from Play Store tab | High |
+| **Apple App Store expansion** | Same vault → iOS metadata (larger TAM) | Very high |
+| **API for CI/CD** | `POST /listings/generate` in release pipeline for indie studios | Medium |
+| **Benchmark dataset** | Anonymous category CVR benchmarks (“your health app vs median”) | High (data) |
+
+### Positioning statement (use in marketing)
+
+> **playstore.xyz** is the only B2B Play ASO platform that turns your research vault into **ROI-ranked keyword intelligence**, **tone-tested deploy plans**, and **attribution-proven listing versions** — not just AI copy.
+
+---
+
 ## 10. Next Immediate Tasks
 
 These are ordered by impact. Tackle in sequence.
 
 ### P0 — Fix Before Next User-Facing Release
 
-- [x] **Mount Performance Attribution tab** — New route `/performance-attribution` created; nav item added to workspace layout (gated with `listing_optimizer` flag); i18n keys added to EN/AR; `PerformanceAttributionTable` rendered via server component page (2026-07-02)
-- [ ] **Validate `uiFocus` from Gemini** — Run a test generation and confirm Gemini actually returns `uiFocus` in the JSON. If structured output enforcement strips it, add `uiFocus` to the `required` array in `LISTING_CAPTIONS_SCHEMA`
-- [ ] **Fix dual `lib/` duplication** — `lib/play-store/google-play-oauth.ts` and `src/lib/play-store/google-play-oauth.ts` are identical; delete the root `lib/` copy and update all imports to `@/lib/play-store/google-play-oauth`
+- [x] Mount Performance Attribution tab (2026-07-02)
+- [x] Sync full unlock timeout + recovery (2026-07-07)
+- [x] B2B Performance Analyst + ROI intelligence (2026-07-06)
+- [ ] **Validate MAX_TOKENS under production load** — run 10 full unlocks with large vault; if >20% hit MAX_TOKENS, force async worker path for `generationStep: full`
+- [ ] **Production Play metrics ingest** — configure GCS credentials; verify attribution table populates
+- [ ] **Validate `uiFocus` from Gemini** — confirm structured output returns `uiFocus` on captions step
 
 ### P1 — Core UX Gaps
 
-- [ ] **i18n audit — optimizer surfaces** — Replace hardcoded English strings in `ListingOptimizer.tsx`, `modular-listing-panel.tsx`, `deployment-view.tsx`, `version-history-panel.tsx` with `useTranslations()` calls. Arabic users currently see EN in these surfaces
-- [ ] **Deployment View — Play Store publish E2E** — Test `apps/[appId]/publish-listing` with a real Google service account. Confirm `publish-listing-to-play-store.ts` handles both `title`/`short_description` and `long_description` fields per locale
-- [ ] **Keyword rank history chart** — Build a small line chart in the keyword tracker using existing `keyword_rank_snapshots` data. The data is there; there's just no visualization component
+- [ ] **i18n audit — Session 8 components** — `ToneAbDeployPlanCard`, keyword panel hints, deploy plan copy → `messages/ar.json`
+- [ ] **CPI field in Growth Tracking** — optional `cost_per_install` on `listing_metrics` weekly form
+- [ ] **Deployment View — Play Store publish E2E** — live service account test
+- [ ] **Keyword rank history chart** — visualize `keyword_rank_snapshots`
 
-### P2 — Feature Completion
+### P2 — Market Uplift (pick one per sprint)
 
-- [ ] **Localized listings UI** — Build the management component for `workspace_localized_listings` (ae/in/mx). API endpoint already exists at `/api/workspaces/[workspaceId]/listings/localize`
-- [ ] **Backlog management view** — Build a standalone backlog panel showing all `workspace_listing_backlog` issues (currently only visible inline in Reviews)
-- [ ] **Alerts center** — Build a proper alert notification center in the dashboard shell using `workspace_alerts` (data layer complete; display is minimal)
-- [ ] **A/B snapshot UI** — Build the experiment snapshots page under `/app/[workspaceId]/growth`; DB table and API are ready
+- [ ] **Search volume data partner** — integrate one API; feed `enrichKeywordIntelligence` with real SV
+- [ ] **Auto queue from Competitor Spy gaps** — one-click “Add gap keywords to optimizer”
+- [ ] **Weekly ASO digest** — email from attribution + rank deltas
+- [ ] **Localized listings UI** — ae/in/mx management surface
+- [ ] **A/B snapshot UI** — experiment tracking under Growth hub
 
 ### P3 — Technical Debt
 
-- [ ] **Remove `src/debug-token.ts` and `src/test-ingestion.ts`** — dev artifacts should not be in `src/`; move to `scripts/` or delete
-- [ ] **Delete `PGRST116_FINAL_FIX.ts`** from project root — it's a SQL comment masquerading as a `.ts` file and causes `tsc` parse errors
-- [ ] **Delete `StagingButtonTestHarness.tsx`** or fix its JSX — it generates ~20 TS errors on every `tsc --noEmit` run, masking real issues
-- [ ] **Decide on producer registry** — either implement `keyword-validator.producer.ts` properly or delete the stubs in `src/lib/producers/`; leaving dead stubs increases maintenance surface
+- [ ] Remove `src/debug-token.ts`, `src/test-ingestion.ts`, `PGRST116_FINAL_FIX.ts`
+- [ ] Delete or fix `StagingButtonTestHarness.tsx`
+- [ ] Consolidate `lib/` → `src/lib/` and `components/` → `src/components/`
+- [ ] Gate verbose `[DEBUG]` logs in `generate/route.ts`
+- [ ] Decide on producer registry stubs — implement or delete
 
 ---
 
-*Generated from codebase analysis on 2026-07-01. Update this file at the start of each development session.*
+*Generated from codebase analysis on 2026-07-07. Update this file at the start of each development session.*

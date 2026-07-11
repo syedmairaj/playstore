@@ -10,6 +10,7 @@
  */
 
 import type { AsoListingInput } from "./aso-report-card-types";
+import { buildAsoSystemInstructionsXml } from "./prompt-builder";
 
 /**
  * Keywords to strip from prompts (hard-clamp verification)
@@ -49,34 +50,54 @@ export function buildAsoAnalysisPrompt(input: AsoListingInput): string {
   const isRTL = input.locale === "ar" || input.locale === "he";
   const marketContext = isRTL ? "Arabic-speaking markets" : "English-speaking markets";
 
-  const prompt = `You are a professional ASO (App Store Optimization) analyst specializing in ${marketContext}.
+  const systemBlock = buildAsoSystemInstructionsXml({
+    role: `You are a professional ASO (App Store Optimization) analyst specializing in ${marketContext}.`,
+    objective:
+      "Analyze app listing metadata and return professional-grade ASO insights as strict JSON.",
+    extraConstraints: [
+      "ALL scores must be integers between 1 and 100 (inclusive).",
+      "Actionable tips must be exactly 3 items with all required fields.",
+      "Do NOT include commentary outside the JSON block.",
+    ],
+  });
 
-TASK: Analyze the following app listing and provide professional-grade ASO insights.
+  const inputBlock = `<InputData>
+  <AppName>${input.appName}</AppName>
+  <Category>${input.category || "general"}</Category>
+  <Language>${input.locale}</Language>
+  <Market>${marketContext}</Market>
+  <Title>${input.title}</Title>
+  <ShortDescription>${input.shortDescription}</ShortDescription>
+  <FullDescription>${input.fullDescription}</FullDescription>${
+    input.targetKeywords && input.targetKeywords.length > 0
+      ? `\n  <TargetKeywords>${input.targetKeywords.join(", ")}</TargetKeywords>`
+      : ""
+  }${
+    input.previousGenerationContext
+      ? `\n  <PreviousStrategy>${input.previousGenerationContext.strategySummary || "N/A"}</PreviousStrategy>
+  <PreviousKeywords>${(input.previousGenerationContext.keywordSuggestions || []).join(", ") || "N/A"}</PreviousKeywords>`
+      : ""
+  }
+</InputData>`;
 
-APP INFORMATION:
-- App Name: ${input.appName}
-- Category: ${input.category || "general"}
-- Language: ${input.locale}
-- Market: ${marketContext}
+  const keywordContextLine =
+    input.targetKeywords && input.targetKeywords.length > 0
+      ? `\nTARGET KEYWORDS: ${input.targetKeywords.join(", ")}`
+      : "";
 
-LISTING TO ANALYZE:
-Title: "${input.title}"
-Short Description: "${input.shortDescription}"
-Full Description: "${input.fullDescription}"
-
-${
-  input.targetKeywords && input.targetKeywords.length > 0
-    ? `\nTARGET KEYWORDS: ${input.targetKeywords.join(", ")}`
-    : ""
-}
-
-${
-  input.previousGenerationContext
+  const previousContextLine = input.previousGenerationContext
     ? `\nCONTEXT (previous AI generation):
 Strategy: ${input.previousGenerationContext.strategySummary || "N/A"}
 Previous Keywords: ${(input.previousGenerationContext.keywordSuggestions || []).join(", ") || "N/A"}`
-    : ""
-}
+    : "";
+
+  const prompt = `${systemBlock}
+
+${inputBlock}${keywordContextLine}${previousContextLine}
+
+<Task>
+Analyze the following app listing and provide professional-grade ASO insights.
+</Task>
 
 SCORING REQUIREMENTS:
 1. Readability Score (1-100):

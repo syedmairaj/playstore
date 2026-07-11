@@ -142,3 +142,68 @@
     box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
   }
 }
+
+@keyframes growth-path-pulse-ring {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.65;
+  }
+  70% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.growth-path-pulse {
+  animation: growth-path-pulse-ring 2.4s ease-out infinite;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  pointer-events: none;
+}
+
+.growth-path-pulse-ring {
+  transform-origin: center;
+  animation: growth-path-pulse-ring 2s ease-out infinite;
+}
+
+.growth-path-pulse-icon {
+  animation: stage-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes orchestrator-next-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(52, 211, 153, 0.28),
+      0 0 10px rgba(52, 211, 153, 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 0 5px rgba(52, 211, 153, 0.1),
+      0 0 22px rgba(52, 211, 153, 0.42);
+  }
+}
+
+.orchestrator-next-glow {
+  animation: orchestrator-next-breathe 2.8s ease-in-out infinite;
+}
+
+@keyframes orchestrator-path-pulse {
+  0%,
+  100% {
+    opacity: 0.82;
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.22);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 14px rgba(52, 211, 153, 0.42);
+  }
+}
+
+.orchestrator-path-glow {
+  animation: orchestrator-path-pulse 2.6s ease-in-out infinite;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.3);
+}

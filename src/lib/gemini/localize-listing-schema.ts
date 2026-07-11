@@ -232,8 +232,28 @@ export async function callGeminiLocalizeListing(input: {
       };
     }
 
-    const geminiData =
-      (await geminiRes.json()) as GeminiGenerateContentJsonResponse;
+    const responseText = await geminiRes.text().catch(() => "");
+    if (!responseText.trim()) {
+      const classified = {
+        reason: "empty" as const,
+        message: "Gemini returned an empty response body",
+      };
+      if (!isRetry) continue;
+      return { ok: false, ...classified };
+    }
+
+    let geminiData: GeminiGenerateContentJsonResponse;
+    try {
+      geminiData = JSON.parse(responseText) as GeminiGenerateContentJsonResponse;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const classified = {
+        reason: "parse" as const,
+        message: `Gemini response was not valid JSON: ${detail}`,
+      };
+      if (!isRetry) continue;
+      return { ok: false, ...classified };
+    }
 
     try {
       const data = parseAndValidateLocalizedListing(geminiData);

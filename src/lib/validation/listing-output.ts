@@ -1,6 +1,25 @@
 import { z } from "zod";
 import { orchestrationProtocolSchema } from "@/lib/listing/orchestration-protocol.schema";
 
+const toneStyleSchema = z.enum(["professional", "friendly", "bold", "minimal"]);
+
+export const toneExperimentArmSchema = z.object({
+  tone: toneStyleSchema,
+  metadataVariant: z.enum(["aggressive", "growth"]),
+  label: z.string().min(1).max(64),
+  trafficShare: z.literal(50),
+});
+
+export const toneExperimentSchema = z.object({
+  experimentId: z.string().min(1).max(64),
+  selectedTone: toneStyleSchema,
+  alternativeTone: toneStyleSchema,
+  armA: toneExperimentArmSchema,
+  armB: toneExperimentArmSchema,
+});
+
+export type ToneExperiment = z.infer<typeof toneExperimentSchema>;
+
 export const listingGenerationCoreSchema = z.object({
   title: z.string().min(1).max(30),
   shortDescription: z.string().min(1).max(80),
@@ -29,6 +48,17 @@ export const listingScoreBreakdownSchema = z.object({
 });
 
 export type ListingScoreBreakdown = z.infer<typeof listingScoreBreakdownSchema>;
+
+export const keywordIntelligenceItemSchema = z.object({
+  keyword: z.string().min(1).max(80),
+  cluster: z.enum(["competitive", "intent", "gap"]),
+  searchVolume: z.number().min(0).optional(),
+  difficultyScore: z.number().min(0).max(100).optional(),
+  relevanceMatch: z.number().min(0).max(100).optional(),
+  roiRationale: z.string().min(1).max(300).optional(),
+});
+
+export type KeywordIntelligenceItem = z.infer<typeof keywordIntelligenceItemSchema>;
 
 const listingAsoBundleSchema = z.object({
   asoScore: z.coerce
@@ -115,6 +145,12 @@ export const listingGenerationOutputSchema = listingGenerationCoreSchema.merge(
 
     /** Three-phase Orchestration Protocol — discrete modules for independent UI edit/regenerate. */
     orchestration: orchestrationProtocolSchema.optional(),
+
+    /** B2B ROI intelligence — reasoning behind keyword clusters (optional). */
+    keywordIntelligence: z.array(keywordIntelligenceItemSchema).min(1).max(20).optional(),
+
+    /** Tone-aware A/B experiment metadata — server-enriched when listingVariants exist. */
+    toneExperiment: toneExperimentSchema.optional(),
   }),
 );
 
@@ -203,6 +239,20 @@ function mergeOptionalPersistedListingFields(
     listingGenerationOutputSchema.shape.orchestration.safeParse(raw.orchestration);
   if (parsedOrchestration.success) {
     merged.orchestration = parsedOrchestration.data;
+  }
+
+  const parsedKeywordIntel =
+    listingGenerationOutputSchema.shape.keywordIntelligence.safeParse(
+      raw.keywordIntelligence,
+    );
+  if (parsedKeywordIntel.success) {
+    merged.keywordIntelligence = parsedKeywordIntel.data;
+  }
+
+  const parsedToneExperiment =
+    listingGenerationOutputSchema.shape.toneExperiment.safeParse(raw.toneExperiment);
+  if (parsedToneExperiment.success) {
+    merged.toneExperiment = parsedToneExperiment.data;
   }
 
   return merged;

@@ -4,10 +4,7 @@ import {
   OPTIMIZATION_QUEUE_KEY,
   type OptimizationQueueResponse,
 } from "@/lib/client/optimization-queue-client";
-import {
-  optimizationQueueQueryPrefix,
-  syncOptimizationQueueCaches,
-} from "@/lib/client/optimization-queue-cache-sync";
+import { syncOptimizationQueueCaches } from "@/lib/client/optimization-queue-cache-sync";
 import {
   enforceActiveContextSectionBoundary,
   type ActiveContextSection,
@@ -103,12 +100,13 @@ export function applyActiveContextDelta(
 ): boolean {
   if (delta.operation === "refresh") return false;
 
-  const prefix = optimizationQueueQueryPrefix(delta.workspaceId, delta.locale);
-  const queries = queryClient.getQueriesData<OptimizationQueueResponse>({
-    queryKey: prefix,
-  });
-
-  if (queries.length === 0) return false;
+  const key = OPTIMIZATION_QUEUE_KEY(
+    delta.workspaceId,
+    delta.locale,
+    delta.appId,
+  );
+  const prev = queryClient.getQueryData<OptimizationQueueResponse>(key);
+  if (!prev) return false;
 
   const incoming =
     delta.items
@@ -121,39 +119,26 @@ export function applyActiveContextDelta(
     delta.operation === "remove" ? incoming.map((item) => item.id) : [],
   );
 
-  for (const [key, prev] of queries) {
-    if (!prev) continue;
-    const nextItems =
-      delta.operation === "remove"
-        ? removeDeltaItems(prev.items, removeIds)
-        : mergeDeltaItems(prev.items, incoming);
+  const nextItems =
+    delta.operation === "remove"
+      ? removeDeltaItems(prev.items, removeIds)
+      : mergeDeltaItems(prev.items, incoming);
 
-    const next: OptimizationQueueResponse = {
-      items: nextItems,
-      stats: {
-        ...prev.stats,
-        total: nextItems.length,
-        lastSyncAt: new Date().toISOString(),
-      },
-    };
-    queryClient.setQueryData(key, next);
-  }
-
-  const snapshot = queries[0]?.[1];
-  if (snapshot) {
-    const merged =
-      delta.operation === "remove"
-        ? removeDeltaItems(snapshot.items, removeIds)
-        : mergeDeltaItems(snapshot.items, incoming);
-    syncOptimizationQueueCaches(queryClient, delta.workspaceId, delta.locale, {
-      items: merged,
-      stats: {
-        ...snapshot.stats,
-        total: merged.length,
-        lastSyncAt: new Date().toISOString(),
-      },
-    });
-  }
+  const next: OptimizationQueueResponse = {
+    items: nextItems,
+    stats: {
+      ...prev.stats,
+      total: nextItems.length,
+      lastSyncAt: new Date().toISOString(),
+    },
+  };
+  syncOptimizationQueueCaches(
+    queryClient,
+    delta.workspaceId,
+    delta.locale,
+    delta.appId,
+    next,
+  );
 
   return true;
 }
@@ -191,10 +176,11 @@ export function patchOptimizerContextQuery(
   queryClient: QueryClient,
   workspaceId: string,
   locale: OptimizationQueueLocale,
+  appId: string | undefined,
   updater: (prev: { activeItems: unknown[] } | undefined) => { activeItems: unknown[] },
 ): void {
-  queryClient.setQueriesData(
-    { queryKey: ["optimizer-context", workspaceId, locale] },
+  queryClient.setQueryData(
+    ["optimizer-context", workspaceId, locale, appId ?? ""],
     (prev: { activeItems: unknown[]; archivedItems?: unknown[]; stats?: unknown } | undefined) => {
       if (!prev) return prev;
       return { ...prev, ...updater(prev) };

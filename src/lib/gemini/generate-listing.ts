@@ -27,12 +27,48 @@ import {
   tryParseListingAsoBundle,
   type ListingGenerationOutput,
 } from "@/lib/validation/listing-output";
+import {
+  enrichKeywordIntelligence,
+} from "@/lib/listing/enrich-keyword-intelligence";
+import { enrichToneExperiment } from "@/lib/listing/enrich-tone-experiment";
+import type { KeywordIntelligenceItem } from "@/lib/validation/listing-output";
 import type { ZodError } from "zod";
 
 /** Headroom for full listing JSON (core + v11 variants + Arabic copy). */
 const LISTING_MAX_OUTPUT_TOKENS = 32_768;
 /** Second attempt after MAX_TOKENS — maximum practical ceiling for gemini-2.5-flash. */
 const LISTING_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS = 65_536;
+
+function parseKeywordIntelligence(raw: unknown): KeywordIntelligenceItem[] | null {
+  if (!Array.isArray(raw)) return null;
+  const items: KeywordIntelligenceItem[] = [];
+  for (const row of raw) {
+    const o = asRecord(row);
+    if (!o || typeof o.keyword !== "string" || !o.keyword.trim()) continue;
+    const clusterRaw = typeof o.cluster === "string" ? o.cluster : "intent";
+    const cluster =
+      clusterRaw === "competitive" || clusterRaw === "gap" || clusterRaw === "intent"
+        ? clusterRaw
+        : "intent";
+    items.push({
+      keyword: o.keyword.trim().slice(0, 80),
+      cluster,
+      ...(typeof o.searchVolume === "number" && o.searchVolume >= 0
+        ? { searchVolume: Math.round(o.searchVolume) }
+        : {}),
+      ...(typeof o.difficultyScore === "number"
+        ? { difficultyScore: Math.max(0, Math.min(100, Math.round(o.difficultyScore))) }
+        : {}),
+      ...(typeof o.relevanceMatch === "number"
+        ? { relevanceMatch: Math.max(0, Math.min(100, Math.round(o.relevanceMatch))) }
+        : {}),
+      ...(typeof o.roiRationale === "string" && o.roiRationale.trim()
+        ? { roiRationale: o.roiRationale.trim().slice(0, 300) }
+        : {}),
+    });
+  }
+  return items.length > 0 ? items.slice(0, 20) : null;
+}
 
 type ListingVariantFields = {
   title: string;
@@ -255,7 +291,7 @@ const STRICT_RETRY_ADDENDUM =
   "strategicRationale (object: strategicIntent + exploitationResolutionSummary + roiPrediction). " +
   "listingVariants (object: aggressive + growth — each with title, shortDescription, fullDescription, whatsNew). " +
   "orchestration (object: protocolVersion 1.0 + modules anchor/conversion/expansion — see Orchestration Protocol). " +
-  "Root title/shortDescription/fullDescription/whatsNew MUST match listingVariants.growth. " +
+  "Root title/shortDescription/fullDescription/whatsNew MUST match listingVariants.aggressive (Variant A — user's selected tone). " +
   "Return ONLY the JSON object — no prose, no markdown.";
 
 export type GenerateListingWithGeminiResult = {
@@ -473,6 +509,25 @@ async function attemptGeneration(
   } else if (rawListingHadAsoScoreKeys(parsed)) {
     asoScorePartial = true;
     data = { ...data, asoScoreDegraded: true };
+  }
+
+  const keywordIntelligence = enrichKeywordIntelligence({
+    keywordSuggestions: data.keywordSuggestions,
+    appFeatures: input.appFeatures,
+    category: input.category,
+    trackedKeywordSignals: input.trackedKeywordSignals,
+    modelIntelligence: parseKeywordIntelligence(clampedRecord.keywordIntelligence) ?? undefined,
+  });
+  if (keywordIntelligence.length > 0) {
+    data = { ...data, keywordIntelligence };
+  }
+
+  const toneExperiment = enrichToneExperiment({
+    toneStyle: input.toneStyle,
+    output: data,
+  });
+  if (toneExperiment) {
+    data = { ...data, toneExperiment };
   }
 
   // ── Final validation ──────────────────────────────────────────────────────

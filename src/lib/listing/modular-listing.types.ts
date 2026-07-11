@@ -20,6 +20,7 @@ export {
 export type ModularLongUiMode = "choice" | "manual" | "ai";
 
 export type ModularListingDraftSnapshot = {
+  appId: string;
   modularState: ModularListingState;
   editedTitle: string;
   editedShort: string;

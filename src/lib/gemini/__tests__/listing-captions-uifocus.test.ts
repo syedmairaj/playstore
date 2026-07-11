@@ -205,6 +205,24 @@ describe("generateListingPipelineCaptions — uiFocus present in response", () =
     expect(themes).toContain("benefit");
     expect(themes).toContain("cta");
   });
+
+  it("applies brandifier when model omits app name from captions", async () => {
+    useMockModel({
+      captions: [
+        { order: 1, caption: "Own your health", theme: "hook", uiFocus: "dashboard" },
+        { order: 2, caption: "Build habits in seconds", theme: "feature", uiFocus: "onboarding" },
+        { order: 3, caption: "Smart reminders that adapt", theme: "feature", uiFocus: "reminders" },
+        { order: 4, caption: "Track streaks with precision", theme: "feature", uiFocus: "calendar" },
+        { order: 5, caption: "Feel the momentum", theme: "benefit", uiFocus: "celebration" },
+        { order: 6, caption: "Skip the willpower battle", theme: "benefit", uiFocus: "chart" },
+        { order: 7, caption: "Install today!", theme: "cta", uiFocus: "cta screen" },
+      ],
+    });
+
+    const result = await generateListingPipelineCaptions(makeInput());
+    const cta = result.captions.find((c) => c.theme === "cta");
+    expect(cta?.caption.toLowerCase()).toContain("habitflow");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

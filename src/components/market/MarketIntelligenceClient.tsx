@@ -14,6 +14,7 @@ import { SELECTABLE_CATEGORIES, getCategoryLabel } from "@/lib/market/category-l
 import { TopChartRow, TopChartRowSkeleton } from "@/components/market/top-chart-row";
 import { SpotlightKeywordCuration } from "@/components/market/spotlight-keyword-curation";
 import { KeywordSpotlightCard } from "@/components/market/keyword-spotlight-card";
+import { WinsDashboard } from "@/components/market/wins-dashboard";
 import { workspaceAppsQueryKey } from "@/hooks/use-app-limits";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
 import { fetchWorkspaceApps } from "@/lib/client/workspace-query-fetchers";
@@ -26,6 +27,8 @@ const SPOTLIGHT_CREDIT_COST = 3;
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Collection = "TOP_FREE" | "TOP_PAID" | "GROSSING";
+
+type MarketView = "charts" | "wins";
 
 const COLLECTION_LABELS: Record<Collection, string> = {
   TOP_FREE: "Top Free",
@@ -212,7 +215,9 @@ export function MarketIntelligenceClient({
   defaultCategory = "APPLICATION",
   isRtl = false,
 }: MarketIntelligenceClientProps) {
+  const t = useTranslations("market");
   const tSpotlight = useTranslations("market.spotlight");
+  const [view, setView] = useState<MarketView>("charts");
   const [category,   setCategory]   = useState(defaultCategory);
   // Arabic users default to Saudi Arabia — their primary market
   const [country,    setCountry]    = useState(isRtl ? "sa" : "us");
@@ -406,6 +411,38 @@ export function MarketIntelligenceClient({
 
   return (
     <div dir={isRtl ? "rtl" : "ltr"} className={cn("space-y-6", isRtl && "font-arabic")}>
+      {/* ── View tabs ─────────────────────────────────────────────────────────── */}
+      <div className="flex overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/80 w-fit">
+        {(
+          [
+            { id: "charts" as const, label: t("views.charts") },
+            { id: "wins" as const, label: t("views.wins") },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setView(tab.id)}
+            className={cn(
+              "px-4 py-2 text-xs font-semibold transition-colors",
+              view === tab.id
+                ? "bg-emerald-500/15 text-emerald-300"
+                : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300",
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {view === "wins" ? (
+        <WinsDashboard
+          workspaceId={workspaceId}
+          appId={targetAppId}
+          isRtl={isRtl}
+        />
+      ) : (
+        <>
       {/* ── Controls bar ──────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3">
         {/* Category picker */}
@@ -589,6 +626,8 @@ export function MarketIntelligenceClient({
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

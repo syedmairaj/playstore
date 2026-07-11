@@ -31,7 +31,7 @@ import { ensureModularListingDraftPersisted } from "@/lib/listing/listing-draft-
 import { MODULAR_TRIAL_REGENERATIONS_LIMIT } from "@/lib/features/billing/modular-regenerate-billing";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import { resolveAuthenticatedUser } from "@/lib/supabase/route-auth";
 import { logUsage } from "@/lib/usage-log";
 import { getWorkspaceRole } from "@/lib/workspace/membership";
 import {
@@ -42,6 +42,7 @@ import {
   buildContextAuditSnapshot,
   logActiveContextAudit,
 } from "@/lib/optimization-queue/context-audit-log";
+import { shouldPreferAsyncFullUnlock } from "@/lib/listing/full-unlock-async-policy";
 import { validateActiveContextQueueHash } from "@/lib/optimization-queue/validate-active-context-queue-hash";
 import { assessListingInputWarnings } from "@/lib/listing/listing-generation-heuristics";
 import { dedupeWarnings } from "@/lib/listing/listing-generation-warnings";
@@ -155,12 +156,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = await createClient();
-  console.log("[DEBUG] Route: createClient() resolved — fetching auth user");
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  console.log("[DEBUG] Route: supabase.auth.getUser() resolved", {
+  const { supabase, user } = await resolveAuthenticatedUser(request);
+  console.log("[DEBUG] Route: resolveAuthenticatedUser() resolved", {
     hasUser: Boolean(user),
   });
 
@@ -867,9 +864,33 @@ export async function POST(request: NextRequest) {
     }
 
     // Modular phases + billed full unlock run synchronously — immediate 200.
-    // Async QStash delivery often leaves jobs stuck in `pending` (localhost, wrong
-    // callback URL, or zombie republish) while the client polls indefinitely.
-    if (SYNC_LISTING_STEPS.has(step)) {
+    // Heavy vault contexts route to async worker to avoid MAX_TOKENS / timeout (P0 G8).
+    const asyncFullDecision =
+      step === "full"
+        ? shouldPreferAsyncFullUnlock({
+            vaultItemCount: effectiveVaultItemCount,
+            clientQueueItemCount:
+              queueHashValidationEarly.clientQueueItemCount ??
+              clientQueueItemCount,
+            listingInput: listingInputForGeneration,
+          })
+        : { preferAsync: false, reason: null };
+
+    if (asyncFullDecision.preferAsync && shouldLogGeminiDebug()) {
+      console.log(
+        JSON.stringify({
+          event: "listing_full_prefer_async",
+          workspaceId,
+          reason: asyncFullDecision.reason,
+        }),
+      );
+    }
+
+    const runStepSynchronously =
+      SYNC_LISTING_STEPS.has(step) &&
+      !(step === "full" && asyncFullDecision.preferAsync);
+
+    if (runStepSynchronously) {
       if (step === "full") {
         await clearListingGenerationJobState(workspaceId, queueHash);
       }
@@ -1415,10 +1436,7 @@ export async function POST(request: NextRequest) {
  * Body: { generationId: string; workspaceId: string; appFeatures: string; targetKeywords: string[] }
  */
 export async function PATCH(request: NextRequest) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { supabase, user } = await resolveAuthenticatedUser(request);
 
   if (!user) {
     return NextResponse.json(

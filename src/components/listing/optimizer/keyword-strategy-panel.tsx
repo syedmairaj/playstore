@@ -2,62 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { isQuickWinKeyword } from "@/lib/listing/enrich-keyword-intelligence";
+import type { KeywordIntelligenceItem } from "@/lib/validation/listing-output";
+import {
+  categoriseKeywords,
+  type KeywordCategory,
+  type CategorisedKeyword,
+} from "@/lib/listing/keyword-strategy-parse";
 
-// ── Keyword category parser ───────────────────────────────────────────────────
-// Handles both [competitive] and competitive: prefix formats from the model.
-// Any keyword without a recognised prefix lands in the "general" bucket.
-
-export type KeywordCategory = "competitive" | "intent" | "gap" | "general";
-
-export type CategorisedKeyword = {
-  raw: string;       // original string from model (with prefix)
-  keyword: string;   // stripped keyword text
-  category: KeywordCategory;
-};
-
-const CATEGORY_ALIASES: Record<string, KeywordCategory> = {
-  competitive: "competitive",
-  "high-volume": "competitive",
-  "high volume": "competitive",
-  volume: "competitive",
-  intent: "intent",
-  "intent-based": "intent",
-  "long-tail": "intent",
-  longtail: "intent",
-  gap: "gap",
-  "competitor-gap": "gap",
-  "competitor gap": "gap",
-  spy: "gap",
-};
-
-export function parseKeyword(raw: string): CategorisedKeyword {
-  // Match [tag] keyword  OR  tag: keyword
-  const bracketMatch = raw.match(/^\[([^\]]+)\]\s*(.+)$/);
-  const colonMatch   = !bracketMatch && raw.match(/^([a-z\s-]+):\s*(.+)$/i);
-  const match = bracketMatch ?? colonMatch;
-
-  if (match) {
-    const tag = match[1].trim().toLowerCase();
-    const keyword = match[2].trim();
-    const category = CATEGORY_ALIASES[tag] ?? "general";
-    return { raw, keyword, category };
-  }
-  return { raw, keyword: raw.trim(), category: "general" };
-}
-
-export function categoriseKeywords(items: string[]): Record<KeywordCategory, CategorisedKeyword[]> {
-  const buckets: Record<KeywordCategory, CategorisedKeyword[]> = {
-    competitive: [],
-    intent: [],
-    gap: [],
-    general: [],
-  };
-  for (const item of items) {
-    const parsed = parseKeyword(item);
-    buckets[parsed.category].push(parsed);
-  }
-  return buckets;
-}
+export type { KeywordCategory, CategorisedKeyword } from "@/lib/listing/keyword-strategy-parse";
+export { parseKeyword, categoriseKeywords } from "@/lib/listing/keyword-strategy-parse";
 
 // ── Section config ────────────────────────────────────────────────────────────
 
@@ -145,6 +99,8 @@ function KeywordChipSkeleton() {
 
 type Props = {
   keywords: string[];
+  /** ROI intelligence merged from model + Keyword Tracker (B2B analyst view). */
+  keywordIntelligence?: KeywordIntelligenceItem[];
   copyLabel?: string;
   onCopyAll?: () => void | Promise<void>;
   /** When true the panel title is right-aligned. */
@@ -153,9 +109,76 @@ type Props = {
   busy?: boolean;
 };
 
-export function KeywordStrategyPanel({ keywords, copyLabel = "Copy all", onCopyAll, isRtl = false, busy = false }: Props) {
+function formatVolume(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
+function IntelligenceChip({
+  kw,
+  section,
+  intel,
+}: {
+  kw: CategorisedKeyword;
+  section: SectionConfig;
+  intel?: KeywordIntelligenceItem;
+}) {
+  const quickWin = intel ? isQuickWinKeyword(intel) : false;
+  const tooltip = intel?.roiRationale?.trim();
+
+  return (
+    <span
+      title={tooltip}
+      className={cn(
+        "inline-flex max-w-full cursor-default flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
+        section.chipColor,
+      )}
+    >
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span>{kw.keyword}</span>
+        {quickWin && (
+          <span className="rounded border border-emerald-400/30 bg-emerald-500/15 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-emerald-300">
+            Quick win
+          </span>
+        )}
+      </span>
+      {intel && (intel.searchVolume != null || intel.difficultyScore != null || intel.relevanceMatch != null) && (
+        <span className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] font-normal tabular-nums opacity-80">
+          {intel.searchVolume != null && (
+            <span title="Estimated monthly search volume">Vol {formatVolume(intel.searchVolume)}</span>
+          )}
+          {intel.difficultyScore != null && (
+            <span title="Keyword difficulty (0–100)">Diff {intel.difficultyScore}</span>
+          )}
+          {intel.relevanceMatch != null && (
+            <span title="Utility match — anti-spam relevance">Rel {intel.relevanceMatch}%</span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
+export function KeywordStrategyPanel({
+  keywords,
+  keywordIntelligence,
+  copyLabel = "Copy all",
+  onCopyAll,
+  isRtl = false,
+  busy = false,
+}: Props) {
   const [copied, setCopied] = useState(false);
   const buckets = useMemo(() => categoriseKeywords(keywords), [keywords]);
+  const intelByKeyword = useMemo(() => {
+    const map = new Map<string, KeywordIntelligenceItem>();
+    for (const item of keywordIntelligence ?? []) {
+      map.set(item.keyword.trim().toLowerCase(), item);
+    }
+    return map;
+  }, [keywordIntelligence]);
+
+  const hasIntelligence = intelByKeyword.size > 0;
 
   const hasCategorised =
     buckets.competitive.length > 0 ||
@@ -188,7 +211,7 @@ export function KeywordStrategyPanel({ keywords, copyLabel = "Copy all", onCopyA
           </h3>
           {hasCategorised && (
             <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
-              v6 · {total} keywords
+              {hasIntelligence ? "ROI · " : ""}v6 · {total} keywords
             </span>
           )}
         </div>
@@ -202,6 +225,12 @@ export function KeywordStrategyPanel({ keywords, copyLabel = "Copy all", onCopyA
           </button>
         )}
       </div>
+
+      {hasIntelligence && !busy && (
+        <p className={cn("mb-4 text-[11px] leading-relaxed text-zinc-500", isRtl && "text-end")}>
+          Hover a keyword for ROI rationale. Vol = monthly search est.; Diff = difficulty (0–100); Rel = utility match.
+        </p>
+      )}
 
       {/* Categorised sections — shimmer skeleton while busy */}
       {busy ? (
@@ -242,15 +271,12 @@ export function KeywordStrategyPanel({ keywords, copyLabel = "Copy all", onCopyA
                 {/* Keyword chips */}
                 <div className="flex flex-wrap gap-1.5">
                   {items.map((kw, i) => (
-                    <span
+                    <IntelligenceChip
                       key={`${section.category}-${i}`}
-                      className={cn(
-                        "inline-flex cursor-default items-center rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
-                        section.chipColor,
-                      )}
-                    >
-                      {kw.keyword}
-                    </span>
+                      kw={kw}
+                      section={section}
+                      intel={intelByKeyword.get(kw.keyword.trim().toLowerCase())}
+                    />
                   ))}
                 </div>
               </div>

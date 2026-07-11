@@ -25,6 +25,8 @@ const metricsBodySchema = z.object({
   storeVisitors: z.number().int().min(0).nullable().optional(),
   categoryRank: z.number().int().min(1).nullable().optional(),
   searchVisibility: z.number().min(0).max(100).nullable().optional(),
+  /** Weekly cost per install — UAC spend ÷ installers (optional). */
+  costPerInstall: z.number().min(0).max(999_999).nullable().optional(),
   note: z.string().max(500).optional(),
 });
 
@@ -90,6 +92,7 @@ export async function POST(request: NextRequest, context: Ctx) {
         store_visitors: input.storeVisitors ?? null,
         category_rank: input.categoryRank ?? null,
         search_visibility: input.searchVisibility ?? null,
+        cost_per_install: input.costPerInstall ?? null,
         note: input.note ?? null,
       },
       { onConflict: "workspace_id,app_id,metric_week" },
@@ -135,7 +138,7 @@ export async function GET(_request: NextRequest, context: Ctx) {
   const { data, error } = await supabase
     .from("listing_metrics")
     .select(
-      "id, metric_week, conversion_rate, store_visitors, category_rank, search_visibility, note, created_at",
+      "id, metric_week, conversion_rate, store_visitors, category_rank, search_visibility, cost_per_install, note, created_at",
     )
     .eq("workspace_id", workspaceId)
     .eq("app_id", appId)

@@ -267,7 +267,7 @@ export async function fetchDraftStateRow(
     query = query.eq("user_id", params.userId);
   }
   if (params.appId) {
-    query = query.or(`app_id.eq.${params.appId},app_id.is.null`);
+    query = query.eq("app_id", params.appId);
   }
   if (params.vaultLocale) {
     query = query.eq("vault_locale", params.vaultLocale);

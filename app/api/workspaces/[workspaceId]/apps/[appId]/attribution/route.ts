@@ -13,6 +13,7 @@ type MetricRow = {
   store_visitors: number | null;
   category_rank: number | null;
   search_visibility: number | null;
+  cost_per_install: number | null;
   note: string | null;
   created_at: string;
 };
@@ -52,6 +53,37 @@ function fmtVisitors(delta: number | null): string {
   if (delta === null) return "—";
   const sign = delta >= 0 ? "+" : "";
   return `${sign}${delta.toLocaleString()}`;
+}
+
+/** CPI delta in currency units — negative = improvement (lower cost per install). */
+function fmtCpi(delta: number | null): string {
+  if (delta === null) return "—";
+  const sign = delta >= 0 ? "+" : "−";
+  const abs = Math.abs(delta);
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
+function rowHasMetrics(row: MetricRow | null): boolean {
+  if (!row) return false;
+  return (
+    row.conversion_rate != null ||
+    row.store_visitors != null ||
+    row.category_rank != null ||
+    row.search_visibility != null ||
+    row.cost_per_install != null
+  );
+}
+
+type MetricsStatus = "none" | "partial" | "comparable";
+
+function resolveMetricsStatus(
+  before: MetricRow | null,
+  after: MetricRow | null,
+  hasComparableDelta: boolean,
+): MetricsStatus {
+  if (hasComparableDelta) return "comparable";
+  if (rowHasMetrics(before) || rowHasMetrics(after)) return "partial";
+  return "none";
 }
 
 /**
@@ -96,6 +128,9 @@ function buildAttributionAnalysis(
   visitorsDelta: number | null,
   rankDelta: number | null,
   visibilityDelta: number | null,
+  cpiDelta: number | null,
+  before: MetricRow | null,
+  after: MetricRow | null,
 ): string {
   const parts: string[] = [];
 
@@ -158,6 +193,26 @@ function buildAttributionAnalysis(
     );
   }
 
+  if (cpiDelta !== null && Math.abs(cpiDelta) >= 0.05) {
+    if (cpiDelta < 0) {
+      parts.push(
+        `Cost per install improved by $${Math.abs(cpiDelta).toFixed(2)} — paid acquisition efficiency gained after this listing change.`,
+      );
+    } else {
+      parts.push(
+        `Cost per install rose by $${cpiDelta.toFixed(2)}. Review tone arm and keyword focus if UAC efficiency regressed.`,
+      );
+    }
+  } else if (after?.cost_per_install != null && before?.cost_per_install == null) {
+    parts.push(
+      `Post-optimization CPI is logged at $${after.cost_per_install.toFixed(2)} (week ${after.metric_week}). Enter a baseline week from before this listing change to measure CPI delta.`,
+    );
+  } else if (before?.cost_per_install != null && after?.cost_per_install == null) {
+    parts.push(
+      `Baseline CPI is $${before.cost_per_install.toFixed(2)} (week ${before.metric_week}). Log post-optimization CPI to compare paid acquisition efficiency.`,
+    );
+  }
+
   if (snapshot.strategy_summary) {
     parts.push(`Strategy used: "${snapshot.strategy_summary}"`);
   }
@@ -173,6 +228,9 @@ function buildNextStep(
   convDelta: number | null,
   visibilityDelta: number | null,
   rankDelta: number | null,
+  cpiDelta: number | null,
+  before: MetricRow | null,
+  after: MetricRow | null,
   snapshot: SnapshotRow,
 ): string {
   // Conversion up but visibility flat/down → keyword gap in title
@@ -209,9 +267,35 @@ function buildNextStep(
     return "Both conversion and visibility are down. Consider reverting to the previous listing or running a new generation with a different tone style. Also check whether an external factor (competitor campaign, app store algorithm change) coincides with this period.";
   }
 
-  // No data yet
-  if (convDelta === null && visibilityDelta === null && rankDelta === null) {
-    return "No post-optimization metrics entered yet. Enter your conversion rate and store visitors from Play Console (Acquire users → Store listing analytics) once a week to unlock attribution analysis.";
+  // No comparable deltas yet
+  if (
+    convDelta === null &&
+    visibilityDelta === null &&
+    rankDelta === null &&
+    cpiDelta === null
+  ) {
+    if (after && rowHasMetrics(after) && !rowHasMetrics(before)) {
+      const missing: string[] = [];
+      if (after.cost_per_install != null) {
+        missing.push("baseline CPI from the week before your listing change");
+      }
+      if (after.conversion_rate == null || after.store_visitors == null) {
+        missing.push("conversion rate and store visitors from Play Console");
+      }
+      const hint =
+        missing.length > 0
+          ? ` Add ${missing.join("; also add ")}.`
+          : " Add a baseline week from before this listing change.";
+      return `Post-optimization metrics saved for week ${after.metric_week}.${hint} Two weeks (before + after) unlock delta attribution.`;
+    }
+
+    if (after && rowHasMetrics(after) && rowHasMetrics(before)) {
+      return "Metrics are logged for both weeks but no comparable fields overlap yet. Enter the same fields (e.g. CPI, conversion rate, store visitors) in baseline and post weeks to unlock deltas.";
+    }
+
+    if (!after || !rowHasMetrics(after)) {
+      return "No post-optimization metrics entered yet. Enter your conversion rate and store visitors from Play Console (Acquire users → Store listing analytics) once a week to unlock attribution analysis.";
+    }
   }
 
   return "Continue monitoring. Enter metrics again next week to identify the trend direction and get a targeted optimization recommendation.";
@@ -259,7 +343,7 @@ export async function GET(_request: NextRequest, context: Ctx) {
     supabase
       .from("listing_metrics")
       .select(
-        "id, metric_week, conversion_rate, store_visitors, category_rank, search_visibility, note, created_at",
+        "id, metric_week, conversion_rate, store_visitors, category_rank, search_visibility, cost_per_install, note, created_at",
       )
       .eq("workspace_id", workspaceId)
       .eq("app_id", appId)
@@ -307,7 +391,20 @@ export async function GET(_request: NextRequest, context: Ctx) {
         ? after.search_visibility - before.search_visibility
         : null;
 
-    const hasData = convDelta !== null || visitorsDelta !== null || rankDelta !== null;
+    const cpiDelta =
+      before?.cost_per_install != null && after?.cost_per_install != null
+        ? after.cost_per_install - before.cost_per_install
+        : null;
+
+    const hasComparableDelta =
+      convDelta !== null ||
+      visitorsDelta !== null ||
+      rankDelta !== null ||
+      cpiDelta !== null;
+
+    const metricsStatus = resolveMetricsStatus(before, after, hasComparableDelta);
+
+    const hasData = hasComparableDelta || metricsStatus === "partial";
 
     // Verdict: success if any key metric improved meaningfully
     const verdict: "success" | "needs_adjustment" | "pending" =
@@ -315,11 +412,13 @@ export async function GET(_request: NextRequest, context: Ctx) {
         ? "pending"
         : (convDelta !== null && convDelta > 1) ||
           (visibilityDelta !== null && visibilityDelta > 1) ||
-          (rankDelta !== null && rankDelta < -1)
+          (rankDelta !== null && rankDelta < -1) ||
+          (cpiDelta !== null && cpiDelta < -0.05)
           ? "success"
           : (convDelta !== null && convDelta < -1) ||
             (visibilityDelta !== null && visibilityDelta < -1) ||
-            (rankDelta !== null && rankDelta > 1)
+            (rankDelta !== null && rankDelta > 1) ||
+            (cpiDelta !== null && cpiDelta > 0.05)
             ? "needs_adjustment"
             : "pending";
 
@@ -355,6 +454,7 @@ export async function GET(_request: NextRequest, context: Ctx) {
             storeVisitors: before.store_visitors,
             categoryRank: before.category_rank,
             searchVisibility: before.search_visibility,
+            costPerInstall: before.cost_per_install,
           }
         : null,
       postMetrics: after
@@ -364,6 +464,7 @@ export async function GET(_request: NextRequest, context: Ctx) {
             storeVisitors: after.store_visitors,
             categoryRank: after.category_rank,
             searchVisibility: after.search_visibility,
+            costPerInstall: after.cost_per_install,
           }
         : null,
 
@@ -373,6 +474,7 @@ export async function GET(_request: NextRequest, context: Ctx) {
         searchVisibilityChange: fmtPct(visibilityDelta),
         rankShift: fmtRank(rankDelta),
         storeVisitorsChange: fmtVisitors(visitorsDelta),
+        costPerInstallChange: fmtCpi(cpiDelta),
       },
       attributionAnalysis: buildAttributionAnalysis(
         snap,
@@ -380,8 +482,20 @@ export async function GET(_request: NextRequest, context: Ctx) {
         visitorsDelta,
         rankDelta,
         visibilityDelta,
+        cpiDelta,
+        before,
+        after,
       ),
-      nextStep: buildNextStep(convDelta, visibilityDelta, rankDelta, snap),
+      nextStep: buildNextStep(
+        convDelta,
+        visibilityDelta,
+        rankDelta,
+        cpiDelta,
+        before,
+        after,
+        snap,
+      ),
+      metricsStatus,
       verdict,
     };
   });

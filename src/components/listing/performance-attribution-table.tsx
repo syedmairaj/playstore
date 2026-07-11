@@ -65,6 +65,24 @@ function formatDate(iso: string | null): string {
   }
 }
 
+function toneBadgeLabel(
+  tone: string,
+  t: ReturnType<typeof useTranslations<"optimizer.performanceAttribution">>,
+): string {
+  switch (tone) {
+    case "bold":
+      return t("toneBold");
+    case "professional":
+      return t("toneProfessional");
+    case "friendly":
+      return t("toneFriendly");
+    case "minimal":
+      return t("toneMinimal");
+    default:
+      return tone;
+  }
+}
+
 // ─── Tier badge ───────────────────────────────────────────────────────────────
 
 const TIER_CONFIG: Record<
@@ -274,6 +292,11 @@ function AttributionRow({
           <p className={cn("text-[11px] font-medium capitalize", statusColor)}>
             {row.version.status}
           </p>
+          {row.toneApplied ?? row.toneStyle ? (
+            <span className="inline-flex w-fit rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold capitalize text-violet-300">
+              {toneBadgeLabel(row.toneApplied ?? row.toneStyle ?? "", t)}
+            </span>
+          ) : null}
           {row.version.title && (
             <p className="text-[10px] text-zinc-500 truncate italic">{row.version.title}</p>
           )}
@@ -462,6 +485,10 @@ export function PerformanceAttributionTable({
         <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
           <TrendingUp className="w-3 h-3 text-emerald-400" />
           {t("legendCvr")}
+        </span>
+        <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+          <BarChart3 className="w-3 h-3 text-amber-400" />
+          {t("legendCpi")}
         </span>
       </div>
 
