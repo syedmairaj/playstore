@@ -1,4 +1,8 @@
 import { parseKeyword, type KeywordCategory } from "@/components/listing/optimizer/keyword-strategy-panel";
+import {
+  filterAiListingKeywordsForApp,
+  isAiListingPackTrustedForApp,
+} from "@/lib/keywords/discovery-app-relevance";
 
 export type DiscoverySuggestionCategory =
   | KeywordCategory
@@ -9,7 +13,8 @@ export type DiscoverySuggestionSource =
   | "ai_listing"
   | "brand_heuristic"
   | "category_heuristic"
-  | "name_expansion";
+  | "name_expansion"
+  | "tracked_expansion";
 
 export type DiscoveryKeywordSuggestion = {
   keyword: string;
@@ -57,6 +62,11 @@ const CATEGORY_LONGTAIL: Record<string, string[]> = {
     "budget planner app",
     "money manager app",
   ],
+  social: [
+    "photo sharing app",
+    "friends chat app",
+    "stories camera app",
+  ],
 };
 
 const SODIUM_SUGGESTIONS = [
@@ -89,6 +99,14 @@ function categoryBucket(category: string | null | undefined): string | null {
   if (c.includes("health") || c.includes("fitness") || c.includes("medical")) return "health";
   if (c.includes("productivity")) return "productivity";
   if (c.includes("finance") || c.includes("money")) return "finance";
+  if (
+    c.includes("social") ||
+    c.includes("communication") ||
+    c.includes("photo") ||
+    c.includes("camera")
+  ) {
+    return "social";
+  }
   return null;
 }
 
@@ -230,8 +248,12 @@ function fromAiListing(
 ): DiscoveryKeywordSuggestion[] {
   const appTokens = tokenizeName(ctx.appName);
   const out: DiscoveryKeywordSuggestion[] = [];
+  const appCtx = { appName: ctx.appName, category: ctx.category };
+  const trusted = isAiListingPackTrustedForApp(rawItems, appCtx)
+    ? filterAiListingKeywordsForApp(rawItems, appCtx)
+    : [];
 
-  for (const raw of rawItems) {
+  for (const raw of trusted) {
     const parsed = parseKeyword(raw);
     const keyword = parsed.keyword.trim();
     if (keyword.length < 2) continue;
@@ -261,15 +283,58 @@ function fromAiListing(
 }
 
 /**
+ * ASO industry pattern: expand discovery from keywords the user already tracks
+ * for this app (manual search / watchlist), without pulling another app's AI pack.
+ */
+function buildTrackedExpansions(
+  ctx: DiscoveryAppContext,
+  trackedTerms: string[],
+): DiscoveryKeywordSuggestion[] {
+  const out: DiscoveryKeywordSuggestion[] = [];
+  const appTokens = new Set(tokenizeName(ctx.appName));
+  const suffixes = ["app", "tracker", "for android"];
+
+  for (const term of trackedTerms.slice(0, 6)) {
+    const base = normKeyword(term);
+    if (base.length < 2) continue;
+    // Prefer expansions that stay on-brand or are the tracked seed itself variants.
+    const seedSharesBrand = [...appTokens].some((t) => base.includes(t));
+    for (const suffix of suffixes) {
+      if (base.endsWith(` ${suffix}`)) continue;
+      const keyword = `${base} ${suffix}`;
+      out.push({
+        keyword,
+        raw: keyword,
+        category: seedSharesBrand ? "brand" : "opportunity",
+        reasonKey: "trackedExpansion",
+        reasonParams: { seed: term.trim() },
+        source: "tracked_expansion",
+        priority: seedSharesBrand ? 72 : 62,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
  * Build ranked, de-duplicated discovery suggestions for the selected app.
- * Merges AI listing output with brand/category heuristics.
+ * Merges trusted AI listing output with brand/category heuristics and
+ * expansions from this app's tracked keywords (never another app's pack).
  */
 export function buildContextualDiscoverySuggestions(args: {
   app: DiscoveryAppContext;
   aiListingKeywords?: string[];
+  /** Normalized or raw terms already on this app's watchlist — seeds related discovery. */
+  trackedTerms?: string[];
   excludeNormalized?: ReadonlySet<string>;
 }): DiscoveryKeywordSuggestion[] {
-  const { app, aiListingKeywords = [], excludeNormalized } = args;
+  const {
+    app,
+    aiListingKeywords = [],
+    trackedTerms = [],
+    excludeNormalized,
+  } = args;
   const seen = new Set<string>();
   const merged: DiscoveryKeywordSuggestion[] = [];
 
@@ -280,6 +345,9 @@ export function buildContextualDiscoverySuggestions(args: {
     pushUnique(merged, seen, item);
   }
   for (const item of buildCategoryHeuristics(app)) {
+    pushUnique(merged, seen, item);
+  }
+  for (const item of buildTrackedExpansions(app, trackedTerms)) {
     pushUnique(merged, seen, item);
   }
 

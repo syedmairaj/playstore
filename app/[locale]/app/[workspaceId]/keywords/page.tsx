@@ -24,11 +24,20 @@ export default async function KeywordsPage({
   }
   const t = await getTranslations("keywordTracker");
 
-  const [kwLoaded, appsResult, latestAiByApp] = await Promise.all([
+  const [kwLoaded, appsResult] = await Promise.all([
     loadWorkspaceKeywords(supabase, workspaceId),
     queryWorkspaceAppsList(supabase, workspaceId),
-    loadLatestAiListingKeywordsByApp(supabase, workspaceId),
   ]);
+  // Pass workspace apps so AI Discovery rejects cross-app / wrong-vertical packs.
+  const latestAiByApp = await loadLatestAiListingKeywordsByApp(
+    supabase,
+    workspaceId,
+    appsResult.rows.map((a) => ({
+      id: a.id,
+      name: a.name,
+      category: a.category,
+    })),
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">

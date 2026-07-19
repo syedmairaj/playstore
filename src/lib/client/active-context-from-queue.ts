@@ -83,6 +83,19 @@ function isReviewPill(pill: ActiveContextQueuePill): boolean {
 }
 
 /**
+ * Competitor Spy gap / quick-win keywords staged into the optimization queue.
+ * These feed Competitive Defense (ASO: keyword-gap opportunities) alongside
+ * audit-approved ACTIVE competitor strengths.
+ */
+export function isCompetitorGapOpportunityItem(
+  item: Pick<OptimizationQueueItem, "type" | "metadata">,
+): boolean {
+  if (item.type !== "competitor_keyword") return false;
+  const meta = item.metadata ?? {};
+  return meta.from_gap_analysis === true;
+}
+
+/**
  * Partition optimization queue items into Cluster-to-Generate buckets.
  */
 export function partitionQueueForActiveContext(
@@ -106,11 +119,21 @@ export function partitionQueueForActiveContext(
     else market.push(pill);
   }
 
-  const reviewPills = defensive.filter(isReviewPill);
+  // Review Insights include both defensive product pains and offensive
+  // oppositional targets (Competitive Exploitation / Stage Issue).
+  const reviewPills = [...defensive, ...offensive].filter(isReviewPill);
   const marketIntelPills = market;
-  /** Competitor Strengths pillar — strict `status === ACTIVE` only (SSOT). */
+  /**
+   * Competitive Defense chips:
+   * - ACTIVE competitor_strength (audit-approved)
+   * - competitor_keyword gaps / quick wins (from_gap_analysis)
+   */
   const competitorSpyPills = visibleItems
-    .filter(isActiveContextCompetitorStrength)
+    .filter(
+      (item) =>
+        isActiveContextCompetitorStrength(item) ||
+        isCompetitorGapOpportunityItem(item),
+    )
     .map(toPill);
 
   return {

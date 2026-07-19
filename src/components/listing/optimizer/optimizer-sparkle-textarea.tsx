@@ -16,6 +16,8 @@ type Props = {
   rows: number;
   minHeightClass?: string;
   disabled: boolean;
+  /** When set, only the ✦ control is disabled (textarea can still be edited). */
+  sparkleDisabled?: boolean;
   busy: boolean;
   onAutofill: () => void;
   /** When set, called before `onAutofill` (e.g. credit confirmation). */
@@ -36,6 +38,7 @@ export function OptimizerSparkleTextarea({
   rows,
   minHeightClass,
   disabled,
+  sparkleDisabled,
   busy,
   onAutofill,
   onBeforeAutofill,
@@ -86,7 +89,7 @@ export function OptimizerSparkleTextarea({
             <button
               type="button"
               aria-label={sparkleAriaLabel}
-              disabled={disabled || busy}
+              disabled={disabled || sparkleDisabled || busy}
               onClick={handleSparkleClick}
               className={cn(
                 "absolute top-2.5 end-2.5 inline-flex size-9 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-emerald-200/60 shadow-sm backdrop-blur-sm transition",

@@ -1,9 +1,11 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AlertTriangle, Loader2, Sparkles, Wand2 } from "lucide-react";
+import { AlertTriangle, CircleHelp, Loader2, Sparkles, Wand2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { OptimizerSparkleTextarea } from "@/components/listing/optimizer/optimizer-sparkle-textarea";
+import { Tooltip } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@radix-ui/react-tooltip";
 import type { DiscoveryWorkflowMode } from "@/lib/client/growth-orchestrator";
 import { AI_CREDIT_COSTS } from "@/lib/features/billing/credit-costs";
 import { cn } from "@/lib/utils";
@@ -22,6 +24,9 @@ type Props = {
   onFeaturesChange: (value: string) => void;
   isFetchingSpyContext: boolean;
   showMissingContextAlert: boolean;
+  /** Queued Spy / Market / Review signals exist but textareas are still empty. */
+  showStagedButEmptyAlert: boolean;
+  onApplyFromActiveContext: () => void;
   disableScratchAutofill: boolean;
   autofillBusy: AutofillField | null;
   isProcessingCredits: boolean;
@@ -42,7 +47,9 @@ export function MarketDiscoveryWorkflow({
   onFeaturesChange,
   isFetchingSpyContext,
   showMissingContextAlert,
-  disableScratchAutofill,
+  showStagedButEmptyAlert,
+  onApplyFromActiveContext,
+  disableScratchAutofill: _disableScratchAutofill,
   autofillBusy,
   isProcessingCredits,
   workspaceReady,
@@ -55,13 +62,10 @@ export function MarketDiscoveryWorkflow({
   const tSmart = useTranslations("optimizer.smartWorkflow");
 
   const isRecommended = mode === "recommended";
-  const scratchDisabled =
-    disableScratchAutofill ||
-    Boolean(autofillBusy) ||
-    isProcessingCredits ||
-    !workspaceReady;
   const fieldDisabled =
     Boolean(autofillBusy) || isProcessingCredits || !workspaceReady;
+  // Keep ✦ clickable in Auto-Fill so users get guidance (pull context / switch mode).
+  const sparkleLocked = fieldDisabled;
 
   return (
     <div className="space-y-5">
@@ -72,9 +76,27 @@ export function MarketDiscoveryWorkflow({
         )}
       >
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
-            {t("pathToggleLabel")}
-          </p>
+          <div className={cn("flex items-center gap-2", isRtl && "flex-row-reverse")}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-400/95">
+              {t("pathToggleLabel")}
+            </p>
+            <TooltipProvider>
+              <Tooltip
+                content={t("stuckHelpTooltip")}
+                side="bottom"
+                className="max-w-[320px]"
+                asChild
+              >
+                <button
+                  type="button"
+                  className="inline-flex size-6 items-center justify-center rounded-full text-zinc-400 transition hover:bg-white/10 hover:text-emerald-200"
+                  aria-label={t("stuckHelpAria")}
+                >
+                  <CircleHelp className="size-3.5" aria-hidden />
+                </button>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
           <p className="text-xs leading-relaxed text-white/50">{t("pathToggleHint")}</p>
         </div>
         <div
@@ -127,6 +149,37 @@ export function MarketDiscoveryWorkflow({
             : "border-zinc-700/80 bg-zinc-900/40",
         )}
       >
+        {isRecommended && showStagedButEmptyAlert ? (
+          <div
+            role="status"
+            className="mb-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-4"
+          >
+            <div className={cn("flex gap-3", isRtl && "flex-row-reverse")}>
+              <Wand2
+                className="mt-0.5 size-5 shrink-0 text-emerald-300"
+                aria-hidden
+              />
+              <div className="min-w-0 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-emerald-50">
+                    {t("stagedEmptyTitle")}
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-emerald-50/85">
+                    {t("stagedEmptyBody")}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onApplyFromActiveContext}
+                  className="inline-flex items-center justify-center rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-400"
+                >
+                  {t("pullFromActiveContext")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {isRecommended && showMissingContextAlert ? (
           <div
             role="alert"
@@ -145,6 +198,12 @@ export function MarketDiscoveryWorkflow({
                   <p className="mt-1 text-sm leading-relaxed text-amber-100/85">
                     {t("missingContextBody")}
                   </p>
+                  <ol className="mt-2 list-decimal space-y-1 ps-4 text-xs leading-relaxed text-amber-100/75">
+                    <li>{t("missingContextStep1")}</li>
+                    <li>{t("missingContextStep2")}</li>
+                    <li>{t("missingContextStep3")}</li>
+                    <li>{t("missingContextStep4")}</li>
+                  </ol>
                 </div>
                 <div className={cn("flex flex-wrap gap-2", isRtl && "flex-row-reverse")}>
                   <button
@@ -192,7 +251,8 @@ export function MarketDiscoveryWorkflow({
               }
               rows={4}
               minHeightClass="min-h-[92px]"
-              disabled={isRecommended ? fieldDisabled || disableScratchAutofill : scratchDisabled}
+              disabled={fieldDisabled}
+              sparkleDisabled={sparkleLocked}
               busy={
                 autofillBusy === "keywords" ||
                 (isRecommended && isFetchingSpyContext)
@@ -201,8 +261,10 @@ export function MarketDiscoveryWorkflow({
               onBeforeAutofill={() => onRequestAutofill("keywords")}
               sparkleAriaLabel={tForm("autofill.sparkleAriaKeywords")}
               sparkleTooltip={
-                isRecommended || disableScratchAutofill
-                  ? t("scratchDisabledTooltip")
+                isRecommended
+                  ? showStagedButEmptyAlert
+                    ? t("sparklePullFromContextTooltip")
+                    : t("scratchDisabledTooltip")
                   : tForm("autofill.aiAssistTooltipKeywords")
               }
               creditsNote={
@@ -215,7 +277,7 @@ export function MarketDiscoveryWorkflow({
             />
             {keywords.trim().length === 0 ? (
               <p className="text-[11px] leading-relaxed text-zinc-500">
-                {isRecommended ? tSmart("keywordsHelper") : tSmart("keywordsHelper")}
+                {isRecommended ? t("keywordsHelperRecommended") : tSmart("keywordsHelper")}
               </p>
             ) : null}
           </div>
@@ -234,7 +296,8 @@ export function MarketDiscoveryWorkflow({
               }
               rows={5}
               minHeightClass="min-h-[144px]"
-              disabled={isRecommended ? fieldDisabled || disableScratchAutofill : scratchDisabled}
+              disabled={fieldDisabled}
+              sparkleDisabled={sparkleLocked}
               busy={
                 autofillBusy === "features" ||
                 (isRecommended && isFetchingSpyContext)
@@ -243,8 +306,10 @@ export function MarketDiscoveryWorkflow({
               onBeforeAutofill={() => onRequestAutofill("features")}
               sparkleAriaLabel={tForm("autofill.sparkleAriaFeatures")}
               sparkleTooltip={
-                isRecommended || disableScratchAutofill
-                  ? t("scratchDisabledTooltip")
+                isRecommended
+                  ? showStagedButEmptyAlert
+                    ? t("sparklePullFromContextTooltip")
+                    : t("scratchDisabledTooltip")
                   : tForm("autofill.aiAssistTooltipFeatures")
               }
               creditsNote={
@@ -257,7 +322,7 @@ export function MarketDiscoveryWorkflow({
             />
             {features.trim().length === 0 ? (
               <p className="text-[11px] leading-relaxed text-zinc-500">
-                {tSmart("featuresHelper")}
+                {isRecommended ? t("featuresHelperRecommended") : tSmart("featuresHelper")}
               </p>
             ) : null}
           </div>

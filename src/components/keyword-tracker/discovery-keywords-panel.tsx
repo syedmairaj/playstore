@@ -75,6 +75,13 @@ export function DiscoveryKeywordsPanel({
   const [stagingTerm, setStagingTerm] = useState<string | null>(null);
   const [vaultLoading, setVaultLoading] = useState(true);
 
+  // Remount via parent key handles most resets; also sync when generation changes in place.
+  useEffect(() => {
+    setIgnoredKeys(readIgnoredDiscoveryKeywords(workspaceId, appId, generationId));
+    setLocalStaged(new Map());
+    setStagingTerm(null);
+  }, [workspaceId, appId, generationId]);
+
   const refreshStaged = useCallback(async () => {
     setVaultLoading(true);
     try {

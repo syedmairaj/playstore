@@ -9,6 +9,9 @@ export const FEATURE_FLAG_KEYS = [
   "localization_playbook",
   "market_intelligence",
   "screenshot_studio",
+  "brand_assets",
+  "advanced_competitor_analysis",
+  "advanced_reviews",
 ] as const;
 
 export type FeatureFlagKey = (typeof FEATURE_FLAG_KEYS)[number];

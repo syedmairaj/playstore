@@ -118,15 +118,27 @@ export default function StagingWorkspacePillar({
           ))}
         </div>
       ) : pillar.isEmpty ? (
-        isMarketIntelPillar && workspaceId ? (
+        pillar.id === "market_opportunities" && workspaceId ? (
           <ActiveContextSlotEmpty
-            message={tSlot("noActiveSignals")}
+            message={tSlot("marketIntelEmpty")}
             ctaLabel={tSlot("openMarketIntelCta")}
             ctaHref={`/app/${workspaceId}/market`}
             isRtl={isRtl}
           />
+        ) : pillar.id === "competitor_keywords" && workspaceId ? (
+          <ActiveContextSlotEmpty
+            message={tSlot("competitorStrengthsEmpty")}
+            ctaLabel={tSlot("openCompetitorSpyCta")}
+            ctaHref={`/app/${workspaceId}/competitors`}
+            isRtl={isRtl}
+          />
         ) : (
-          <ActiveContextSlotEmpty message={tSlot("noActiveSignals")} isRtl={isRtl} />
+          <ActiveContextSlotEmpty
+            message={tSlot("reviewInsightsEmpty")}
+            ctaLabel={workspaceId ? tSlot("openReviewsCta") : undefined}
+            ctaHref={workspaceId ? `/app/${workspaceId}/reviews` : undefined}
+            isRtl={isRtl}
+          />
         )
       ) : (
         <ActiveContextSignalList rowHeight={ACTIVE_CONTEXT_ROW_MIN_HEIGHT}>

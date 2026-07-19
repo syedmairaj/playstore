@@ -4,6 +4,12 @@ import {
   isProfileAccessBlocked,
   suspendedAccountJsonResponse,
 } from "@/lib/auth/profile-access";
+import {
+  enforcePlanLimits,
+  type PlanId,
+} from "@/lib/plan/free-tier-enforcement";
+import { buildPlanGateResponse } from "@/lib/plan/plan-response-builder";
+import { resolveWorkspaceBillingPlan } from "@/lib/utils/app-limits";
 import { createServerClient } from "@supabase/ssr";
 import createIntlMiddleware from "next-intl/middleware";
 import { type NextRequest, NextResponse } from "next/server";
@@ -98,6 +104,72 @@ export async function middleware(request: NextRequest) {
             return NextResponse.json(suspendedAccountJsonResponse(), {
               status: 403,
             });
+          }
+
+          // Free tier plan enforcement (hard limits + rate limiting)
+          try {
+            // Extract workspaceId from request path if applicable
+            const workspaceIdMatch = pathname.match(
+              /\/api\/workspaces\/([a-f0-9-]+)/
+            );
+            const workspaceId = workspaceIdMatch?.[1];
+
+            if (workspaceId) {
+              // Resolve billing plan
+              const { normalized: plan } =
+                await resolveWorkspaceBillingPlan(supabase, workspaceId, user.id);
+
+              // Build enforcement context
+              const method = request.method;
+              const endpoint = `${method} ${pathname
+                .replace(/\/api\//, "/api/")
+                .replace(/\/[a-f0-9-]+/g, "/[id]")}`;
+
+              const context = {
+                plan: plan as PlanId,
+                workspaceId,
+                userId: user.id,
+                endpoint,
+                method,
+                pathname,
+              };
+
+              // Run enforcement checks
+              const result = await enforcePlanLimits(supabase, context);
+
+              if (!result.allowed) {
+                if (debugListingGenerate) {
+                  console.log(
+                    "[DEBUG] Middleware: plan enforcement blocked request",
+                    {
+                      code: result.code,
+                      reason: result.reason,
+                    }
+                  );
+                }
+
+                return buildPlanGateResponse(
+                  result.code || "plan_gate",
+                  result.reason || "Plan limit exceeded",
+                  result.statusCode || 403,
+                  result.metadata
+                );
+              }
+            }
+          } catch (error) {
+            if (debugListingGenerate) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "unknown plan enforcement error";
+              console.warn(
+                "[DEBUG] Middleware: plan enforcement failed (fail-open)",
+                {
+                  message,
+                }
+              );
+            }
+            // Plan enforcement can fail on transient errors. Fail open.
           }
         }
       } catch (error) {

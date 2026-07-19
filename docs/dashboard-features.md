@@ -24,7 +24,7 @@ Principles: **one calm home**, **obvious next step**, **no widget walls**.
 
 ## Deep links (sidebar)
 
-- **Keyword tracker** — Lists, snapshots, trends.
+- **Keyword tracker** — Lists, snapshots, trends; AI Discovery suggestions are per selected app (no cross-app bleed).
 - **AI listing optimizer** — Title, short, long, CTAs; credits-aware.
 - **Competitor spy** — Roadmap: richer gaps & exports.
 - **Reviews** — Themes, sentiment; roadmap: rating trend alerts.

@@ -67,11 +67,14 @@ import {
   finalListingCacheToOutput,
   isFinalListingCachePublicationUnlocked,
   listingOutputToFinalListingCache,
+  OPTIMIZER_INSTANT_DRAFT_READY_EVENT,
+  publishOptimizerInstantDraftReady,
   readFinalListingCache,
   readFinalListingCacheSavedAtMs,
   shouldPreferFinalListingCacheOverHydration,
   shouldWritePreviewFinalListingCache,
   writeFinalListingCache,
+  type OptimizerInstantDraftReadyDetail,
 } from "@/lib/client/listing-optimizer-generated-cache";
 import {
   consumeInjectedOptimizerKeywords,
@@ -103,6 +106,10 @@ import {
   shouldRestoreFinalListingCache,
   shouldRestoreListingOutputFromHydration,
 } from "@/lib/client/app-discovery-context";
+import {
+  buildDiscoveryFieldsFromActiveContext,
+  hasDiscoverableActiveContext,
+} from "@/lib/client/discovery-from-active-context";
 import { readPersistedWorkspaceAppId } from "@/lib/client/workspace-app-sync";
 import {
   buildOrchestratorProgress,
@@ -509,18 +516,17 @@ function StagingWorkspaceSection({
     };
   });
 
-  // Approved audit strengths only — read-only in Active Context (remove = vault dismiss).
-  const competitorStrengthPills = competitorSpyPills.filter(
-    (pill) => pill.item.type === "competitor_strength",
-  );
-
-  const competitorKeywords: CompetitorKeywordSignal[] = competitorStrengthPills.map((pill) => {
+  // Competitive Defense: audit-approved strengths + Competitor Spy gap/quick-win keywords.
+  // Note: toTypedActiveContextSignal normalizes competitor_keyword → keyword_gap, so do not
+  // re-filter by typed type here — competitorSpyPills is already the correct set.
+  const competitorKeywords: CompetitorKeywordSignal[] = competitorSpyPills.map((pill) => {
     const meta = pill.item.payload.metadata ?? {};
+    const isApprovedStrength = pill.item.type === "competitor_strength";
     return {
       id: pill.id,
       source: "competitor_keyword" as const,
       keyword: pill.label,
-      category: "competitor_gap",
+      category: isApprovedStrength ? "high_volume" : "competitor_gap",
       userSelected: true,
       timestamp: Date.now(),
       metadata: {
@@ -530,7 +536,8 @@ function StagingWorkspaceSection({
         origin_module: meta.origin_module ?? "competitor_spy",
         audit_status: meta.audit_status,
         core_differentiator: meta.core_differentiator,
-        readOnlyStrength: true,
+        from_gap_analysis: meta.from_gap_analysis === true,
+        readOnlyStrength: isApprovedStrength,
       },
     };
   });
@@ -726,6 +733,7 @@ export function ListingOptimizer({
   const [discoveryWorkflowMode, setDiscoveryWorkflowMode] =
     useState<DiscoveryWorkflowMode>("recommended");
   const [discoveryWorkflowChosen, setDiscoveryWorkflowChosen] = useState(false);
+  const discoveryAutoFillAppRef = useRef<string | null>(null);
   const [toneStyle, setToneStyle] = useState<ToneStyle>("professional");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1573,7 +1581,12 @@ export function ListingOptimizer({
       }
 
       const paidUnlock = isFinalListingCachePublicationUnlocked(final);
-      if (hasActiveModularDraftSession() && !paidUnlock) {
+      // After remount/HMR, modular session storage may already exist while React
+      // result is empty — still allow a fresh instant-draft cache restore.
+      const allowFreshInstantDraft =
+        final.allowInstantDraftRestore === true &&
+        !resultRef.current?.title?.trim();
+      if (hasActiveModularDraftSession() && !paidUnlock && !allowFreshInstantDraft) {
         return false;
       }
       const draftTs = Math.max(
@@ -2691,11 +2704,80 @@ export function ListingOptimizer({
     (hasPlaystoreInjectedKeywordContext(selectedAppId.trim()) ||
       optimizationQueueLoading);
 
+  const canDiscoverFromActiveContext = useMemo(
+    () => hasDiscoverableActiveContext(activeContextPartition),
+    [activeContextPartition],
+  );
+
+  const showStagedButEmptyAlert =
+    discoveryWorkflowMode === "recommended" &&
+    canDiscoverFromActiveContext &&
+    (!keywords.trim() || !features.trim()) &&
+    !optimizationQueueLoading &&
+    !isFetchingSpyContext;
+
   const showMissingContextAlert =
     discoveryWorkflowMode === "recommended" &&
+    !canDiscoverFromActiveContext &&
     !hasGrowthContext &&
     !keywords.trim() &&
-    !features.trim();
+    !features.trim() &&
+    !optimizationQueueLoading;
+
+  const applyDiscoveryFromActiveContext = useCallback(() => {
+    if (!canDiscoverFromActiveContext) {
+      toast.message(t("marketDiscoveryWorkflow.scratchBlockedTitle"), {
+        description: t("marketDiscoveryWorkflow.scratchBlockedBody"),
+      });
+      return false;
+    }
+    const built = buildDiscoveryFieldsFromActiveContext(activeContextPartition);
+    if (!built.keywords.trim() && !built.features.trim()) {
+      toast.message(t("marketDiscoveryWorkflow.scratchBlockedTitle"), {
+        description: t("marketDiscoveryWorkflow.scratchBlockedBody"),
+      });
+      return false;
+    }
+    // Fill empty fields only — never clobber user edits.
+    setKeywords((prev) => (prev.trim() ? prev : built.keywords));
+    setFeatures((prev) => (prev.trim() ? prev : built.features));
+    discoveryAutoFillAppRef.current = selectedAppId.trim() || null;
+    toast.success(t("marketDiscoveryWorkflow.pulledFromActiveContextToast"));
+    return true;
+  }, [
+    activeContextPartition,
+    canDiscoverFromActiveContext,
+    selectedAppId,
+    t,
+  ]);
+
+  // Auto-Fill mode: when Spy already staged signals, hydrate Market Discovery
+  // textareas once per app so Build listing draft unlocks without a phantom "scan".
+  useEffect(() => {
+    if (discoveryWorkflowMode !== "recommended") return;
+    if (optimizationQueueLoading) return;
+    if (!canDiscoverFromActiveContext) return;
+    const aid = selectedAppId.trim();
+    if (!aid) return;
+    if (discoveryAutoFillAppRef.current === aid) return;
+    if (keywords.trim() && features.trim()) {
+      discoveryAutoFillAppRef.current = aid;
+      return;
+    }
+    const built = buildDiscoveryFieldsFromActiveContext(activeContextPartition);
+    if (!built.keywords.trim() && !built.features.trim()) return;
+    setKeywords((prev) => (prev.trim() ? prev : built.keywords));
+    setFeatures((prev) => (prev.trim() ? prev : built.features));
+    discoveryAutoFillAppRef.current = aid;
+  }, [
+    activeContextPartition,
+    canDiscoverFromActiveContext,
+    discoveryWorkflowMode,
+    features,
+    keywords,
+    optimizationQueueLoading,
+    selectedAppId,
+  ]);
 
   const keywordTrackerHref = workspaceId
     ? `/app/${workspaceId}/keywords`
@@ -2740,6 +2822,7 @@ export function ListingOptimizer({
     setSelectedAppId(id);
     setWorkspaceAppId(id || null);
     discoveryWriteAppIdRef.current = id;
+    discoveryAutoFillAppRef.current = null;
     if (id && workspaceId) {
       try {
         localStorage.removeItem(
@@ -3327,6 +3410,10 @@ export function ListingOptimizer({
 
   function requestAutofill(field: AutofillField) {
     if (discoveryWorkflowMode === "recommended") {
+      if (canDiscoverFromActiveContext) {
+        applyDiscoveryFromActiveContext();
+        return;
+      }
       toast.message(t("marketDiscoveryWorkflow.scratchBlockedTitle"), {
         description: t("marketDiscoveryWorkflow.scratchBlockedBody"),
       });
@@ -3337,6 +3424,10 @@ export function ListingOptimizer({
 
   async function runAutofill(field: AutofillField) {
     if (discoveryWorkflowMode === "recommended") {
+      if (canDiscoverFromActiveContext) {
+        applyDiscoveryFromActiveContext();
+        return;
+      }
       toast.message(t("marketDiscoveryWorkflow.scratchBlockedTitle"), {
         description: t("marketDiscoveryWorkflow.scratchBlockedBody"),
       });
@@ -3990,7 +4081,11 @@ export function ListingOptimizer({
       modularGeneration.clearAllBlockErrors();
       setModularDraftReady(true);
       setListingExportUnlocked(false);
+      setPurgedAwaitingGenerate(false);
+      setGenerateJustSucceeded(true);
       setWizardStep(2);
+      setServerStep(2);
+      setWizardPanelPeek({});
       setResult(draft.data);
       setEditedTitle(draft.data.title ?? "");
       setEditedShort(draft.data.shortDescription ?? "");
@@ -3998,24 +4093,90 @@ export function ListingOptimizer({
       setLastGeneratedAtIso(new Date().toISOString());
       setListingGenerationId(undefined);
       const sid = selectedAppId.trim();
+      const generatedAt = new Date().toISOString();
       if (sid) {
         draftAppliedAtRef.current = Date.now();
+        suppressListingHydrationRef.current = true;
         writeFinalListingCache(
           sid,
           listingOutputToFinalListingCache(
             draft.data,
-            new Date().toISOString(),
+            generatedAt,
             undefined,
-            { publicationUnlocked: false },
+            {
+              publicationUnlocked: false,
+              allowInstantDraftRestore: true,
+            },
           ),
         );
+        window.setTimeout(() => {
+          suppressListingHydrationRef.current = false;
+        }, 2500);
       }
       if (draft.warnings) {
-        modularGeneration.ingestWarnings(draft.warnings);
+        // Instant draft — skip "partial context" refine toast noise.
+        modularGeneration.ingestWarnings(draft.warnings, true);
       }
+      window.setTimeout(() => {
+        document
+          .getElementById("listing-results-heading")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
     },
     [modularGeneration, selectedAppId, setWizardStep],
   );
+
+  // Remount/HMR during a long draft POST drops React state but the orphaned
+  // request still toasts. Re-apply when the live instance hears the ready event
+  // or finds a fresh allowInstantDraftRestore cache.
+  useEffect(() => {
+    const aid = selectedAppId.trim();
+    if (!aid) return;
+
+    const applyFromDetail = (detail: OptimizerInstantDraftReadyDetail) => {
+      if (detail.appId !== aid) return;
+      if (resultRef.current?.title?.trim()) return;
+      // Same-instance broadcast after apply — skip (ref survives the setState).
+      if (draftAppliedAtRef.current > 0) return;
+      applyInstantDraftResult({
+        ok: true,
+        data: detail.output,
+        modularDraftLong: detail.modularDraftLong,
+        modularDraftShort: detail.modularDraftShort,
+        meta: { isDraft: true, creditsCharged: 0 },
+      });
+    };
+
+    const onReady = (event: Event) => {
+      const detail = (event as CustomEvent<OptimizerInstantDraftReadyDetail>)
+        .detail;
+      if (!detail?.appId || !detail.output) return;
+      applyFromDetail(detail);
+    };
+
+    window.addEventListener(OPTIMIZER_INSTANT_DRAFT_READY_EVENT, onReady);
+
+    // Same-tab remount: event may have already fired — pull from cache.
+    const cache = readFinalListingCache(aid);
+    if (
+      cache?.allowInstantDraftRestore &&
+      !resultRef.current?.title?.trim() &&
+      cache.title.trim()
+    ) {
+      const ageMs = Date.now() - Date.parse(cache.generatedAt);
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 15 * 60 * 1000) {
+        tryApplyFinalListingCache(aid);
+      }
+    }
+
+    return () => {
+      window.removeEventListener(OPTIMIZER_INSTANT_DRAFT_READY_EVENT, onReady);
+    };
+  }, [
+    selectedAppId,
+    applyInstantDraftResult,
+    tryApplyFinalListingCache,
+  ]);
 
   const applyPersistedListingDraft = useCallback(
     (draft: ListingDraftPersistState) => {
@@ -4713,7 +4874,9 @@ export function ListingOptimizer({
 
     setError(null);
     if (opts.mode === "fresh") {
-      setResult(null);
+      // Keep prior result visible under the loading shell until the new draft
+      // lands — clearing early caused a blank results panel when apply failed
+      // or raced with hydration after a long generate.
       setMeta(undefined);
       setListingGenerationId(undefined);
       setListingExportUnlocked(false);
@@ -4865,10 +5028,42 @@ export function ListingOptimizer({
 
         if (!draft.ok) {
           handleModularApiError(draft.error.message, draft.error.code);
+          setError(draft.error.message || t("form.networkError"));
           return;
         }
 
-        applyInstantDraftResult(draft);
+        try {
+          // Broadcast BEFORE apply so a remounted Optimizer (HMR / RSC refresh
+          // mid-request) can adopt the draft even if this fiber is unmounted.
+          const sidForBroadcast = selectedAppId.trim();
+          if (sidForBroadcast) {
+            writeFinalListingCache(
+              sidForBroadcast,
+              listingOutputToFinalListingCache(
+                draft.data,
+                new Date().toISOString(),
+                undefined,
+                {
+                  publicationUnlocked: false,
+                  allowInstantDraftRestore: true,
+                },
+              ),
+            );
+            publishOptimizerInstantDraftReady({
+              appId: sidForBroadcast,
+              output: draft.data,
+              generatedAt: new Date().toISOString(),
+              modularDraftLong: draft.modularDraftLong,
+              modularDraftShort: draft.modularDraftShort,
+            });
+          }
+          applyInstantDraftResult(draft);
+        } catch (applyErr) {
+          console.error("applyInstantDraftResult failed:", applyErr);
+          setError(t("form.networkError"));
+          toast.error(t("form.networkError"));
+          return;
+        }
         setLastGeneratedAtIso(new Date().toISOString());
         const sid = selectedAppId.trim();
         if (sid) {
@@ -4876,8 +5071,8 @@ export function ListingOptimizer({
             title: draft.data.title,
             shortDescription: draft.data.shortDescription,
             fullDescription: draft.data.fullDescription,
-            keywordSuggestions: [] as string[],
-            ctaSuggestions: [] as string[],
+            keywordSuggestions: draft.data.keywordSuggestions ?? [],
+            ctaSuggestions: draft.data.ctaSuggestions ?? [],
           };
           const savedIso = new Date().toISOString();
           setHydrationByApp((prev) => ({
@@ -6226,6 +6421,10 @@ export function ListingOptimizer({
                     onFeaturesChange={setFeatures}
                     isFetchingSpyContext={isFetchingSpyContext}
                     showMissingContextAlert={showMissingContextAlert}
+                    showStagedButEmptyAlert={showStagedButEmptyAlert}
+                    onApplyFromActiveContext={() => {
+                      applyDiscoveryFromActiveContext();
+                    }}
                     disableScratchAutofill={discoveryWorkflowMode === "recommended"}
                     autofillBusy={autofillBusy}
                     isProcessingCredits={isProcessingCredits}

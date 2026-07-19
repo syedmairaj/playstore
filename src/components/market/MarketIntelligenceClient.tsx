@@ -15,6 +15,7 @@ import { TopChartRow, TopChartRowSkeleton } from "@/components/market/top-chart-
 import { SpotlightKeywordCuration } from "@/components/market/spotlight-keyword-curation";
 import { KeywordSpotlightCard } from "@/components/market/keyword-spotlight-card";
 import { WinsDashboard } from "@/components/market/wins-dashboard";
+import { useWorkspaceApp } from "@/contexts/WorkspaceAppContext";
 import { workspaceAppsQueryKey } from "@/hooks/use-app-limits";
 import { queryDefaultsFor } from "@/lib/client/query-cache-policy";
 import { fetchWorkspaceApps } from "@/lib/client/workspace-query-fetchers";
@@ -234,21 +235,27 @@ export function MarketIntelligenceClient({
   const [fromCache,     setFromCache]     = useState(false);
   const [error,         setError]         = useState<string | null>(null);
 
+  const { workspaceAppId } = useWorkspaceApp();
+
   const { data: workspaceApps } = useQuery({
     queryKey: workspaceAppsQueryKey(workspaceId),
     queryFn: () => fetchWorkspaceApps(workspaceId),
     ...queryDefaultsFor("workspaceMeta", { reconcileOnMount: true }),
   });
 
+  /** Prefer workspace app context so Market Intel stages into the same Active Context as Optimizer. */
   const targetAppId = useMemo(() => {
     const apps = workspaceApps ?? [];
     if (apps.length === 0) return undefined;
+    if (workspaceAppId && apps.some((app) => app.id === workspaceAppId)) {
+      return workspaceAppId;
+    }
     if (ownAppId) {
       const match = apps.find((app) => app.package_name === ownAppId);
       if (match?.id) return match.id;
     }
     return apps[0]?.id;
-  }, [workspaceApps, ownAppId]);
+  }, [workspaceApps, workspaceAppId, ownAppId]);
 
   // ── Restore spotlight from sessionStorage on mount / market change ───────────
   // When category or country changes: check cache first, then lock if nothing cached.

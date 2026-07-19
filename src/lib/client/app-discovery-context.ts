@@ -170,6 +170,16 @@ export function shouldRestoreFinalListingCache(input: {
       input.workspaceAppCategory,
     )
   ) {
+    // Explicit fresh instant-draft restore (remount/HMR after Build listing draft).
+    if (
+      input.cache.allowInstantDraftRestore === true &&
+      hasConfiguredDiscoveryInputs(input.keywordsText, input.appFeatures)
+    ) {
+      const ageMs = Date.now() - Date.parse(input.cache.generatedAt);
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 15 * 60 * 1000) {
+        return true;
+      }
+    }
     return false;
   }
 

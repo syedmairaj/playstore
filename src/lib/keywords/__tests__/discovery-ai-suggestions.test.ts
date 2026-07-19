@@ -27,4 +27,40 @@ describe("buildContextualDiscoverySuggestions", () => {
     const norms = new Set(items.map((i) => i.keyword.toLowerCase()));
     expect(norms.size).toBe(items.length);
   });
+
+  it("does not surface saltsugar health AI keywords under snap Social", () => {
+    const items = buildContextualDiscoverySuggestions({
+      app: { appId: "snap-id", appName: "snap", category: "Social" },
+      aiListingKeywords: [
+        "blood pressure",
+        "blood pressure tracker",
+        "diet goals app",
+        "fitness tracker",
+        "glucose monitor app",
+        "health data tracker",
+      ],
+      trackedTerms: ["snapchat", "snap app"],
+    });
+
+    const keywords = items.map((i) => i.keyword.toLowerCase());
+    expect(keywords.some((k) => k.includes("blood pressure"))).toBe(false);
+    expect(keywords.some((k) => k.includes("glucose"))).toBe(false);
+    expect(keywords.some((k) => k.includes("snap"))).toBe(true);
+    expect(keywords.some((k) => k.includes("photo") || k.includes("stories"))).toBe(
+      true,
+    );
+  });
+
+  it("expands discovery from this app's tracked keywords after manual add", () => {
+    const items = buildContextualDiscoverySuggestions({
+      app: { appId: "snap-id", appName: "snap", category: "Social" },
+      aiListingKeywords: [],
+      trackedTerms: ["snapchat"],
+      excludeNormalized: new Set(["snapchat"]),
+    });
+
+    const keywords = items.map((i) => i.keyword.toLowerCase());
+    expect(keywords).not.toContain("snapchat");
+    expect(keywords.some((k) => k.includes("snapchat"))).toBe(true);
+  });
 });

@@ -104,11 +104,43 @@ export type FinalListingCache = {
   generationId?: string;
   /** When false, cache is preview-only and must not restore paid ASO / export unlock. */
   publicationUnlocked?: boolean;
+  /**
+   * When true, allow restoring a free instant-draft preview after remount/HMR
+   * (normally heuristic drafts are skipped so F5 does not re-pollute the canvas).
+   */
+  allowInstantDraftRestore?: boolean;
   /** Full generation payload (keywords, CTAs, screenshots, A/B, strategy, variants). */
   output?: ListingGenerationOutput;
   /** Queue snapshot for strategy summary pills after refresh. */
   generationQueueSnapshot?: CachedGenerationQueueSnapshotItem[];
 };
+
+/** Dispatched after instant-draft succeeds so a remounted Optimizer can re-apply. */
+export const OPTIMIZER_INSTANT_DRAFT_READY_EVENT =
+  "playstore:optimizer-instant-draft-ready";
+
+export type OptimizerInstantDraftReadyDetail = {
+  appId: string;
+  output: ListingGenerationOutput;
+  generatedAt: string;
+  modularDraftLong?: { hook: string; features: string; closing: string };
+  modularDraftShort?: {
+    variations: Array<{ type: "growth" | "conversion" | "utility"; text: string }>;
+  };
+};
+
+export function publishOptimizerInstantDraftReady(
+  detail: OptimizerInstantDraftReadyDetail,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent(OPTIMIZER_INSTANT_DRAFT_READY_EVENT, { detail }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
 
 export function finalListingCacheKey(appId: string): string {
   return `playstore_final_listing_${appId.trim()}`;
@@ -222,6 +254,9 @@ function parseFinalListingCacheRaw(
       typeof parsed.publicationUnlocked === "boolean"
         ? parsed.publicationUnlocked
         : undefined,
+    ...(parsed.allowInstantDraftRestore === true
+      ? { allowInstantDraftRestore: true }
+      : {}),
     ...(fullOutput ? { output: fullOutput } : {}),
     generationQueueSnapshot: parseGenerationQueueSnapshot(
       parsed.generationQueueSnapshot,
@@ -300,6 +335,7 @@ export function listingOutputToFinalListingCache(
   generationId?: string,
   options?: {
     publicationUnlocked?: boolean;
+    allowInstantDraftRestore?: boolean;
     generationQueueSnapshot?: CachedGenerationQueueSnapshotItem[];
   },
 ): FinalListingCache {
@@ -323,6 +359,7 @@ export function listingOutputToFinalListingCache(
     generatedAt,
     ...(generationId ? { generationId } : {}),
     publicationUnlocked,
+    ...(options?.allowInstantDraftRestore ? { allowInstantDraftRestore: true } : {}),
     output,
     ...(options?.generationQueueSnapshot?.length
       ? { generationQueueSnapshot: options.generationQueueSnapshot }

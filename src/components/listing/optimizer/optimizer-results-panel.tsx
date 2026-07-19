@@ -370,7 +370,7 @@ export function OptimizerResultsPanel({
         </div>
       ) : null}
 
-        {showModularPanel && modularLoading && onRegenerateModularBlock ? (
+        {showModularPanel && onRegenerateModularBlock ? (
         <>
           {/* Hydration skeleton — shown for one render cycle before real data lands */}
           {modularIsHydrating ? (
@@ -613,7 +613,13 @@ export function OptimizerResultsPanel({
         </div>
       ) : null}
 
-      {!showModularPanel ? (
+      {!showModularPanel ||
+      (!modularIsHydrating &&
+        !(
+          (modularState?.title.value ?? editedTitle).trim() ||
+          editedShort.trim() ||
+          editedLong.trim()
+        )) ? (
       <Tabs defaultValue="title" className="w-full">
         <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
           <TabsTrigger value="title">{t("results.fieldsTabTitle")}</TabsTrigger>

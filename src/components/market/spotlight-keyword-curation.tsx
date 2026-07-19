@@ -97,6 +97,10 @@ export function SpotlightKeywordCuration({
 
   const handleStageSelected = useCallback(async () => {
     if (selectedCount === 0 || staging) return;
+    if (!appId?.trim()) {
+      toast.error(t("stageError"));
+      return;
+    }
 
     setStaging(true);
     try {

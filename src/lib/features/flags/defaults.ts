@@ -12,4 +12,7 @@ export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
   localization_playbook: false,
   market_intelligence: true,
   screenshot_studio: true,
+  brand_assets: false,
+  advanced_competitor_analysis: false,
+  advanced_reviews: false,
 };

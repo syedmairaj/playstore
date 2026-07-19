@@ -9,6 +9,10 @@ import {
   validateAndQueue,
   type ValidateAndQueueSource,
 } from "@/lib/client/validate-and-queue";
+import {
+  listingOptimizerPathname,
+  setPlaystoreInjectedKeywordContext,
+} from "@/lib/client/listing-optimizer-keywords-prefill";
 import { ReviewInsightsSummary } from "@/components/competitor-spy/review-insights-summary";
 import { CompetitorStrengthAuditQueue } from "@/components/competitor-spy/competitor-strength-audit-queue";
 import { VulnerabilityConquestQueueCta } from "@/components/competitor-spy/vulnerability-conquest-queue-cta";
@@ -1355,17 +1359,48 @@ export function CompetitorSpyClient({
     router.refresh();
   }, [router]);
 
-  const queueAndNavigateToOptimizer = useCallback(
+  const openListingOptimizer = useCallback(() => {
+    const appId = targetAppId || apps[0]?.id;
+    const pathname = listingOptimizerPathname(workspaceId);
+    if (!pathname) return;
+    // Inject short gap/strength keyword terms so Auto-Fill Market Discovery
+    // populates Target Keywords when the user opens Optimizer from Spy toasts.
+    if (appId?.trim()) {
+      const keywordText = allQueueItems
+        .filter(
+          (item) =>
+            item.type === "competitor_keyword" ||
+            item.type === "competitor_strength" ||
+            (item.type === "keyword" && item.category === "tracker"),
+        )
+        .map((item) => item.content.trim())
+        .filter((content) => content.length > 0 && content.length <= 48)
+        .slice(0, 40)
+        .join(", ");
+      if (keywordText) {
+        setPlaystoreInjectedKeywordContext(keywordText, appId.trim());
+      }
+    }
+    router.push(
+      appId?.trim()
+        ? `${pathname}?appId=${encodeURIComponent(appId.trim())}`
+        : pathname,
+    );
+  }, [allQueueItems, apps, router, targetAppId, workspaceId]);
+
+  /** Queue Competitor Spy gap/quick-win keywords into Active Context (stay on page). */
+  const queueGapKeywordsToOptimizer = useCallback(
     async (
       items: ReturnType<typeof keywordGapsToQueueInputs>,
       source: ValidateAndQueueSource,
       options?: { navigate?: boolean },
     ) => {
+      const appId = targetAppId || apps[0]?.id;
       const result = await validateAndQueue({
         source,
         workspaceId,
         workspaceLocale: locale,
-        appId: targetAppId || apps[0]?.id,
+        appId,
         items,
         existingQueue: allQueueItems,
         addItems: async (batch) => {
@@ -1375,7 +1410,8 @@ export function CompetitorSpyClient({
             skippedCount: response.skippedCount,
           };
         },
-        navigate: options?.navigate ?? true,
+        // Default stay on Competitor Spy — toast offers Optimizer navigation.
+        navigate: options?.navigate ?? false,
         router,
       });
 
@@ -1385,15 +1421,33 @@ export function CompetitorSpyClient({
       }
 
       if (result.alreadyQueued) {
-        toast.info(t("reviewSentiment.queueAlreadyAll"));
+        toast.info(t("reviewSentiment.queueAlreadyAll"), {
+          action: {
+            label: t("workflowGuide.queuedToastAction"),
+            onClick: () => openListingOptimizer(),
+          },
+        });
         return true;
       }
 
-      toast.success(t("reviewSentiment.queueSuccess"), {
-        description: t("reviewSentiment.queueSuccessDetail", {
-          count: result.addedCount,
-        }),
-      });
+      const isGapSource =
+        source === "competitor_spy_gap" || source === "competitor_spy_quick_win";
+      toast.success(
+        isGapSource
+          ? t("workflowGuide.gapQueuedTitle")
+          : t("reviewSentiment.queueSuccess"),
+        {
+          description: isGapSource
+            ? t("workflowGuide.gapQueuedDetail", { count: result.addedCount })
+            : t("reviewSentiment.queueSuccessDetail", {
+                count: result.addedCount,
+              }),
+          action: {
+            label: t("workflowGuide.queuedToastAction"),
+            onClick: () => openListingOptimizer(),
+          },
+        },
+      );
       notifyQueuedSuccess();
       return true;
     },
@@ -1403,6 +1457,7 @@ export function CompetitorSpyClient({
       locale,
       allQueueItems,
       notifyQueuedSuccess,
+      openListingOptimizer,
       router,
       targetAppId,
       t,
@@ -2662,6 +2717,62 @@ export function CompetitorSpyClient({
             </section>
           ) : null}
 
+          {activeCompetitor ? (
+            <aside
+              className={cn(
+                "rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] px-5 py-4",
+                isRtl && "font-arabic",
+              )}
+              dir={gridDir}
+              aria-labelledby="spy-workflow-guide-heading"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 space-y-3">
+                  <div className="space-y-1">
+                    <h2
+                      id="spy-workflow-guide-heading"
+                      className="text-sm font-semibold text-sky-100"
+                    >
+                      {t("workflowGuide.title")}
+                    </h2>
+                    <p className="max-w-3xl text-xs leading-relaxed text-sky-100/70">
+                      {t("workflowGuide.body")}
+                    </p>
+                  </div>
+                  <ul className="max-w-3xl space-y-2.5 text-xs leading-relaxed text-zinc-300">
+                    <li className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+                      <p className="font-semibold text-emerald-200/90">
+                        {t("workflowGuide.goalRanksTitle")}
+                      </p>
+                      <p className="mt-1 text-zinc-400">{t("workflowGuide.goalRanksBody")}</p>
+                    </li>
+                    <li className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+                      <p className="font-semibold text-amber-200/90">
+                        {t("workflowGuide.goalReviewsTitle")}
+                      </p>
+                      <p className="mt-1 text-zinc-400">{t("workflowGuide.goalReviewsBody")}</p>
+                    </li>
+                    <li className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+                      <p className="font-semibold text-sky-200/90">
+                        {t("workflowGuide.goalMarketTitle")}
+                      </p>
+                      <p className="mt-1 text-zinc-400">{t("workflowGuide.goalMarketBody")}</p>
+                    </li>
+                  </ul>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-sky-400/35 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20"
+                  onClick={() => openListingOptimizer()}
+                >
+                  {t("workflowGuide.openOptimizer")}
+                </Button>
+              </div>
+            </aside>
+          ) : null}
+
           <section className="space-y-4" aria-labelledby="gap-heading">
             <div className="space-y-1">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
@@ -2714,7 +2825,7 @@ export function CompetitorSpyClient({
                   className="w-full shrink-0 border border-emerald-400/35 bg-emerald-600 text-white hover:bg-emerald-500 sm:w-auto"
                   disabled={blockingError}
                   onClick={() =>
-                    void queueAndNavigateToOptimizer(
+                    void queueGapKeywordsToOptimizer(
                       keywordGapsToQueueInputs(
                         gapRows.map((r) => r.keyword).filter(Boolean).slice(0, 24),
                         activeCompetitor?.displayName,
@@ -2726,7 +2837,7 @@ export function CompetitorSpyClient({
                 >
                   <span className="inline-flex items-center justify-center gap-2">
                     <Sparkles className="size-4 shrink-0 opacity-90" aria-hidden />
-                    {t("quickWins.ctaOptimizer")}
+                    {t("gap.ctaQueueGaps")}
                   </span>
                 </Button>
               </div>
@@ -2793,10 +2904,11 @@ export function CompetitorSpyClient({
                         </div>
                         <Button
                           type="button"
-                          className="mt-auto w-full border border-emerald-400/30 bg-emerald-600 text-white hover:bg-emerald-500"
+                          variant="outline"
+                          className="mt-auto w-full border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-100 hover:bg-emerald-500/15"
                           disabled={!item.term}
                           onClick={() =>
-                            void queueAndNavigateToOptimizer(
+                            void queueGapKeywordsToOptimizer(
                               keywordGapsToQueueInputs(
                                 [item.term],
                                 activeCompetitor?.displayName,
@@ -3085,6 +3197,10 @@ export function CompetitorSpyClient({
                                   description: t("reviewSentiment.queueSuccessDetail", {
                                     count: result.addedCount,
                                   }),
+                                  action: {
+                                    label: t("workflowGuide.queuedToastAction"),
+                                    onClick: () => openListingOptimizer(),
+                                  },
                                 });
                                 notifyQueuedSuccess();
                               });

@@ -47,6 +47,15 @@ export type InstantDraftListingError = {
   error: { code?: string; message: string };
 };
 
+type DraftListingFields = ListingGenerationOutput & { longDescription?: string };
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  );
+}
+
 export async function generateInstantDraftListing(
   input: InstantDraftListingInput,
 ): Promise<InstantDraftListingSuccess | InstantDraftListingError> {
@@ -72,32 +81,68 @@ export async function generateInstantDraftListing(
     }),
   });
 
-  const json = (await res.json()) as
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return {
+      ok: false,
+      status: res.status || 502,
+      error: {
+        code: "invalid_response",
+        message: "Instant draft returned a non-JSON response.",
+      },
+    };
+  }
+
+  const body = json as
     | {
         ok: true;
-        data?: ListingGenerationOutput;
-        modularData?: ListingGenerationOutput;
+        accepted?: boolean;
+        data?: DraftListingFields;
+        modularData?: DraftListingFields;
         modularDraftLong?: InstantDraftModularLong;
         modularDraftShort?: InstantDraftModularShort;
         warnings?: ListingGenerationWarningsPayload;
       }
     | { ok: false; error: { code?: string; message: string } };
 
-  if (!res.ok || !("ok" in json) || json.ok !== true) {
+  if (!res.ok || !("ok" in body) || body.ok !== true) {
     return {
       ok: false,
       status: res.status,
-      error: "ok" in json && json.ok === false ? json.error : { message: "Instant draft failed." },
+      error:
+        "ok" in body && body.ok === false
+          ? body.error
+          : { message: "Instant draft failed." },
     };
   }
 
-  const data = json.data ?? json.modularData;
-  if (
-    !data ||
-    typeof data.title !== "string" ||
-    typeof data.shortDescription !== "string" ||
-    typeof data.fullDescription !== "string"
-  ) {
+  // Async accept is not a draft listing — surface clearly instead of blank UI.
+  if (body.accepted === true) {
+    return {
+      ok: false,
+      status: res.status || 202,
+      error: {
+        code: "generation_accepted_async",
+        message:
+          "Draft was queued asynchronously. Wait for generation to finish, then refresh.",
+      },
+    };
+  }
+
+  const raw = body.data ?? body.modularData;
+  const title = typeof raw?.title === "string" ? raw.title.trim() : "";
+  const shortDescription =
+    typeof raw?.shortDescription === "string" ? raw.shortDescription.trim() : "";
+  const fullDescription =
+    typeof raw?.fullDescription === "string"
+      ? raw.fullDescription.trim()
+      : typeof raw?.longDescription === "string"
+        ? raw.longDescription.trim()
+        : "";
+
+  if (!title || !shortDescription || !fullDescription) {
     return {
       ok: false,
       status: res.status || 502,
@@ -108,12 +153,21 @@ export async function generateInstantDraftListing(
     };
   }
 
+  const data: ListingGenerationOutput = {
+    ...(raw as ListingGenerationOutput),
+    title,
+    shortDescription,
+    fullDescription,
+    keywordSuggestions: asStringList(raw?.keywordSuggestions),
+    ctaSuggestions: asStringList(raw?.ctaSuggestions),
+  };
+
   return {
     ok: true,
     data,
-    modularDraftLong: json.modularDraftLong,
-    modularDraftShort: json.modularDraftShort,
-    warnings: json.warnings,
+    modularDraftLong: body.modularDraftLong,
+    modularDraftShort: body.modularDraftShort,
+    warnings: body.warnings,
     meta: { isDraft: true, creditsCharged: 0 },
   };
 }

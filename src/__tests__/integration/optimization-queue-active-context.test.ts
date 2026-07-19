@@ -49,6 +49,34 @@ describe("optimization queue active context", () => {
     expect(partitioned.feature_requests).toHaveLength(1);
   });
 
+  it("surfaces oppositional Stage Issue reviews in Review Insights (not Competitive Defense)", () => {
+    const queueItems: OptimizationQueueItem[] = [
+      {
+        id: "opp-1",
+        type: "review_pain_point",
+        category: "review",
+        content: "Excessive Ads Block App Use",
+        source: "review_analysis",
+        language: "en",
+        stagedAt: new Date().toISOString(),
+        metadata: {
+          growth_strategy_tag: "oppositional_target",
+          growth_mode: "offensive",
+          explicitly_staged: true,
+          move_to_active_context: true,
+          impact_percent: 100,
+        },
+      },
+    ];
+
+    const partitioned = partitionQueueForActiveContext(queueItems);
+    expect(partitioned.offensive).toHaveLength(1);
+    expect(partitioned.reviewPills).toHaveLength(1);
+    expect(partitioned.reviewPills[0]?.label).toBe("Excessive Ads Block App Use");
+    expect(partitioned.marketIntelPills).toHaveLength(0);
+    expect(partitioned.competitorSpyPills).toHaveLength(0);
+  });
+
   it("keeps user-staged review pain points visible (backlog_id / explicitly_staged)", () => {
     const queueItems: OptimizationQueueItem[] = [
       {
@@ -79,7 +107,7 @@ describe("optimization queue active context", () => {
     );
   });
 
-  it("routes competitor spy keyword gaps to Competitor Strengths (not Market Intel)", () => {
+  it("routes competitor spy keyword gaps to Competitive Defense chips (not Market Intel)", () => {
     const inputs = keywordGapsToQueueInputs(
       ["blood sugar tracker"],
       "Rival App",
@@ -109,7 +137,9 @@ describe("optimization queue active context", () => {
     const partitioned = partitionQueueForActiveContext(queueItems);
     expect(partitioned.market).toHaveLength(0);
     expect(partitioned.offensive).toHaveLength(1);
-    expect(partitioned.competitorSpyPills).toHaveLength(0);
+    // Gap keywords surface under Competitor Strengths in Active Context UI.
+    expect(partitioned.competitorSpyPills).toHaveLength(1);
+    expect(partitioned.competitorSpyPills[0]?.label).toBe("blood sugar tracker");
   });
 
   it("excludes legacy keyword curation from competitor spy pills", () => {

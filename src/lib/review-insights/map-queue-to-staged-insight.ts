@@ -7,8 +7,34 @@ import {
   readImpactPercent,
 } from "@/lib/review-insights/growth-strategy-tags";
 
-function isStagedReviewQueueItem(item: OptimizationQueueItem): boolean {
+/**
+ * True when a queue row belongs in Review Insights only.
+ * Must NOT include Competitor Spy gaps, strengths, or Market Intel keywords —
+ * those have their own Active Context pillars (prevents cross-pillar duplication).
+ */
+export function isStagedReviewQueueItem(item: OptimizationQueueItem): boolean {
+  if (
+    item.type === "competitor_keyword" ||
+    item.type === "competitor_strength" ||
+    item.type === "competitor_weakness" ||
+    item.type === "keyword_gap" ||
+    item.type === "market_keyword"
+  ) {
+    return false;
+  }
+
   const meta = item.metadata ?? {};
+  if (meta.from_gap_analysis === true) return false;
+  if (meta.from_keyword_spotlight === true) return false;
+  if (item.source === "market_intel") return false;
+  if (item.source === "competitor_spy" && item.type !== "review_pain_point" && item.type !== "feature_request") {
+    return false;
+  }
+
+  if (item.type !== "review_pain_point" && item.type !== "feature_request") {
+    return false;
+  }
+
   if (meta.explicitly_staged === true || meta.move_to_active_context === true) {
     return true;
   }
@@ -16,10 +42,11 @@ function isStagedReviewQueueItem(item: OptimizationQueueItem): boolean {
     return true;
   }
   return (
-    item.type === "review_pain_point" &&
-    (item.metadata.from_review_insights === true ||
-      item.metadata.review_derived === true ||
-      item.sourceContext === "common_issues_theme")
+    meta.from_review_insights === true ||
+    meta.review_derived === true ||
+    item.sourceContext === "common_issues_theme" ||
+    item.source === "review_analysis" ||
+    item.source === "competitor_spy"
   );
 }
 

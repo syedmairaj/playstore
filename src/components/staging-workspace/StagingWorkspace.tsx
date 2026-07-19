@@ -112,8 +112,8 @@ function buildPillarsConfig(
         ar: "نقاط قوة المنافس",
       },
       description: {
-        en: "→ audit-approved strengths · read-only · woven into App Features + What's New",
-        ar: "← نقاط قوة معتمدة من التدقيق · للعرض فقط · تُنسج في الميزات + ما الجديد",
+        en: "→ approved strengths + queued keyword gaps from Competitor Spy · woven into Features + What's New",
+        ar: "← نقاط قوة معتمدة + فجوات كلمات من جاسوس المنافس · تُنسج في الميزات + ما الجديد",
       },
       icon: "ShieldCheck",
       color: {
@@ -341,8 +341,8 @@ export default function StagingWorkspace({
           config.isRtl ? "text-right" : "text-left"
         }`}>
           {config.locale === "ar"
-            ? "لم يتم تحديد أي إشارات حتى الآن. قم بزيارة وحدات المراجعات والسوق والمنافسين لإضافة الإشارات."
-            : "No signals selected yet. Visit the Reviews, Market Intel, and Competitor Spy modules to add signals."}
+            ? "لم تُحدَّد إشارات بعد. Stage Issue في المراجعات يملأ رؤى المراجعات؛ ذكاء السوق وجاسوس المنافس يملآن الدفاع التنافسي."
+            : "No signals selected yet. Stage Issue in Reviews fills Review Insights; Market Intel and Competitor Spy fill Competitive Defense."}
         </div>
       )}
     </div>

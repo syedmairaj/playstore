@@ -678,6 +678,21 @@ export function KeywordTrackerClient({
     return new Set([...fromRows, ...optimisticTrackedKeys]);
   }, [rows, scopeAppId, optimisticTrackedKeys]);
 
+  const trackedTermsForApp = useMemo(() => {
+    if (!scopeAppId) return [] as string[];
+    const terms: string[] = [];
+    const seen = new Set<string>();
+    for (const r of rows) {
+      if (r.app_id !== scopeAppId) continue;
+      const t = r.term.trim();
+      const key = t.toLowerCase();
+      if (t.length < 2 || seen.has(key)) continue;
+      seen.add(key);
+      terms.push(t);
+    }
+    return terms;
+  }, [rows, scopeAppId]);
+
   const discoverySuggestionsResolved = useMemo((): DiscoveryKeywordSuggestion[] => {
     if (!scopeAppId || !scopeAppRow) return [];
     return buildContextualDiscoverySuggestions({
@@ -688,9 +703,10 @@ export function KeywordTrackerClient({
         shortDescription: scopeAppRow.short_description,
       },
       aiListingKeywords: aiPack?.keywordSuggestions ?? [],
+      trackedTerms: trackedTermsForApp,
       excludeNormalized: trackedTermKeysForApp,
     });
-  }, [scopeAppId, scopeAppRow, aiPack, trackedTermKeysForApp]);
+  }, [scopeAppId, scopeAppRow, aiPack, trackedTermsForApp, trackedTermKeysForApp]);
 
   const previewMarketCodes = useMemo(
     () => (previewResults?.length ? previewCountryCodes(previewResults) : []),
@@ -818,28 +834,44 @@ export function KeywordTrackerClient({
     term: string,
     options?: { background?: boolean },
   ) {
-    if (!scopeAppId || !aiPack) return;
+    if (!scopeAppId) return;
     const trimmed = term.trim();
     if (trimmed.length < 2) return;
 
     setTrackingAiTerm(trimmed);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/keywords/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          terms: [trimmed],
-          appId: scopeAppId,
-          listingGenerationId: aiPack.generationId,
-        }),
-      });
+      // Prefer AI-listing bulk lineage when a trusted pack exists for this app;
+      // otherwise add via the standard keyword API (contextual / tracked expansions).
+      const res = aiPack
+        ? await fetch(`/api/workspaces/${workspaceId}/keywords/bulk`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              terms: [trimmed],
+              appId: scopeAppId,
+              listingGenerationId: aiPack.generationId,
+            }),
+          })
+        : await fetch(`/api/workspaces/${workspaceId}/keywords`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              term: trimmed,
+              appId: scopeAppId,
+              market: selectedCountries[0] ?? "us",
+            }),
+          });
       const json = (await res.json()) as {
         ok?: boolean;
         error?: { code?: string; message?: string; remaining?: number; required?: number };
       };
 
       if (!res.ok || !json.ok) {
-        toast.error(json.error?.message ?? t("aiSuggestedKeywords.trackError"));
+        if (json.error?.code === "duplicate_keyword" || res.status === 409) {
+          toast.error(t("add.errorDuplicate"));
+        } else {
+          toast.error(json.error?.message ?? t("aiSuggestedKeywords.trackError"));
+        }
         return;
       }
 
@@ -1663,6 +1695,7 @@ export function KeywordTrackerClient({
 
       {showAiSuggested && scopeAppId && scopeAppRow ? (
         <DiscoveryKeywordsPanel
+          key={`${scopeAppId}:${discoveryGenerationIdValue}`}
           workspaceId={workspaceId}
           appId={scopeAppId}
           appName={scopeAppRow.name}
